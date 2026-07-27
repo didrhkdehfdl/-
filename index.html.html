@@ -3368,6 +3368,14 @@ async function renderAdminApprovalMain(){
   await renderAdminApprovalList();
 }
 
+const ALL_TABS = [
+  { key:'sales', label:'영업비 정산' },
+  { key:'profit', label:'사업 이윤정산' },
+  { key:'import', label:'실적리스트' },
+  { key:'contracts', label:'계약서' },
+  { key:'inspection', label:'사용전점검' },
+];
+
 async function renderAdminApprovalList(){
   const listEl = document.getElementById('adminApprovalList');
   if(!listEl) return; // user navigated away while loading
@@ -3391,15 +3399,40 @@ async function renderAdminApprovalList(){
             <button class="admin2-reject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--neg); background:transparent; color:var(--neg); cursor:pointer; margin-left:6px;">거절하기</button>`;
         }
       }
+      // No allowedTabs field yet on this account = unrestricted (every tab checked).
+      const permsHtml = isAdmin ? '' : `
+        <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line); display:flex; flex-wrap:wrap; align-items:center; gap:12px;">
+          <span style="font-size:11px; color:var(--muted);">접근 가능한 탭:</span>
+          ${ALL_TABS.map(t => `
+            <label style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;">
+              <input type="checkbox" class="admin2-tab-check" data-id="${doc.id}" data-tab="${t.key}" ${(!d.allowedTabs || d.allowedTabs.includes(t.key)) ? 'checked' : ''}>
+              ${t.label}
+            </label>`).join('')}
+          <button class="admin2-savetabs-btn" data-id="${doc.id}" style="font-size:11px; padding:4px 10px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">권한 저장</button>
+          <span class="admin2-savetabs-msg" data-id="${doc.id}" style="font-size:11px; color:var(--pos);"></span>
+        </div>`;
       return `
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:var(--panel);">
-        <div>
-          <div style="font-size:13.5px;">${escapeHtml(d.email||'(이메일 없음)')}${isAdmin ? ' <span style="color:var(--gold); font-size:11px;">(관리자)</span>' : ''}</div>
-          <div style="font-size:11px; color:${statusColor};">${statusLabel}</div>
+      <div style="display:flex; flex-direction:column; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:var(--panel);">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <div>
+            <div style="font-size:13.5px;">${escapeHtml(d.email||'(이메일 없음)')}${isAdmin ? ' <span style="color:var(--gold); font-size:11px;">(관리자)</span>' : ''}</div>
+            <div style="font-size:11px; color:${statusColor};">${statusLabel}</div>
+          </div>
+          <div>${actionsHtml}</div>
         </div>
-        <div>${actionsHtml}</div>
+        ${permsHtml}
       </div>`;
     }).join('');
+    listEl.querySelectorAll('.admin2-savetabs-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const id = btn.dataset.id;
+        const checked = [...listEl.querySelectorAll(`.admin2-tab-check[data-id="${id}"]`)]
+          .filter(cb=>cb.checked).map(cb=>cb.dataset.tab);
+        await fbDb.collection('users').doc(id).update({ allowedTabs: checked });
+        const msgEl = listEl.querySelector(`.admin2-savetabs-msg[data-id="${id}"]`);
+        if(msgEl){ msgEl.textContent = '저장됨'; setTimeout(()=>{ if(msgEl) msgEl.textContent=''; }, 1500); }
+      });
+    });
     listEl.querySelectorAll('.admin2-approve-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         await fbDb.collection('users').doc(btn.dataset.id).update({ approved:true, rejected:false });
@@ -3414,6 +3447,7 @@ async function renderAdminApprovalList(){
     });
     listEl.querySelectorAll('.admin2-unreject-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
+
         await fbDb.collection('users').doc(btn.dataset.id).update({ approved:false, rejected:false });
         renderAdminApprovalList();
       });
@@ -4553,10 +4587,25 @@ async function init(){
 }
 
 // Starts the actual app UI (only called once login + admin approval have
-// both been confirmed).
-function startApp(){
+// both been confirmed). allowedTabs is the approved user's per-account tab
+// permission list from Firestore (null/undefined = no restriction, i.e.
+// every tab visible — this keeps existing/older accounts unaffected).
+function applyTabPermissions(allowedTabs){
+  document.querySelectorAll('.tab-btn').forEach(btn=>{
+    const key = btn.dataset.tab;
+    if(key === 'adminApproval') return; // shown/hidden separately based on isAdminUser
+    const allowed = !allowedTabs || allowedTabs.includes(key);
+    btn.style.display = allowed ? 'flex' : 'none';
+  });
+  if(allowedTabs && allowedTabs.length && !allowedTabs.includes(state.activeTab)){
+    state.activeTab = allowedTabs[0];
+  }
+}
+
+function startApp(allowedTabs){
   document.getElementById('authOverlay').style.display = 'none';
   document.getElementById('app').classList.add('show');
+  applyTabPermissions(isAdminUser ? null : allowedTabs);
   renderSidebar();
   renderMain();
   init();
@@ -4745,7 +4794,7 @@ fbAuth.onAuthStateChanged(async (user) => {
     const approved = data.approved === true;
     const rejected = data.rejected === true;
     if(approved){
-      startApp();
+      startApp(Array.isArray(data.allowedTabs) ? data.allowedTabs : null);
     } else {
       document.getElementById('authOverlay').style.display = 'flex';
       if(rejected){
