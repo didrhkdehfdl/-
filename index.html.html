@@ -326,6 +326,9 @@
       <button class="tab-btn" data-tab="inspection" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">🔍</span> 사용전점검(검사)
       </button>
+      <button class="tab-btn" data-tab="adminApproval" id="adminApprovalTabBtn" style="display:none; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
+        <span style="width:18px; text-align:center;">✅</span> 승인관리
+      </button>
     </nav>
     <button id="newCaseBtn">+ 새 정산 건 추가</button>
     <button id="profitListToggleBtn" style="display:none; margin:0 18px 10px; padding:8px 12px; border-radius:7px; border:1px dashed var(--sky); background:transparent; color:var(--sky); font-size:12.5px; font-weight:500; cursor:pointer; text-align:left;">📋 가로 목록으로 보기</button>
@@ -380,14 +383,15 @@
         <input type="email" id="authEmailInput" placeholder="이메일" autocomplete="username" style="padding:11px 12px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:14px;">
         <input type="password" id="authPasswordInput" placeholder="비밀번호" autocomplete="current-password" style="padding:11px 12px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:14px;">
         <input type="password" id="authPasswordConfirmInput" placeholder="비밀번호 확인" autocomplete="new-password" style="display:none; padding:11px 12px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:14px;">
+        <div id="authPasswordHint" style="display:none; font-size:11.5px; color:var(--muted); margin-top:-2px;">8자 이상, 숫자와 특수문자를 각각 하나 이상 포함해주세요.</div>
       </div>
       <div id="authErrorMsg" style="color:var(--neg); font-size:12.5px; margin-top:10px; min-height:1em;"></div>
       <button id="authSubmitBtn" style="width:100%; margin-top:6px; padding:12px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:14.5px; font-weight:600; cursor:pointer;">로그인</button>
     </div>
 
     <div id="authPendingView" style="display:none; text-align:center;">
-      <div style="font-size:15px; margin-bottom:10px;">가입 신청이 접수되었습니다.</div>
-      <div style="font-size:13px; color:var(--muted); line-height:1.7; margin-bottom:20px;">관리자 승인 후 이용할 수 있습니다. 승인되면 다시 로그인해주세요.</div>
+      <div id="authPendingTitle" style="font-size:15px; margin-bottom:10px;">가입 신청이 접수되었습니다.</div>
+      <div id="authPendingDesc" style="font-size:13px; color:var(--muted); line-height:1.7; margin-bottom:20px;">관리자 승인 후 이용할 수 있습니다. 승인되면 다시 로그인해주세요.</div>
       <button id="authLogoutBtn2" style="padding:10px 20px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--text); font-size:13.5px; cursor:pointer;">로그아웃</button>
     </div>
 
@@ -1231,14 +1235,16 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection'){
+  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
       ? '<div class="empty-side">왼쪽 메뉴에서 실적 파일을 업로드하면<br>여기에 목록이 아닌 가져오기 화면이 표시됩니다.</div>'
       : state.activeTab === 'contracts'
         ? '<div class="empty-side">계약서 PDF를 업로드하면<br>여기에 목록이 아닌 계약서 관리 화면이 표시됩니다.</div>'
-        : '<div class="empty-side">사용전점검 확인증 파일을 업로드하면<br>여기에 목록이 아닌 검사 확인 화면이 표시됩니다.</div>';
+        : state.activeTab === 'inspection'
+          ? '<div class="empty-side">사용전점검 확인증 파일을 업로드하면<br>여기에 목록이 아닌 검사 확인 화면이 표시됩니다.</div>'
+          : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
     return;
   }
   if(newBtn) newBtn.style.display = '';
@@ -1912,6 +1918,10 @@ function renderMain(loading){
   }
   if(state.activeTab === 'inspection'){
     renderInspectionMain();
+    return;
+  }
+  if(state.activeTab === 'adminApproval'){
+    renderAdminApprovalMain();
     return;
   }
   if(state.activeTab === 'profit' && state.profitView === 'list'){
@@ -3345,6 +3355,81 @@ async function handleInspectionUpload(e){
   }
 }
 
+async function renderAdminApprovalMain(){
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <h2 class="section-title">승인관리</h2>
+    <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
+      가입 신청한 사용자 목록입니다. "승인하기"를 누르면 그 사람이 로그인했을 때 바로 앱을 사용할 수 있고,
+      "거절하기"를 누르면 가입이 거절됩니다.
+    </p>
+    <div id="adminApprovalList" style="display:flex; flex-direction:column; gap:8px; max-width:640px;">불러오는 중…</div>
+  `;
+  await renderAdminApprovalList();
+}
+
+async function renderAdminApprovalList(){
+  const listEl = document.getElementById('adminApprovalList');
+  if(!listEl) return; // user navigated away while loading
+  try{
+    const snap = await fbDb.collection('users').orderBy('createdAt', 'desc').get();
+    if(snap.empty){ listEl.innerHTML = '<div class="empty-side">가입된 사용자가 없습니다.</div>'; return; }
+    listEl.innerHTML = snap.docs.map(doc => {
+      const d = doc.data();
+      const isAdmin = d.email === ADMIN_EMAIL;
+      const statusLabel = d.approved ? '승인됨' : (d.rejected ? '거절됨' : '승인 대기');
+      const statusColor = d.approved ? 'var(--pos)' : (d.rejected ? 'var(--neg)' : 'var(--muted)');
+      let actionsHtml = '';
+      if(!isAdmin){
+        if(d.approved){
+          actionsHtml = `<button class="admin2-revoke-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">승인 취소</button>`;
+        } else if(d.rejected){
+          actionsHtml = `<button class="admin2-unreject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">대기로 되돌리기</button>`;
+        } else {
+          actionsHtml = `
+            <button class="admin2-approve-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">승인하기</button>
+            <button class="admin2-reject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--neg); background:transparent; color:var(--neg); cursor:pointer; margin-left:6px;">거절하기</button>`;
+        }
+      }
+      return `
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:var(--panel);">
+        <div>
+          <div style="font-size:13.5px;">${escapeHtml(d.email||'(이메일 없음)')}${isAdmin ? ' <span style="color:var(--gold); font-size:11px;">(관리자)</span>' : ''}</div>
+          <div style="font-size:11px; color:${statusColor};">${statusLabel}</div>
+        </div>
+        <div>${actionsHtml}</div>
+      </div>`;
+    }).join('');
+    listEl.querySelectorAll('.admin2-approve-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        await fbDb.collection('users').doc(btn.dataset.id).update({ approved:true, rejected:false });
+        renderAdminApprovalList();
+      });
+    });
+    listEl.querySelectorAll('.admin2-reject-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        await fbDb.collection('users').doc(btn.dataset.id).update({ approved:false, rejected:true });
+        renderAdminApprovalList();
+      });
+    });
+    listEl.querySelectorAll('.admin2-unreject-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        await fbDb.collection('users').doc(btn.dataset.id).update({ approved:false, rejected:false });
+        renderAdminApprovalList();
+      });
+    });
+    listEl.querySelectorAll('.admin2-revoke-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        await fbDb.collection('users').doc(btn.dataset.id).update({ approved:false, rejected:false });
+        renderAdminApprovalList();
+      });
+    });
+  }catch(e){
+    console.error(e);
+    listEl.innerHTML = '<div style="color:var(--neg); font-size:13px;">목록을 불러오지 못했습니다. Firestore 보안 규칙을 확인해주세요.</div>';
+  }
+}
+
 function renderImportMain(){
   const main = document.getElementById('main');
 
@@ -4510,11 +4595,17 @@ function setAuthMode(mode){
   document.getElementById('authTabSignup').style.color = isSignup ? 'var(--gold)' : 'var(--muted)';
   document.getElementById('authTabSignup').style.fontWeight = isSignup ? '600' : '400';
   document.getElementById('authPasswordConfirmInput').style.display = isSignup ? '' : 'none';
+  document.getElementById('authPasswordHint').style.display = isSignup ? '' : 'none';
   document.getElementById('authSubmitBtn').textContent = isSignup ? '가입 신청' : '로그인';
   document.getElementById('authErrorMsg').textContent = '';
 }
 document.getElementById('authTabLogin').addEventListener('click', ()=>setAuthMode('login'));
 document.getElementById('authTabSignup').addEventListener('click', ()=>setAuthMode('signup'));
+
+// 8자 이상 + 숫자 1개 이상 + 특수문자 1개 이상 (Firebase 자체 최소 6자 규칙보다 강화)
+function isPasswordStrongEnough(pw){
+  return pw.length >= 8 && /[0-9]/.test(pw) && /[!@#$%^&*(),.?":{}|<>_\-+=~`\[\]\\/;']/.test(pw);
+}
 
 async function handleAuthSubmit(){
   const email = document.getElementById('authEmailInput').value.trim();
@@ -4530,9 +4621,13 @@ async function handleAuthSubmit(){
     if(authMode === 'signup'){
       const confirm = document.getElementById('authPasswordConfirmInput').value;
       if(password !== confirm){ errEl.textContent = '비밀번호가 서로 다릅니다.'; return; }
+      if(!isPasswordStrongEnough(password)){
+        errEl.textContent = '비밀번호는 8자 이상이면서 숫자와 특수문자를 각각 하나 이상 포함해야 합니다.';
+        return;
+      }
       const cred = await fbAuth.createUserWithEmailAndPassword(email, password);
       await fbDb.collection('users').doc(cred.user.uid).set({
-        email, approved: email===ADMIN_EMAIL, createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        email, approved: email===ADMIN_EMAIL, rejected: false, createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
       // onAuthStateChanged below will pick up the new signed-in user and route accordingly.
     } else {
@@ -4571,29 +4666,50 @@ async function renderAdminList(){
     listEl.innerHTML = snap.docs.map(doc => {
       const d = doc.data();
       const isAdmin = d.email === ADMIN_EMAIL;
+      const statusLabel = d.approved ? '승인됨' : (d.rejected ? '거절됨' : '승인 대기');
+      const statusColor = d.approved ? 'var(--pos)' : (d.rejected ? 'var(--neg)' : 'var(--muted)');
+      let actionsHtml = '';
+      if(!isAdmin){
+        if(d.approved){
+          actionsHtml = `<button class="admin-revoke-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">승인 취소</button>`;
+        } else if(d.rejected){
+          actionsHtml = `<button class="admin-unreject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">대기로 되돌리기</button>`;
+        } else {
+          actionsHtml = `
+            <button class="admin-approve-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">승인하기</button>
+            <button class="admin-reject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--neg); background:transparent; color:var(--neg); cursor:pointer; margin-left:6px;">거절하기</button>`;
+        }
+      }
       return `
       <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px solid var(--line); border-radius:8px;">
         <div>
           <div style="font-size:13.5px;">${escapeHtml(d.email||'(이메일 없음)')}${isAdmin ? ' <span style="color:var(--gold); font-size:11px;">(관리자)</span>' : ''}</div>
-          <div style="font-size:11px; color:var(--muted);">${d.approved ? '승인됨' : '승인 대기'}</div>
+          <div style="font-size:11px; color:${statusColor};">${statusLabel}</div>
         </div>
-        <div>
-          ${isAdmin ? '' : (d.approved
-            ? `<button class="admin-revoke-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">승인 취소</button>`
-            : `<button class="admin-approve-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">승인하기</button>`
-          )}
-        </div>
+        <div>${actionsHtml}</div>
       </div>`;
     }).join('');
     listEl.querySelectorAll('.admin-approve-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
-        await fbDb.collection('users').doc(btn.dataset.id).update({ approved:true });
+        await fbDb.collection('users').doc(btn.dataset.id).update({ approved:true, rejected:false });
+        renderAdminList();
+      });
+    });
+    listEl.querySelectorAll('.admin-reject-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        await fbDb.collection('users').doc(btn.dataset.id).update({ approved:false, rejected:true });
+        renderAdminList();
+      });
+    });
+    listEl.querySelectorAll('.admin-unreject-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        await fbDb.collection('users').doc(btn.dataset.id).update({ approved:false, rejected:false });
         renderAdminList();
       });
     });
     listEl.querySelectorAll('.admin-revoke-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
-        await fbDb.collection('users').doc(btn.dataset.id).update({ approved:false });
+        await fbDb.collection('users').doc(btn.dataset.id).update({ approved:false, rejected:false });
         renderAdminList();
       });
     });
@@ -4605,8 +4721,12 @@ async function renderAdminList(){
 
 document.getElementById('appLogoutBtn').addEventListener('click', ()=>fbAuth.signOut());
 
+let isAdminUser = false;
+
 fbAuth.onAuthStateChanged(async (user) => {
   if(!user){
+    isAdminUser = false;
+    document.getElementById('adminApprovalTabBtn').style.display = 'none';
     document.getElementById('app').classList.remove('show');
     document.getElementById('authOverlay').style.display = 'flex';
     showAuthView('forms');
@@ -4614,19 +4734,27 @@ fbAuth.onAuthStateChanged(async (user) => {
     return;
   }
   if(user.email === ADMIN_EMAIL){
-    document.getElementById('app').classList.remove('show');
-    document.getElementById('authOverlay').style.display = 'flex';
-    showAuthView('admin');
-    renderAdminList();
+    isAdminUser = true;
+    document.getElementById('adminApprovalTabBtn').style.display = 'flex';
+    startApp();
     return;
   }
   try{
     const doc = await fbDb.collection('users').doc(user.uid).get();
-    const approved = doc.exists && doc.data().approved === true;
+    const data = doc.exists ? doc.data() : {};
+    const approved = data.approved === true;
+    const rejected = data.rejected === true;
     if(approved){
       startApp();
     } else {
       document.getElementById('authOverlay').style.display = 'flex';
+      if(rejected){
+        document.getElementById('authPendingTitle').textContent = '가입 신청이 거절되었습니다.';
+        document.getElementById('authPendingDesc').textContent = '자세한 사항은 관리자에게 문의해주세요.';
+      } else {
+        document.getElementById('authPendingTitle').textContent = '가입 신청이 접수되었습니다.';
+        document.getElementById('authPendingDesc').textContent = '관리자 승인 후 이용할 수 있습니다. 승인되면 다시 로그인해주세요.';
+      }
       showAuthView('pending');
     }
   }catch(e){
