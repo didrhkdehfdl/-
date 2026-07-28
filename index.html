@@ -1584,19 +1584,12 @@ function buildPrintTableHtml(c, totals){
 }
 
 function buildGiwanjiHtml(c, totals){
-  const namedRecords = c.records.filter(r=>r.customer);
+  const customerNames = c.records.map(r=>oneLine(r.customer)).filter(Boolean).join(', ');
+  const workDesc = `${customerNames || '(고객명 미입력)'} 영업비용`;
   const bodyLines = buildDoc1(c, totals).split('\n').map(line=>`<div>${escapeHtml(line)}</div>`).join('');
-  // 업무내용은 고객별로 한 줄씩 나눠서 각자의 영업비용/소득세/지급금액을 적는다
-  // (원본 서식과 동일). 행이 적을 때는 빈 줄을 채워 표 높이를 맞춘다.
-  const workRows = namedRecords.map(r => {
-    const pay = payOf(r);
-    const tax = Math.round(pay*0.033);
-    const net = pay - tax;
-    return `<tr><td class="left">${escapeHtml(oneLine(r.customer))} 영업비용</td><td class="num">${fmtNum(pay)}</td><td class="num">${acctCellHtml(-tax)}</td><td class="num">${fmtNum(net)}</td></tr>`;
-  }).join('');
-  const fillerCount = Math.max(0, 4 - namedRecords.length);
-  const fillerRows = Array.from({length: fillerCount}, ()=>`<tr><td class="left">&nbsp;</td><td></td><td></td><td></td></tr>`).join('');
-  const draftDateDots = (c.draftDate||'').replace(/-/g,'.') || '(미입력)';
+  // 업무내용은 고객 전체를 한 줄로 합쳐 적고, 아래에 빈 줄 3개를 둬서
+  // 표 높이를 원본 서식과 맞춘다.
+  const fillerRows = Array.from({length: 3}, ()=>`<tr><td class="left">&nbsp;</td><td></td><td></td><td></td></tr>`).join('');
   // Column widths below are proportional to the original spreadsheet's actual
   // column widths (A through X), so the grid matches its real layout ratios.
   const colWidths = [2.302,1.708,3.044,2.45,3.044,5.008,5.008,5.008,8.985, 5.287,5.287,5.287,5.287,5.287,5.287,5.287,5.287, 3.5247,3.5247,3.5247, 2.6435,2.6435,2.6435,2.6435];
@@ -1681,15 +1674,15 @@ function buildGiwanjiHtml(c, totals){
 
     <table class="giwanji-info">
       <tr><td>1. 영업자 이름 &nbsp; : &nbsp;</td><td>${escapeHtml(c.agentName)||'(미입력)'}</td></tr>
-      <tr><td>2. 일 &nbsp; &nbsp; &nbsp; &nbsp; 자 &nbsp; : &nbsp;</td><td>${escapeHtml(draftDateDots)}</td></tr>
+      <tr><td>2. 일 &nbsp; &nbsp; &nbsp; &nbsp; 자 &nbsp; : &nbsp;</td><td>${escapeHtml(c.draftDate)||'(미입력)'}</td></tr>
       <tr><td>3. 처 리 과 목 &nbsp; : &nbsp;</td><td>영업비용</td></tr>
-      <tr><td>4. 지 급 금 액 &nbsp; : </td><td>${fmtWon(totals.net)}(개인소득세 신고후 지급금액)</td></tr>
+      <tr><td>4. 지 급 금 액 &nbsp; : </td><td>${fmtWon(totals.net)} &nbsp;&nbsp;(개인소득세 신고후 지급금액)</td></tr>
     </table>
 
     <table class="giwanji-worktable">
       <thead><tr><th>업 무 내 용</th><th>영업비용</th><th>3.3% 소득세</th><th>지급금액</th></tr></thead>
       <tbody>
-        ${workRows}
+        <tr><td class="left">${escapeHtml(workDesc)}</td><td class="num">${fmtNum(totals.pay)}</td><td class="num">${acctCellHtml(-totals.tax)}</td><td class="num">${fmtNum(totals.net)}</td></tr>
         ${fillerRows}
         <tr class="sumrow"><td colspan="3" class="center">합　계</td><td class="num">${fmtNum(totals.net)}</td></tr>
       </tbody>
@@ -1702,8 +1695,6 @@ function buildGiwanjiHtml(c, totals){
       <div>※ 붙　　임 : *영업비 정산내역서 1부.</div>
     </div>
     <div class="giwanji-company">${escapeHtml(c.companyName)}</div>
-    <div class="giwanji-formcode">P301-9</div>
-    ${buildIsoFooter('P301-9', 1, 2)}
   </div>`;
 }
 
