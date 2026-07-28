@@ -1165,8 +1165,26 @@ function parseInspectionDateFromText(text){
 // Finds the 대표자 성명 value: looks for the "성명" label and reads the
 // next short run of Hangul syllables after it (the name sits immediately
 // after that label on this form).
+// Extracts the 대표자 성명 value specifically. This form also has a
+// *separate* "점검자 ... 성명" field further down for the inspector — a
+// plain first-match search for "성명" can pick up that person's name
+// instead (OCR reading order for tables doesn't always follow strict
+// top-to-bottom visual order). Anchoring on "대표자" first avoids that.
 function parseInspectionNameFromText(text){
-  const idx = (text||'').indexOf('성명');
+  text = text || '';
+  const repIdx = text.indexOf('대표자');
+  if(repIdx >= 0){
+    const window = text.slice(repIdx, repIdx + 60);
+    const nameIdx = window.indexOf('성명');
+    if(nameIdx >= 0){
+      const after = window.slice(nameIdx+2);
+      const m = after.match(/[가-힣]{2,5}/);
+      if(m) return m[0];
+    }
+  }
+  // "대표자" itself may have been misread by OCR — fall back to the first
+  // "성명" occurrence as a best-effort guess.
+  const idx = text.indexOf('성명');
   if(idx<0) return '';
   const after = text.slice(idx+2);
   const m = after.match(/[가-힣]{2,5}/);
@@ -1189,14 +1207,36 @@ function dateFilenameVariants(dateStr){
 // Compares an item's (possibly hand-corrected) extracted 성명/날짜 against
 // its filename and returns whether each part — and the file overall —
 // counts as a match.
+// Pulls every Hangul run of 2-5 syllables out of a filename as a candidate
+// person name, skipping common boilerplate words this form's filenames
+// tend to contain (so "김민환_사용전점검확인증.pdf" yields "김민환", not
+// "사용전점검" or "확인증" as false candidates).
+const INSPECTION_FILENAME_STOPWORDS = ['점검필증','확인증','사용전점검','사용전검사','복사본','수정본','최종본','스캔본'];
+function extractNameTokensFromFilename(fileName){
+  const base = String(fileName||'').replace(/\.[^.]+$/, '');
+  const matches = base.match(/[가-힣]{2,5}/g) || [];
+  return matches.filter(w => !INSPECTION_FILENAME_STOPWORDS.includes(w));
+}
+
 function computeInspectionMatch(item){
   const name = (item.extractedName||'').replace(/\s/g,'');
   const nameMatch = !!name && item.fileName.replace(/\s/g,'').includes(name);
+  // More robust check: does the file's *full* recognized text contain a
+  // name pulled from the filename? This sidesteps mistakes in picking out
+  // one specific "성명" field (e.g. accidentally grabbing the inspector's
+  // name instead of 대표자 성명) — as long as the real customer name
+  // appears anywhere in the document, this still finds it.
+  let fulltextMatch = false;
+  if(item.ocrText){
+    const tokens = extractNameTokensFromFilename(item.fileName);
+    fulltextMatch = tokens.some(tok => item.ocrText.includes(tok));
+  }
+  const autoMatch = fulltextMatch || nameMatch;
   // 점검년월일은 일치 여부 판정에는 쓰지 않고, 참고용으로 항상 채워서
-  // 보여주기만 한다 — 일치 여부는 대표자 성명이 파일명에 포함되는지로 자동
+  // 보여주기만 한다 — 일치 여부는 이름이 파일명/문서에 함께 등장하는지로 자동
   // 판정하되, 사람이 "일치로 표시"를 눌러 직접 수동으로 뒤집을 수 있다.
-  const overall = item.manualMatch === true ? true : nameMatch;
-  return { nameMatch, overall, manual: item.manualMatch === true };
+  const overall = item.manualMatch === true ? true : autoMatch;
+  return { nameMatch: autoMatch, overall, manual: item.manualMatch === true };
 }
 
 function indexEntry(c){
@@ -3261,6 +3301,7 @@ async function runOcrForItem(item){
       const result = await withTimeout(worker.recognize(canvas), 45000);
       if(!result) throw new Error('OCR timed out');
       const text = result.data.text || '';
+      item.ocrText = text;
       item.extractedName = parseInspectionNameFromText(text);
       item.extractedDate = parseInspectionDateFromText(text);
       item.ocrStatus = (item.extractedName || item.extractedDate) ? 'done' : 'unrecognized';
@@ -3298,8 +3339,8 @@ async function renderInspectionMain(){
   main.innerHTML = `
     <h2 class="section-title">사용전점검(검사) 확인증 관리</h2>
     <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 14px;">
-      사용전점검 확인증 PDF/이미지를 업로드하면, 문서 안의 <b>대표자 성명</b>을 자동으로 인식해서 파일 이름에 포함되어 있는지 확인합니다
-      (포함되어 있으면 일치로 처리). <b>점검년월일</b>은 일치 판정과 상관없이 참고용으로 항상 자동 인식해서 채워둡니다.
+      사용전점검 확인증 PDF/이미지를 업로드하면, 파일 이름에 들어있는 이름이 문서 안에 실제로 등장하는지 확인해서
+      (등장하면 일치로 처리) 자동으로 판정합니다. <b>점검년월일</b>은 일치 판정과 상관없이 참고용으로 항상 자동 인식해서 채워둡니다.
       자동 인식이 틀렸다면 표에서 직접 값을 고칠 수 있고, 일치 여부는 바로 다시 계산됩니다.
     </p>
     <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:16px;">
