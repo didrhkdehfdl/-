@@ -250,13 +250,13 @@
   table.giwanji-info td:first-child{ width:150px; white-space:nowrap; }
   table.giwanji-worktable{ width:100%; border-collapse:collapse; margin-bottom:16px; }
   table.giwanji-worktable th, table.giwanji-worktable td{ border:1px solid #000; padding:15px 10px; font-size:12px; }
-  table.giwanji-worktable thead th{ background:#dbe8cd; text-align:center; }
+  table.giwanji-worktable thead th{ background:#f2f2f2; text-align:center; }
   table.giwanji-worktable td.left{ text-align:left; }
   table.giwanji-worktable td.num{ text-align:right; }
   table.giwanji-worktable td.center{ text-align:center; }
   table.giwanji-worktable tr.sumrow td{ background:#f7f7f7; font-weight:700; }
   .giwanji-footer{ font-size:12px; line-height:2.3; margin-top:12px; }
-  .giwanji-company{ text-align:center; font-size:13px; font-weight:700; margin-top:16px; }
+  .giwanji-company{ text-align:center; font-size:13px; font-weight:700; margin-top:16px; border:1px solid #000; padding:10px 0; }
   .giwanji-formcode{ font-size:10px; color:#333; margin-top:8px; }
 
   /* ---- 지출결의서 ---- */
@@ -271,7 +271,8 @@
   table.jichul-bordered{ width:100%; border-collapse:collapse; table-layout:fixed; margin-top:-1px; }
   table.jichul-bordered td{ border:1px solid #000; padding:20px 10px; font-size:13px; text-align:center; }
   table.jichul-bordered td.label{ background:#f2f2f2; font-weight:600; }
-  table.jichul-bordered tr.hdr-row td{ background:#dbe8cd; font-weight:700; }
+  table.jichul-bordered tr.hdr-row td{ background:#f2f2f2; font-weight:700; }
+  .profit-statement table.jichul-bordered tr.hdr-row td{ background:#dbe8cd; }
   table.jichul-bordered td.num{ text-align:right; }
   table.jichul-bordered td.center{ text-align:center; }
   table.jichul-bordered td.slash{ color:#555; }
@@ -279,6 +280,12 @@
   .profit-statement table.jichul-bordered td.label{ font-size:10.5px; }
   .jichul-agree{ text-align:center; border:1px solid #000; border-top:none; padding:24px; font-size:14px; }
   .jichul-code-row{ display:flex; justify-content:space-between; font-size:10.5px; margin-top:6px; padding:0 2px; }
+
+  /* ---- ISO 9001 문서관리 정보 (각 출력물 하단 공통) ---- */
+  table.iso-footer{ width:100%; border-collapse:collapse; margin-top:14px; table-layout:fixed; }
+  table.iso-footer td{ border:1px solid #000; padding:5px 6px; font-size:8.5px; color:#111; text-align:center; vertical-align:middle; }
+  table.iso-footer td.iso-label{ background:#f2f2f2; font-weight:700; white-space:nowrap; }
+  table.iso-footer td.iso-sign{ height:26px; }
 
   @media print{
     * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
@@ -1420,6 +1427,32 @@ function buildDoc2(c, totals){
 function pad2(n){ return String(n).padStart(2,'0'); }
 
 // Formats a date string (YYYY-MM-DD) as "2026년 07월 16일" (zero-padded, as used on 기안지)
+// ISO 9001 문서관리 정보 표: 문서번호(서식코드)/개정번호/제정일자/페이지 번호와
+// 작성·검토·승인 서명란을 모든 출력 문서 하단에 공통으로 붙인다.
+const ISO_REVISION_NO = '00';
+const ISO_ISSUE_DATE = '2026-01-01';
+function buildIsoFooter(docCode, page, total){
+  return `
+  <table class="iso-footer">
+    <colgroup>
+      <col style="width:12%"><col style="width:13%"><col style="width:12%"><col style="width:13%">
+      <col style="width:12%"><col style="width:13%"><col style="width:12%"><col style="width:13%">
+    </colgroup>
+    <tr>
+      <td class="iso-label">문서번호</td><td>${escapeHtml(docCode)}</td>
+      <td class="iso-label">개정번호</td><td>${ISO_REVISION_NO}</td>
+      <td class="iso-label">제정일자</td><td>${ISO_ISSUE_DATE}</td>
+      <td class="iso-label">페이지</td><td>${page} / ${total}</td>
+    </tr>
+    <tr>
+      <td class="iso-label">작성</td><td class="iso-sign"></td>
+      <td class="iso-label">검토</td><td class="iso-sign"></td>
+      <td class="iso-label">승인</td><td class="iso-sign"></td>
+      <td class="iso-label">보존기간</td><td>3년</td>
+    </tr>
+  </table>`;
+}
+
 function fmtKoreanDatePadded(dateStr){
   if(!dateStr) return '(미입력)';
   const [y,m,d] = dateStr.split('-').map(Number);
@@ -1551,9 +1584,19 @@ function buildPrintTableHtml(c, totals){
 }
 
 function buildGiwanjiHtml(c, totals){
-  const customerNames = c.records.map(r=>oneLine(r.customer)).filter(Boolean).join(', ');
-  const workDesc = `${customerNames || '(고객명 미입력)'} 영업비용`;
+  const namedRecords = c.records.filter(r=>r.customer);
   const bodyLines = buildDoc1(c, totals).split('\n').map(line=>`<div>${escapeHtml(line)}</div>`).join('');
+  // 업무내용은 고객별로 한 줄씩 나눠서 각자의 영업비용/소득세/지급금액을 적는다
+  // (원본 서식과 동일). 행이 적을 때는 빈 줄을 채워 표 높이를 맞춘다.
+  const workRows = namedRecords.map(r => {
+    const pay = payOf(r);
+    const tax = Math.round(pay*0.033);
+    const net = pay - tax;
+    return `<tr><td class="left">${escapeHtml(oneLine(r.customer))} 영업비용</td><td class="num">${fmtNum(pay)}</td><td class="num">${acctCellHtml(-tax)}</td><td class="num">${fmtNum(net)}</td></tr>`;
+  }).join('');
+  const fillerCount = Math.max(0, 4 - namedRecords.length);
+  const fillerRows = Array.from({length: fillerCount}, ()=>`<tr><td class="left">&nbsp;</td><td></td><td></td><td></td></tr>`).join('');
+  const draftDateDots = (c.draftDate||'').replace(/-/g,'.') || '(미입력)';
   // Column widths below are proportional to the original spreadsheet's actual
   // column widths (A through X), so the grid matches its real layout ratios.
   const colWidths = [2.302,1.708,3.044,2.45,3.044,5.008,5.008,5.008,8.985, 5.287,5.287,5.287,5.287,5.287,5.287,5.287,5.287, 3.5247,3.5247,3.5247, 2.6435,2.6435,2.6435,2.6435];
@@ -1638,15 +1681,16 @@ function buildGiwanjiHtml(c, totals){
 
     <table class="giwanji-info">
       <tr><td>1. 영업자 이름 &nbsp; : &nbsp;</td><td>${escapeHtml(c.agentName)||'(미입력)'}</td></tr>
-      <tr><td>2. 일 &nbsp; &nbsp; &nbsp; &nbsp; 자 &nbsp; : &nbsp;</td><td>${fmtKoreanDatePadded(c.draftDate)}</td></tr>
+      <tr><td>2. 일 &nbsp; &nbsp; &nbsp; &nbsp; 자 &nbsp; : &nbsp;</td><td>${escapeHtml(draftDateDots)}</td></tr>
       <tr><td>3. 처 리 과 목 &nbsp; : &nbsp;</td><td>영업비용</td></tr>
-      <tr><td>4. 지 급 금 액 &nbsp; : </td><td>${fmtWon(totals.net)} <span style="font-size:11px;color:#555;">(개인소득세 신고후 지급금액)</span></td></tr>
+      <tr><td>4. 지 급 금 액 &nbsp; : </td><td>${fmtWon(totals.net)}(개인소득세 신고후 지급금액)</td></tr>
     </table>
 
     <table class="giwanji-worktable">
       <thead><tr><th>업 무 내 용</th><th>영업비용</th><th>3.3% 소득세</th><th>지급금액</th></tr></thead>
       <tbody>
-        <tr><td class="left">${escapeHtml(workDesc)}</td><td class="num">${fmtNum(totals.pay)}</td><td class="num">-${fmtNum(totals.tax)}</td><td class="num">${fmtNum(totals.net)}</td></tr>
+        ${workRows}
+        ${fillerRows}
         <tr class="sumrow"><td colspan="3" class="center">합　계</td><td class="num">${fmtNum(totals.net)}</td></tr>
       </tbody>
     </table>
@@ -1659,11 +1703,27 @@ function buildGiwanjiHtml(c, totals){
     </div>
     <div class="giwanji-company">${escapeHtml(c.companyName)}</div>
     <div class="giwanji-formcode">P301-9</div>
+    ${buildIsoFooter('P301-9', 1, 2)}
   </div>`;
 }
 
 function buildJichulHtml(c, totals){
-  const customerNames = c.records.map(r=>oneLine(r.customer)).filter(Boolean).join(', ');
+  const namedRecords = c.records.filter(r=>r.customer);
+  // 내역도 기안지와 동일하게 고객별로 한 줄씩 나눠 적는다 (원본 서식과 동일).
+  const detailRows = namedRecords.map(r => {
+    const pay = payOf(r);
+    const net = pay - Math.round(pay*0.033);
+    return `
+      <tr>
+        <td class="center">${escapeHtml(c.project)}</td>
+        <td colspan="5">${escapeHtml(oneLine(r.customer))} 영업비용</td>
+        <td colspan="2" class="num">${fmtNum(net)}</td>
+        <td colspan="2" class="center">3.3% 공제 후 금액</td>
+      </tr>`;
+  }).join('');
+  const fillerCount = Math.max(0, 3 - namedRecords.length);
+  const detailFillers = Array.from({length: fillerCount}, ()=>`
+      <tr><td class="center">&nbsp;</td><td colspan="5"></td><td colspan="2"></td><td colspan="2"></td></tr>`).join('');
   // Proportional widths taken directly from the original sheet's column
   // widths (columns B through K), so every table below lines up exactly.
   const mainCols = [14,3.643,8.774,8.774,12.88,11.579,8.774,8.774,11.4,11.4];
@@ -1728,16 +1788,13 @@ function buildJichulHtml(c, totals){
 
     <table class="jichul-bordered">
       <colgroup>${colgroup}</colgroup>
+      <tr><td colspan="10" class="center" style="font-weight:700; letter-spacing:6px;">내　　　역</td></tr>
       <tr class="hdr-row">
         <td class="label">적　요</td><td colspan="5" class="label">지출내역</td>
         <td colspan="2" class="label">금　액</td><td colspan="2" class="label">비　고</td>
       </tr>
-      <tr>
-        <td class="center">${escapeHtml(c.project)}</td>
-        <td colspan="5">${escapeHtml(customerNames)||'(고객명 미입력)'} 영업비용</td>
-        <td colspan="2" class="num">${fmtNum(totals.net)}</td>
-        <td colspan="2" class="center">3.3% 공제 후 금액</td>
-      </tr>
+      ${detailRows}
+      ${detailFillers}
       <tr>
         <td colspan="4" class="center" style="font-weight:700;">합　계</td>
         <td colspan="4" class="num" style="font-weight:700;">${fmtNum(totals.net)}</td>
@@ -1756,6 +1813,7 @@ function buildJichulHtml(c, totals){
     <div class="jichul-code-row">
       <span>P201-16</span><span>${escapeHtml(c.companyName)}</span><span>A4(210× 297)</span>
     </div>
+    ${buildIsoFooter('P201-16', 2, 2)}
   </div>`;
 }
 
@@ -1916,6 +1974,7 @@ function buildProfitStatementHtml(p){
       <div style="font-weight:700; margin-bottom:4px;">특이사항</div>
       <div style="white-space:pre-wrap; line-height:1.7;">${escapeHtml(p.specialNotes)}</div>
     </div>
+    ${buildIsoFooter('P501-1', 1, 1)}
   </div>`;
 }
 
