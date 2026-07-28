@@ -1170,25 +1170,31 @@ function parseInspectionDateFromText(text){
 // plain first-match search for "성명" can pick up that person's name
 // instead (OCR reading order for tables doesn't always follow strict
 // top-to-bottom visual order). Anchoring on "대표자" first avoids that.
-function parseInspectionNameFromText(text){
+// Extracts the 대표자 성명 value. This form has more than one "성명" label
+// (대표자 성명 for the customer, and a separate 점검자 ... 성명 for the
+// inspector), and OCR's reading order for tables doesn't reliably keep
+// 대표자's occurrence first — so anchoring on nearby label text alone isn't
+// reliable enough. Instead: collect every name-like candidate that follows
+// any "성명" occurrence, then prefer whichever one actually appears in the
+// filename (the uploader already named the file after the real customer,
+// so that's the strongest signal available for picking the right one).
+function parseInspectionNameFromText(text, fileName){
   text = text || '';
-  const repIdx = text.indexOf('대표자');
-  if(repIdx >= 0){
-    const window = text.slice(repIdx, repIdx + 60);
-    const nameIdx = window.indexOf('성명');
-    if(nameIdx >= 0){
-      const after = window.slice(nameIdx+2);
-      const m = after.match(/[가-힣]{2,5}/);
-      if(m) return m[0];
-    }
+  const candidates = [];
+  let idx = text.indexOf('성명');
+  while(idx >= 0){
+    const after = text.slice(idx+2);
+    const m = after.match(/[가-힣]{2,5}/);
+    if(m && !candidates.includes(m[0])) candidates.push(m[0]);
+    idx = text.indexOf('성명', idx+2);
   }
-  // "대표자" itself may have been misread by OCR — fall back to the first
-  // "성명" occurrence as a best-effort guess.
-  const idx = text.indexOf('성명');
-  if(idx<0) return '';
-  const after = text.slice(idx+2);
-  const m = after.match(/[가-힣]{2,5}/);
-  return m ? m[0] : '';
+  if(candidates.length === 0) return '';
+  if(fileName){
+    const fileNoExt = String(fileName).replace(/\.[^.]+$/, '').replace(/\s/g,'');
+    const inFile = candidates.find(c => fileNoExt.includes(c));
+    if(inFile) return inFile;
+  }
+  return candidates[0];
 }
 // Builds every reasonable filename representation of a YYYY-MM-DD date
 // (with/without separators, 2-digit year) so we can check whether any of
@@ -3302,7 +3308,7 @@ async function runOcrForItem(item){
       if(!result) throw new Error('OCR timed out');
       const text = result.data.text || '';
       item.ocrText = text;
-      item.extractedName = parseInspectionNameFromText(text);
+      item.extractedName = parseInspectionNameFromText(text, item.fileName);
       item.extractedDate = parseInspectionDateFromText(text);
       item.ocrStatus = (item.extractedName || item.extractedDate) ? 'done' : 'unrecognized';
     } finally {
@@ -3314,6 +3320,19 @@ async function runOcrForItem(item){
   }
   await saveInspectionIndex(inspectionState.items);
   renderInspectionMain();
+}
+
+// Re-runs OCR for every uploaded 사용전점검 확인증 one at a time (not in
+// parallel, to keep the client-side OCR engine's CPU/memory use reasonable
+// — mirrors how a fresh batch upload is processed).
+async function reocrAllInspectionItems(){
+  const btn = document.getElementById('inspectionReocrAllBtn');
+  const items = [...inspectionState.items];
+  for(let i=0; i<items.length; i++){
+    if(btn) btn.textContent = `🔄 다시 인식 중… (${i+1}/${items.length})`;
+    await runOcrForItem(items[i]);
+  }
+  if(btn) btn.textContent = '🔄 전체 다시 인식';
 }
 
 async function ensureInspectionLoaded(){
@@ -3345,6 +3364,7 @@ async function renderInspectionMain(){
     </p>
     <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:16px;">
       <input type="file" id="inspectionUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
+      ${items.length>0 ? `<button id="inspectionReocrAllBtn" style="font-size:12px; padding:8px 14px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">🔄 전체 다시 인식</button>` : ''}
       <div style="display:flex; gap:8px; font-size:13px; font-weight:600;">
         <span style="padding:6px 12px; border-radius:6px; background:rgba(47,125,92,.15); color:var(--pos);">✓ 일치 ${matchCount}건</span>
         <span style="padding:6px 12px; border-radius:6px; background:rgba(178,59,46,.15); color:var(--neg);">✕ 불일치 ${mismatchCount}건</span>
@@ -3396,6 +3416,8 @@ async function renderInspectionMain(){
   `;
 
   document.getElementById('inspectionUploadInput').addEventListener('change', handleInspectionUpload);
+  const reocrAllBtn = document.getElementById('inspectionReocrAllBtn');
+  if(reocrAllBtn) reocrAllBtn.addEventListener('click', reocrAllInspectionItems);
 
   main.querySelectorAll('.inspection-name-input').forEach(inp=>{
     inp.addEventListener('change', async ()=>{
