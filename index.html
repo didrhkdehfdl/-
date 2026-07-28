@@ -2277,6 +2277,19 @@ async function exportProfitListToExcel(cases){
   }
 }
 
+// 구조물 분류(structureNote)에 "부착형"이 포함되어 있으면, 3kw당 구매가
+// 187,495원 / 판매가 220,000원을 자동으로 적용하고, 수량도 용량 기준
+// (capacityKw/3)으로 맞춘다. 슬라브형 등 다른 표기는 건드리지 않는다.
+function applyAttachedStructurePricing(p){
+  if(/부착형/.test(p.structureNote||'')){
+    p.structureBuy = 187495;
+    p.structureSell = 220000;
+    p.structureQty = (Number(p.capacityKw)||0) / 3;
+    return true;
+  }
+  return false;
+}
+
 function renderProfitMain(){
   const main = document.getElementById('main');
   const p = activeCase;
@@ -2428,6 +2441,7 @@ function renderProfitMain(){
     if(modulePrices){ p.moduleBuy = modulePrices.buy; p.moduleSell = modulePrices.sell; }
     const inverterPrices = PROFIT_INVERTER_PRICES[String(p.inverterModel||'').trim()];
     if(inverterPrices){ p.inverterBuy = inverterPrices.buy; p.inverterSell = inverterPrices.sell; }
+    applyAttachedStructurePricing(p);
     const price = computePerfCompanyPrice({ moduleModel: p.moduleModel, structureType: p.structureNote });
     if(price !== null) p.depositPrice = price;
     p.constructionCost = computeConstructionCost(p.capacityKw);
@@ -2469,6 +2483,9 @@ function renderProfitMain(){
       if(key === 'moduleModel' || key === 'structureNote'){
         const price = computePerfCompanyPrice({ moduleModel: p.moduleModel, structureType: p.structureNote });
         if(price !== null) p.depositPrice = price;
+      }
+      if(key === 'structureNote'){
+        applyAttachedStructurePricing(p);
       }
       if(key === 'structureBuy'){
         p.structureSell = Math.round((Number(p.structureBuy)||0) * 1.2);
@@ -4154,6 +4171,7 @@ function createCaseFromImportRow(row, type){
       salesDeductionNote: row.extraNote || '',
       constructionCost: computeConstructionCost(parseFloat(row.capacity)||0),
     });
+    applyAttachedStructurePricing(p);
     state.activeTab = 'profit';
     activeCase = p;
     state.activeId = p.id;
