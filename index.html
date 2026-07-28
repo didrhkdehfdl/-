@@ -2715,6 +2715,10 @@ async function renderContractsMain(){
       </button>
       ${items.length>0 ? `<button id="contractReparseBtn" style="font-size:12px; padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">📅 파일명에서 날짜 다시 추출</button>` : ''}
       ${contractsState.selected.size>0 ? `<button id="contractPrintSelectedBtn" style="font-size:12.5px; padding:8px 14px; border-radius:6px; border:1px solid var(--gold); background:rgba(224,163,57,.12); color:var(--gold); cursor:pointer; font-weight:600;">🖨️ 선택한 ${contractsState.selected.size}건 한꺼번에 인쇄</button>` : ''}
+      <span style="flex:1;"></span>
+      ${items.length>0 ? `<button id="contractExportBtn" style="font-size:12px; padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">계약서 백업 내보내기</button>` : ''}
+      <button id="contractImportBtn" style="font-size:12px; padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">계약서 백업 가져오기</button>
+      <input type="file" id="contractImportFile" accept="application/json" style="display:none;">
     </div>
     ${contractsState.loading ? `<div style="color:var(--muted); font-size:13px;">처리 중…</div>` : ''}
     ${items.length===0 ? `<div class="empty-side">아직 업로드된 계약서가 없습니다. 위에서 PDF 파일을 선택해주세요.</div>` : `
@@ -2759,6 +2763,12 @@ async function renderContractsMain(){
   });
   const printBtn = document.getElementById('contractPrintSelectedBtn');
   if(printBtn) printBtn.addEventListener('click', printSelectedContracts);
+  const exportBtn = document.getElementById('contractExportBtn');
+  if(exportBtn) exportBtn.addEventListener('click', exportContractsBackup);
+  document.getElementById('contractImportBtn').addEventListener('click', ()=>{
+    document.getElementById('contractImportFile').click();
+  });
+  document.getElementById('contractImportFile').addEventListener('change', handleContractsImportFile);
 
   main.querySelectorAll('.contract-check').forEach(cb=>{
     cb.addEventListener('change', ()=>{
@@ -2809,6 +2819,64 @@ async function renderContractsMain(){
       renderContractsMain();
     });
   });
+}
+
+// Exports every contract's metadata AND its actual file bytes (base64) as
+// one JSON file — a scoped backup/restore just for the 계약서 tab, separate
+// from the sidebar's case-only 내보내기/가져오기.
+async function exportContractsBackup(){
+  const btn = document.getElementById('contractExportBtn');
+  const original = btn ? btn.textContent : '';
+  if(btn){ btn.textContent = '내보내는 중…'; btn.disabled = true; }
+  try{
+    const items = contractsState.items;
+    const files = {};
+    for(const item of items){
+      const base64 = await loadContractFileData(item.id);
+      if(base64) files[item.id] = base64;
+    }
+    const blob = new Blob([JSON.stringify({ items, files }, null, 2)], { type:'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `계약서_백업_${isoDate(new Date())}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }finally{
+    if(btn){ btn.textContent = original; btn.disabled = false; }
+  }
+}
+
+async function handleContractsImportFile(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const items = Array.isArray(data.items) ? data.items : [];
+    const files = data.files || {};
+    if(items.length === 0){ alert('가져올 계약서 데이터가 없습니다.'); return; }
+    let added = 0, updatedFiles = 0;
+    for(const item of items){
+      if(!item || !item.id) continue;
+      const existingIdx = contractsState.items.findIndex(it=>it.id===item.id);
+      if(existingIdx>=0) contractsState.items[existingIdx] = item;
+      else { contractsState.items.push(item); added++; }
+      if(files[item.id]){
+        const result = await saveContractFileData(item.id, files[item.id]);
+        if(result.ok) updatedFiles++;
+      }
+    }
+    await saveContractsIndex(contractsState.items);
+    renderContractsMain();
+    alert(`계약서 ${items.length}건을 가져왔습니다 (신규 ${added}건, 파일 복원 ${updatedFiles}건).`);
+  }catch(err){
+    console.error(err);
+    alert('파일을 읽지 못했습니다. 올바른 계약서 백업(JSON) 파일인지 확인해주세요.');
+  }
+  e.target.value = '';
 }
 
 async function handleContractUpload(e){
