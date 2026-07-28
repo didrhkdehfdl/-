@@ -3539,8 +3539,8 @@ function renderImportMain(){
     <h2 class="section-title">실적 리스트 가져오기</h2>
     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
       <div style="display:flex; gap:0; border:1px solid var(--line); border-radius:8px; overflow:hidden; width:fit-content;">
-        <button class="import-mode-btn" data-mode="upload" style="padding:9px 16px; font-size:12.5px; border:none; cursor:pointer; background:${st.mode==='upload'?'var(--panel-2)':'transparent'}; color:${st.mode==='upload'?'var(--gold)':'var(--muted)'};">엑셀 업로드</button>
-        <button class="import-mode-btn" data-mode="manual" style="padding:9px 16px; font-size:12.5px; border:none; border-left:1px solid var(--line); cursor:pointer; background:${st.mode==='manual'?'var(--panel-2)':'transparent'}; color:${st.mode==='manual'?'var(--gold)':'var(--muted)'};">직접 입력</button>
+        <button class="import-mode-btn" data-mode="upload" style="padding:9px 16px; font-size:12.5px; border:none; cursor:pointer; background:${importState.mode==='upload'?'var(--panel-2)':'transparent'}; color:${importState.mode==='upload'?'var(--gold)':'var(--muted)'};">엑셀 업로드</button>
+        <button class="import-mode-btn" data-mode="manual" style="padding:9px 16px; font-size:12.5px; border:none; border-left:1px solid var(--line); cursor:pointer; background:${importState.mode==='manual'?'var(--panel-2)':'transparent'}; color:${importState.mode==='manual'?'var(--gold)':'var(--muted)'};">직접 입력</button>
       </div>
       <button id="exportPerfExcelBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
     </div>
@@ -3551,7 +3551,7 @@ function renderImportMain(){
   });
   document.getElementById('exportPerfExcelBtn').addEventListener('click', exportPerfListToExcel);
 
-  if(st.mode === 'manual'){
+  if(importState.mode === 'manual'){
     renderManualEntry();
     return;
   }
