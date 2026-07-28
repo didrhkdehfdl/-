@@ -635,6 +635,7 @@ function newProfitCase(){
     branch: '안성지사',
     teamName: '',
     moduleModel: '', moduleBuy: 0, moduleSell: 0, moduleQty: 0,
+    module2Model: '', module2Buy: 0, module2Sell: 0, module2Qty: 0,
     inverterModel: '', inverterBuy: 0, inverterSell: 0, inverterQty: 0,
     structureNote: '', structureBuy: 0, structureSell: 0, structureQty: 1, structureOverride: '',
     etcMaterial: 0,
@@ -687,6 +688,8 @@ function computeProfitCase(p){
 
   const moduleAmount = (Number(p.moduleSell)||0) * (Number(p.moduleQty)||0);
   const moduleProfit = ((Number(p.moduleSell)||0) - (Number(p.moduleBuy)||0)) * (Number(p.moduleQty)||0);
+  const module2Amount = (Number(p.module2Sell)||0) * (Number(p.module2Qty)||0);
+  const module2Profit = ((Number(p.module2Sell)||0) - (Number(p.module2Buy)||0)) * (Number(p.module2Qty)||0);
   const inverterAmount = (Number(p.inverterSell)||0) * (Number(p.inverterQty)||0);
   const inverterProfit = ((Number(p.inverterSell)||0) - (Number(p.inverterBuy)||0)) * (Number(p.inverterQty)||0);
   const structureNaturalAmount = (Number(p.structureSell)||0) * (Number(p.structureQty)||0);
@@ -701,8 +704,8 @@ function computeProfitCase(p){
     : structureCappedAmount;
   const structureProfit = ((Number(p.structureSell)||0) - (Number(p.structureBuy)||0)) * (Number(p.structureQty)||0);
   const etcMaterial = Number(p.etcMaterial)||0;
-  const materialCost = moduleAmount + inverterAmount + structureAmount + etcMaterial;
-  const retailProfitTotal = moduleProfit + inverterProfit + structureProfit;
+  const materialCost = moduleAmount + module2Amount + inverterAmount + structureAmount + etcMaterial;
+  const retailProfitTotal = moduleProfit + module2Profit + inverterProfit + structureProfit;
 
   const safetyFee = safetyFeeTier(kw);
   const constructionTotal = constructionCost + safetyFee;
@@ -727,7 +730,7 @@ function computeProfitCase(p){
 
   return {
     kw, unitBusinessCost, unitDepositPrice, unitSalesCost, unitConstructionCost,
-    moduleAmount, moduleProfit, inverterAmount, inverterProfit, structureAmount, structureProfit, structureNaturalAmount,
+    moduleAmount, moduleProfit, module2Amount, module2Profit, inverterAmount, inverterProfit, structureAmount, structureProfit, structureNaturalAmount,
     etcMaterial, materialCost, retailProfitTotal,
     safetyFee, constructionTotal, agencyTotal,
     rate, perPersonLabor, laborBase, designLaborFee, laborTotal,
@@ -1731,26 +1734,30 @@ function buildProfitStatementHtml(p){
   const groups = [
     { no:1, noMode:'perItem', cat:'자재비', catMode:'merged', itemMode:'perItem', items:[
       { no:1, label:'모듈', cost:r.moduleAmount, note:p.moduleModel, retailProfit: r.moduleAmount ? r.moduleProfit : null },
-      { no:2, label:'인버터', cost:r.inverterAmount, note:p.inverterModel, retailProfit: r.inverterAmount ? r.inverterProfit : null },
-      { no:3, label:'구조물', cost:r.structureAmount, note:p.structureNote, retailProfit: r.structureAmount ? r.structureProfit : null },
-      { no:4, label:'기타', cost:r.etcMaterial, note:'' },
+      ...(p.module2Model ? [{ no:2, label:'모듈2', cost:r.module2Amount, note:p.module2Model, retailProfit: r.module2Amount ? r.module2Profit : null }] : []),
+      { no:p.module2Model?3:2, label:'인버터', cost:r.inverterAmount, note:p.inverterModel, retailProfit: r.inverterAmount ? r.inverterProfit : null },
+      { no:p.module2Model?4:3, label:'구조물', cost:r.structureAmount, note:p.structureNote, retailProfit: r.structureAmount ? r.structureProfit : null },
+      { no:p.module2Model?5:4, label:'기타', cost:r.etcMaterial, note:'' },
     ]},
-    { no:5, noMode:'merged', catMode:'perItem', itemMode:'merged', item: escapeHtml(p.agentName)||'-', items:[
+    { no:p.module2Model?6:5, noMode:'merged', catMode:'perItem', itemMode:'merged', item: escapeHtml(p.agentName)||'-', items:[
       { cat:'영업비', cost:Number(p.salesCost)||0, note:'', retailProfitText: `합계 : ${fmtNum(r.retailProfitTotal)}` },
       { cat:'영업비 공제', cost:Number(p.salesDeduction)||0, note:p.salesDeductionNote },
     ]},
-    { no:6, noMode:'merged', catMode:'perItem', itemMode:'merged', item: escapeHtml(p.teamName)||'-', items:[
+    { no:p.module2Model?7:6, noMode:'merged', catMode:'perItem', itemMode:'merged', item: escapeHtml(p.teamName)||'-', items:[
       { cat:'시공비', cost:Number(p.constructionCost)||0, note:'' },
       { cat:'안전이행비', cost:r.safetyFee, note:'' },
     ]},
-    { no:7, noMode:'perItem', cat:'대관업무', catMode:'merged', itemMode:'perItem', subtotal:true, items:[
-      { no:7, label:'구조검토', cost:Number(p.structureReviewCost)||0, note:'' },
-      { no:8, label:'설계/감리', cost:Number(p.designSupervisionCost)||0, note:'' },
-      { no:9, label:'한전 비용', cost:Number(p.inspectionFeeCost)||0, note:'' },
-      { no:10, label:'기타', cost:Number(p.etcAgencyCost)||0, note:'' },
-    ]},
-    { no:11, noMode:'merged', cat:'인건비', catMode:'merged', itemMode:'perItem', items: laborItems },
-    { no:12, noMode:'merged', cat:'유지관리비', catMode:'merged', itemMode:'perItem', items:[
+    { no:p.module2Model?8:7, noMode:'perItem', cat:'대관업무', catMode:'merged', itemMode:'perItem', subtotal:true, items:(()=>{
+      const base = p.module2Model?8:7;
+      return [
+        { no:base, label:'구조검토', cost:Number(p.structureReviewCost)||0, note:'' },
+        { no:base+1, label:'설계/감리', cost:Number(p.designSupervisionCost)||0, note:'' },
+        { no:base+2, label:'한전 비용', cost:Number(p.inspectionFeeCost)||0, note:'' },
+        { no:base+3, label:'기타', cost:Number(p.etcAgencyCost)||0, note:'' },
+      ];
+    })() },
+    { no:p.module2Model?12:11, noMode:'merged', cat:'인건비', catMode:'merged', itemMode:'perItem', items: laborItems },
+    { no:p.module2Model?13:12, noMode:'merged', cat:'유지관리비', catMode:'merged', itemMode:'perItem', items:[
       { label:'A/S (5년)', cost:r.maintenanceCost, note:'*산출근거 참고', highlight:true },
     ]},
   ];
@@ -2359,6 +2366,20 @@ function renderProfitMain(){
             <td class="calc-cell" id="pf-moduleProfit">${fmtWon(r.moduleProfit)}</td>
           </tr>
           <tr>
+            <td style="padding:6px;">모듈2</td>
+            <td style="padding:6px;">
+              <select data-pf="module2Model">
+                <option value="">선택 안 함</option>
+                ${PERF_MODULE_MODELS.map(label=>`<option value="${escapeHtml(label)}" ${p.module2Model===label?'selected':''}>${escapeHtml(label)}</option>`).join('')}
+              </select>
+            </td>
+            <td style="padding:6px;">${pfMoney("module2Buy", p.module2Buy, 'class="num" style="width:100%;"')}</td>
+            <td style="padding:6px;">${pfMoney("module2Sell", p.module2Sell, 'class="num" style="width:100%;"')}</td>
+            <td style="padding:6px;"><input data-pf="module2Qty" type="number" value="${pf(p.module2Qty)}" class="num" style="width:70px;"></td>
+            <td class="calc-cell" id="pf-module2Amount">${fmtWon(r.module2Amount)}</td>
+            <td class="calc-cell" id="pf-module2Profit">${fmtWon(r.module2Profit)}</td>
+          </tr>
+          <tr>
             <td style="padding:6px;">인버터</td>
             <td style="padding:6px;"><input data-pf="inverterModel" value="${escapeHtml(p.inverterModel)}" placeholder="금비3.7" style="width:100%;"></td>
             <td style="padding:6px;">${pfMoney("inverterBuy", p.inverterBuy, 'class="num" style="width:100%;"')}</td>
@@ -2439,6 +2460,8 @@ function renderProfitMain(){
   document.getElementById('profitRecalcBtn').addEventListener('click', ()=>{
     const modulePrices = PROFIT_MODULE_PRICES[p.moduleModel];
     if(modulePrices){ p.moduleBuy = modulePrices.buy; p.moduleSell = modulePrices.sell; }
+    const module2Prices = PROFIT_MODULE_PRICES[p.module2Model];
+    if(module2Prices){ p.module2Buy = module2Prices.buy; p.module2Sell = module2Prices.sell; }
     const inverterPrices = PROFIT_INVERTER_PRICES[String(p.inverterModel||'').trim()];
     if(inverterPrices){ p.inverterBuy = inverterPrices.buy; p.inverterSell = inverterPrices.sell; }
     applyAttachedStructurePricing(p);
@@ -2473,6 +2496,13 @@ function renderProfitMain(){
           p.moduleSell = prices.sell;
         }
       }
+      if(key === 'module2Model'){
+        const prices = PROFIT_MODULE_PRICES[val];
+        if(prices){
+          p.module2Buy = prices.buy;
+          p.module2Sell = prices.sell;
+        }
+      }
       if(key === 'inverterModel'){
         const prices = PROFIT_INVERTER_PRICES[String(val).trim()];
         if(prices){
@@ -2492,7 +2522,7 @@ function renderProfitMain(){
       }
       updateProfitCalculations();
       debouncedSave();
-      if(key === 'moduleModel' || key === 'inverterModel' || key === 'structureNote') renderProfitMain();
+      if(key === 'moduleModel' || key === 'module2Model' || key === 'inverterModel' || key === 'structureNote') renderProfitMain();
     };
     let markupDirty = false;
     inp.addEventListener('input', ()=>{ markupDirty = true; handler(); });
@@ -2526,6 +2556,8 @@ function updateProfitCalculations(){
   const set = (id, text) => { const el = document.getElementById(id); if(el) el.textContent = text; };
   set('pf-moduleAmount', fmtWon(r.moduleAmount));
   set('pf-moduleProfit', fmtWon(r.moduleProfit));
+  set('pf-module2Amount', fmtWon(r.module2Amount));
+  set('pf-module2Profit', fmtWon(r.module2Profit));
   set('pf-inverterAmount', fmtWon(r.inverterAmount));
   set('pf-inverterProfit', fmtWon(r.inverterProfit));
   set('pf-structureAmount', fmtWon(r.structureAmount));
