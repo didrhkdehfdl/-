@@ -106,6 +106,10 @@
 
   /* ---------- Table ---------- */
   .table-wrap{ overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius); width:100%; scrollbar-width:auto; scrollbar-color:var(--gold-dim) var(--panel-2); }
+  /* 엑셀 틀고정처럼: 세로 스크롤은 이 상자 안에서만 일어나고, 그 스크롤
+     기준(anchor)이 이 상자 자신이라서 thead의 position:sticky가 실제로
+     이 상자 안에서 위쪽에 붙어있게 된다. */
+  .table-wrap-frozen{ max-height:70vh; overflow-y:auto; }
   tr.row-selected{ background:rgba(148,158,176,.22); }
   tr.row-selected td{ background:rgba(148,158,176,.22); }
   .sticky-hscroll{
@@ -426,6 +430,9 @@
         <input type="password" id="authPasswordInput" placeholder="비밀번호" autocomplete="current-password" style="padding:11px 12px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:14px;">
         <input type="password" id="authPasswordConfirmInput" placeholder="비밀번호 확인" autocomplete="new-password" style="display:none; padding:11px 12px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:14px;">
         <div id="authPasswordHint" style="display:none; font-size:11.5px; color:var(--muted); margin-top:-2px;">8자 이상, 숫자와 특수문자를 각각 하나 이상 포함해주세요.</div>
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); cursor:pointer; margin-top:2px;">
+          <input type="checkbox" id="authRememberMeInput" checked style="width:16px; height:16px;"> 로그인 상태 유지 (앱을 껐다 켜도 자동 로그인)
+        </label>
       </div>
       <div id="authErrorMsg" style="color:var(--neg); font-size:12.5px; margin-top:10px; min-height:1em;"></div>
       <button id="authSubmitBtn" style="width:100%; margin-top:6px; padding:12px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:14.5px; font-weight:600; cursor:pointer;">로그인</button>
@@ -1548,6 +1555,43 @@ function computeInspectionMatch(item){
   return { nameMatch: autoMatch, overall, manual: item.manualMatch === true };
 }
 
+// 사용전점검 확인증의 파일명/인식된 이름과 고객명이 일치하는 실적리스트 행을
+// 찾는다 (업로드된 실적리스트 행과 직접입력 행 모두 대상).
+function findMatchingPerfRows(item){
+  const tokens = extractNameTokensFromFilename(item.fileName);
+  const nameCandidates = [item.extractedName, ...tokens].filter(Boolean).map(s=>s.replace(/\s/g,''));
+  const matchesRow = (row) => {
+    const rowCustomer = String(row.customer||'').replace(/\s/g,'');
+    if(!rowCustomer) return false;
+    return nameCandidates.some(name => rowCustomer===name || rowCustomer.includes(name) || name.includes(rowCustomer));
+  };
+  return {
+    importRows: importState.rows.filter(matchesRow),
+    manualRows: importState.manualRows.filter(matchesRow),
+  };
+}
+// 이미 적혀있는 필증일자(여러 줄 가능)에 같은 날짜가 없을 때만 추가한다 —
+// 기존에 손으로 입력해둔 날짜를 지우지 않고 그대로 둔 채 새 날짜만 보탠다.
+function addCertDateIfMissing(row, date){
+  const existing = String(row.certDate||'').split('\n').map(s=>s.trim()).filter(Boolean);
+  if(existing.includes(date)) return false;
+  row.certDate = existing.concat([date]).join('\n');
+  return true;
+}
+// 일치로 확정된 사용전점검 확인증의 점검년월일을, 같은 고객명을 가진 실적리스트
+// 행(업로드분/직접입력분 모두)의 필증일자 칸에 자동으로 채워 넣는다.
+async function propagateInspectionDateToPerfList(item){
+  const m = computeInspectionMatch(item);
+  if(!m.overall || !item.extractedDate) return;
+  const { importRows, manualRows } = findMatchingPerfRows(item);
+  let importChanged = false, manualChanged = false;
+  importRows.forEach(row => { if(addCertDateIfMissing(row, item.extractedDate)) importChanged = true; });
+  manualRows.forEach(row => { if(addCertDateIfMissing(row, item.extractedDate)) manualChanged = true; });
+  if(importChanged) debouncedSaveImportRows();
+  if(manualChanged) debouncedSavePerfRows();
+  if(state.activeTab === 'import') renderImportMain();
+}
+
 function indexEntry(c){
   if(c.caseType === 'profit'){
     const r = computeProfitCase(c);
@@ -2572,7 +2616,7 @@ async function renderProfitListMain(){
       <button class="table-scroll-btn" data-target="profitListTableWrap" data-dir="-1" style="margin-left:auto; font-size:12px; padding:4px 10px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">◀ 왼쪽</button>
       <button class="table-scroll-btn" data-target="profitListTableWrap" data-dir="1" style="font-size:12px; padding:4px 10px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">오른쪽 ▶</button>
     </div>
-    <div class="table-wrap" id="profitListTableWrap">
+    <div class="table-wrap table-wrap-frozen" id="profitListTableWrap">
       <table style="border-collapse:collapse; table-layout:auto; min-width:5200px;">
         <thead>
           <tr>${groupRowHtml}<th rowspan="3" style="text-align:center;">관리</th></tr>
@@ -3688,6 +3732,7 @@ async function runOcrForItem(item){
     item.ocrStatus = 'error';
   }
   await saveInspectionIndex(inspectionState.items);
+  await propagateInspectionDateToPerfList(item);
   renderInspectionMain();
 }
 
@@ -3794,6 +3839,7 @@ async function renderInspectionMain(){
       if(!item) return;
       item.extractedName = inp.value.trim();
       await saveInspectionIndex(inspectionState.items);
+      await propagateInspectionDateToPerfList(item);
       renderInspectionMain();
     });
   });
@@ -3803,6 +3849,7 @@ async function renderInspectionMain(){
       if(!item) return;
       item.extractedDate = inp.value.trim();
       await saveInspectionIndex(inspectionState.items);
+      await propagateInspectionDateToPerfList(item);
       renderInspectionMain();
     });
   });
@@ -3812,6 +3859,7 @@ async function renderInspectionMain(){
       if(!item) return;
       item.manualMatch = true;
       await saveInspectionIndex(inspectionState.items);
+      await propagateInspectionDateToPerfList(item);
       renderInspectionMain();
     });
   });
@@ -4509,7 +4557,7 @@ function renderUploadMode(){
         <button class="table-scroll-btn" data-target="importTableWrap" data-dir="-1" style="margin-left:auto; font-size:12px; padding:4px 10px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">◀ 왼쪽</button>
         <button class="table-scroll-btn" data-target="importTableWrap" data-dir="1" style="font-size:12px; padding:4px 10px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">오른쪽 ▶</button>
       </div>
-      <div class="table-wrap" id="importTableWrap">
+      <div class="table-wrap table-wrap-frozen" id="importTableWrap">
         <table style="width:100%; border-collapse:collapse; table-layout:fixed; min-width:4700px;">
           ${perfColgroup([10])}
           <thead><tr>
@@ -4582,7 +4630,7 @@ function renderUploadMode(){
       inp.addEventListener('blur', ()=>{
         const tr = inp.closest('tr[data-row-id]');
         const row = importState.rows.find(r=>r.id===tr.dataset.rowId);
-        inp.value = row && row[inp.dataset.perf] ? Number(row[inp.dataset.perf]).toLocaleString('ko-KR') : '';
+        inp.value = row ? perfNumericDisplayValue(row, inp.dataset.perf) : '';
       });
     }
   });
@@ -4634,7 +4682,7 @@ function renderManualEntry(){
       <button class="table-scroll-btn" data-target="perfTableWrap" data-dir="-1" style="margin-left:auto; font-size:12px; padding:4px 10px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">◀ 왼쪽</button>
       <button class="table-scroll-btn" data-target="perfTableWrap" data-dir="1" style="font-size:12px; padding:4px 10px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">오른쪽 ▶</button>
     </div>
-    <div class="table-wrap" id="perfTableWrap">
+    <div class="table-wrap table-wrap-frozen" id="perfTableWrap">
       <table style="width:100%; border-collapse:collapse; table-layout:fixed; min-width:4900px;">
         ${perfColgroup([9,3])}
         <thead><tr>
@@ -4712,6 +4760,18 @@ function findPerfModuleNoteIndex(row){
   return isAttached ? entry.attached : entry.slab;
 }
 
+// 숫자 입력칸에 표시할 값을 계산한다. 회사입금가가 원본에 비어있으면
+// 자동단가로 계산한 값을 대신 보여준다 (blur 시에도 이 값이 유지되도록
+// perfCellHtml과 이 함수가 같은 로직을 공유한다).
+function perfNumericDisplayValue(row, field){
+  let v = row[field];
+  if(field === 'companyPrice' && !v){
+    const fallback = computePerfCompanyPrice(row);
+    if(fallback) v = fallback;
+  }
+  return v ? Number(v).toLocaleString('ko-KR') : '';
+}
+
 function perfCellHtml(r, field, type){
   const v = r[field];
   if(type === 'module'){
@@ -4728,8 +4788,15 @@ function perfCellHtml(r, field, type){
     </select>`;
   }
   if(type === 'number'){
-    const display = v ? Number(v).toLocaleString('ko-KR') : '';
-    return `<input type="text" inputmode="numeric" data-perf="${field}" data-numeric="true" value="${display}" class="num" style="width:100%;">`;
+    // 회사입금가가 원본 파일에 비어있으면, 모듈/구조형태 기준 자동단가로
+    // 계산한 값을 초록색으로 미리 보여준다 — 실제 저장값은 그대로 비워둔
+    // 채, "이 값은 파일에 적혀있던 게 아니라 앱이 자동 계산한 것"임을
+    // 표시만 하는 것이다 (건 생성 시에는 이 자동단가가 그대로 적용된다).
+    const isAuto = field === 'companyPrice' && !v && !!computePerfCompanyPrice(r);
+    const display = perfNumericDisplayValue(r, field);
+    const autoStyle = isAuto ? ' background:rgba(47,125,92,.15); border-color:var(--pos) !important; color:var(--pos); font-weight:600;' : '';
+    const title = isAuto ? '원본 파일에는 값이 없어 자동으로 계산한 금액입니다' : '';
+    return `<input type="text" inputmode="numeric" data-perf="${field}" data-numeric="true" value="${display}" class="num" title="${title}" style="width:100%;${autoStyle}">`;
   }
   if(type === 'nativedate'){
     return `<input type="date" data-perf="${field}" value="${escapeHtml(v)}" style="width:100%;">`;
@@ -4818,7 +4885,7 @@ function wirePerfRowEvents(){
       inp.addEventListener('blur', ()=>{
         const tr = inp.closest('tr[data-id]');
         const row = importState.manualRows.find(r=>r.id===tr.dataset.id);
-        inp.value = row && row[inp.dataset.perf] ? Number(row[inp.dataset.perf]).toLocaleString('ko-KR') : '';
+        inp.value = row ? perfNumericDisplayValue(row, inp.dataset.perf) : '';
       });
     }
   });
@@ -5652,6 +5719,11 @@ async function handleAuthSubmit(){
   const original = btn.textContent;
   btn.disabled = true; btn.textContent = '처리 중…';
   try{
+    // "로그인 상태 유지" 체크 여부로 지속성을 정한다: 체크하면 앱을 완전히
+    // 껐다 켜도(브라우저/기기 재시작 포함) 자동으로 로그인 상태가 유지되고,
+    // 체크를 풀면 이 브라우저 탭/세션이 끝나면 로그인 정보가 사라진다.
+    const rememberMe = document.getElementById('authRememberMeInput').checked;
+    await fbAuth.setPersistence(rememberMe ? firebase.auth.Auth.Persistence.LOCAL : firebase.auth.Auth.Persistence.SESSION);
     if(authMode === 'signup'){
       const confirm = document.getElementById('authPasswordConfirmInput').value;
       if(password !== confirm){ errEl.textContent = '비밀번호가 서로 다릅니다.'; return; }
