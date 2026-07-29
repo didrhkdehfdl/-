@@ -234,7 +234,7 @@
   /* ---- 기안지 ---- */
   .giwanji-top{ display:flex; align-items:stretch; }
   table.giwanji-grid{ border-collapse:collapse; flex:1; min-width:0; table-layout:fixed; border:2px solid #000; }
-  table.giwanji-grid td{ border:1px solid #000; text-align:center; padding:11px 3px; font-size:11px; height:22px; }
+  table.giwanji-grid td{ border:1px solid #000; text-align:center; padding:6px 3px; font-size:11px; height:16px; }
   table.giwanji-grid td.title-cell{ font-size:24px; font-weight:700; letter-spacing:10px; vertical-align:middle; }
   table.giwanji-grid td.title-cell .check-line{ font-size:10px; font-weight:400; letter-spacing:0; margin-top:10px; white-space:nowrap; }
   table.giwanji-grid td.vert-label{ font-size:11px; letter-spacing:2px; line-height:1.6; text-align:center; vertical-align:middle; }
@@ -246,10 +246,10 @@
   .giwanji-body{ padding:20px 6px 10px; font-size:12.5px; line-height:2.3; }
   .giwanji-arae{ text-align:center; font-weight:700; letter-spacing:6px; margin:10px 0; font-size:13px; }
   table.giwanji-info{ width:100%; border-collapse:collapse; margin-bottom:16px; }
-  table.giwanji-info td{ padding:10px 6px; font-size:12px; line-height:1.9; }
+  table.giwanji-info td{ padding:6px 6px; font-size:12px; line-height:1.5; }
   table.giwanji-info td:first-child{ width:150px; white-space:nowrap; }
   table.giwanji-worktable{ width:100%; border-collapse:collapse; margin-bottom:16px; }
-  table.giwanji-worktable th, table.giwanji-worktable td{ border:1px solid #000; padding:15px 10px; font-size:12px; }
+  table.giwanji-worktable th, table.giwanji-worktable td{ border:1px solid #000; padding:7px 10px; font-size:12px; }
   table.giwanji-worktable thead th{ background:#f2f2f2; text-align:center; }
   table.giwanji-worktable td.left{ text-align:left; }
   table.giwanji-worktable td.num{ text-align:right; }
@@ -1699,22 +1699,7 @@ function buildGiwanjiHtml(c, totals){
 }
 
 function buildJichulHtml(c, totals){
-  const namedRecords = c.records.filter(r=>r.customer);
-  // 내역도 기안지와 동일하게 고객별로 한 줄씩 나눠 적는다 (원본 서식과 동일).
-  const detailRows = namedRecords.map(r => {
-    const pay = payOf(r);
-    const net = pay - Math.round(pay*0.033);
-    return `
-      <tr>
-        <td class="center">${escapeHtml(c.project)}</td>
-        <td colspan="5">${escapeHtml(oneLine(r.customer))} 영업비용</td>
-        <td colspan="2" class="num">${fmtNum(net)}</td>
-        <td colspan="2" class="center">3.3% 공제 후 금액</td>
-      </tr>`;
-  }).join('');
-  const fillerCount = Math.max(0, 3 - namedRecords.length);
-  const detailFillers = Array.from({length: fillerCount}, ()=>`
-      <tr><td class="center">&nbsp;</td><td colspan="5"></td><td colspan="2"></td><td colspan="2"></td></tr>`).join('');
+  const customerNames = c.records.map(r=>oneLine(r.customer)).filter(Boolean).join(', ');
   // Proportional widths taken directly from the original sheet's column
   // widths (columns B through K), so every table below lines up exactly.
   const mainCols = [14,3.643,8.774,8.774,12.88,11.579,8.774,8.774,11.4,11.4];
@@ -1784,8 +1769,12 @@ function buildJichulHtml(c, totals){
         <td class="label">적　요</td><td colspan="5" class="label">지출내역</td>
         <td colspan="2" class="label">금　액</td><td colspan="2" class="label">비　고</td>
       </tr>
-      ${detailRows}
-      ${detailFillers}
+      <tr>
+        <td class="center">${escapeHtml(c.project)}</td>
+        <td colspan="5">${escapeHtml(customerNames)||'(고객명 미입력)'} 영업비용</td>
+        <td colspan="2" class="num">${fmtNum(totals.net)}</td>
+        <td colspan="2" class="center">3.3% 공제 후 금액</td>
+      </tr>
       <tr>
         <td colspan="4" class="center" style="font-weight:700;">합　계</td>
         <td colspan="4" class="num" style="font-weight:700;">${fmtNum(totals.net)}</td>
@@ -1804,7 +1793,6 @@ function buildJichulHtml(c, totals){
     <div class="jichul-code-row">
       <span>P201-16</span><span>${escapeHtml(c.companyName)}</span><span>A4(210× 297)</span>
     </div>
-    ${buildIsoFooter('P201-16', 2, 2)}
   </div>`;
 }
 
@@ -1965,7 +1953,6 @@ function buildProfitStatementHtml(p){
       <div style="font-weight:700; margin-bottom:4px;">특이사항</div>
       <div style="white-space:pre-wrap; line-height:1.7;">${escapeHtml(p.specialNotes)}</div>
     </div>
-    ${buildIsoFooter('P501-1', 1, 1)}
   </div>`;
 }
 
