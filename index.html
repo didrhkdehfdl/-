@@ -3877,6 +3877,15 @@ async function runBizRegOcrForItem(item){
 async function handleAgentDocUpload(e){
   const files = [...(e.target.files||[])];
   if(files.length===0) return;
+  const customerInput = document.getElementById('agentDocCustomerInput');
+  const customerName = customerInput ? customerInput.value.trim() : '';
+  if(!customerName){
+    const hint = document.getElementById('agentDocUploadHint');
+    if(hint) hint.style.display = '';
+    e.target.value = '';
+    return;
+  }
+  agentDocsState.pendingCustomer = customerName; // remember for the next upload in this session
   const category = agentDocsState.category;
   const MAX_BYTES = 3.5*1024*1024; // see contracts upload for why (base64 inflates ~33%, storage cap is 5MB)
   const skipped = [];
@@ -3896,7 +3905,7 @@ async function handleAgentDocUpload(e){
       const id = rid();
       const saveResult = await saveAgentDocFileData(id, base64);
       if(!saveResult.ok){ skipped.push(`${file.name} (저장 실패: ${saveResult.reason})`); continue; }
-      const item = { id, category, fileName: file.name, size: file.size, mime: file.type, uploadedAt: isoDate(new Date()) };
+      const item = { id, category, customerName, fileName: file.name, size: file.size, mime: file.type, uploadedAt: isoDate(new Date()) };
       if(category === 'bizreg'){
         Object.assign(item, { isCorporate:null, bizName:'', ownerName:'', bizNumber:'', bizType:'', bizItem:'', email:'', ocrStatus:'pending' });
       }
@@ -3939,15 +3948,19 @@ async function renderAgentDocsMain(){
         <button class="agentdoc-cat-btn" data-cat="${c.key}" style="padding:9px 16px; font-size:12.5px; border:none; ${c.key!==AGENT_DOC_CATEGORIES[0].key?'border-left:1px solid var(--line);':''} cursor:pointer; background:${agentDocsState.category===c.key?'var(--panel-2)':'transparent'}; color:${agentDocsState.category===c.key?'var(--gold)':'var(--muted)'};">${c.label}</button>
       `).join('')}
     </div>
-    <div style="margin-bottom:16px;">
+    <div style="margin-bottom:16px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <label style="font-size:13px; color:var(--muted);">고객명</label>
+      <input type="text" id="agentDocCustomerInput" placeholder="예: 최정연" value="${escapeHtml(agentDocsState.pendingCustomer||'')}" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:180px;">
       <input type="file" id="agentDocUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
     </div>
+    <div id="agentDocUploadHint" style="display:none; color:var(--neg); font-size:12px; margin:-10px 0 16px;">먼저 고객명을 입력해주세요.</div>
     ${items.length===0 ? `<div class="empty-side">아직 업로드된 ${AGENT_DOC_CATEGORIES.find(c=>c.key===agentDocsState.category).label}가 없습니다.</div>` : (
       isBizreg ? `
       <div class="table-wrap">
         <table style="width:100%; border-collapse:collapse;">
           <thead><tr>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">고객명</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:70px;">구분</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:130px;">사업자명</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">대표자명</th>
@@ -3961,6 +3974,7 @@ async function renderAgentDocsMain(){
             ${items.map(item => `
               <tr data-id="${item.id}">
                 <td style="padding:6px; font-size:12.5px;">${escapeHtml(item.fileName)}<div style="font-size:10px; color:var(--muted);">${fmtFileSize(item.size||0)}</div></td>
+                <td style="padding:6px;"><input class="agentdoc-field" data-id="${item.id}" data-field="customerName" value="${escapeHtml(item.customerName||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
                 <td style="padding:6px; text-align:center;">
                   ${item.ocrStatus==='running' ? `<span style="font-size:11px; color:var(--muted);">인식중</span>` : `
                   <select class="agentdoc-field" data-id="${item.id}" data-field="isCorporate" style="font-size:11.5px; padding:4px;">
@@ -3990,6 +4004,7 @@ async function renderAgentDocsMain(){
         <table style="width:100%; border-collapse:collapse;">
           <thead><tr>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:130px;">고객명</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:90px;">용량</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:150px;">작업</th>
           </tr></thead>
@@ -3997,6 +4012,7 @@ async function renderAgentDocsMain(){
             ${items.map(item => `
               <tr data-id="${item.id}">
                 <td style="padding:8px 6px; font-size:13px;">${escapeHtml(item.fileName)}</td>
+                <td style="padding:6px;"><input class="agentdoc-field" data-id="${item.id}" data-field="customerName" value="${escapeHtml(item.customerName||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
                 <td style="padding:8px 6px; font-size:11.5px; color:var(--muted); text-align:center;">${fmtFileSize(item.size||0)}</td>
                 <td style="padding:8px 6px; white-space:nowrap;">
                   <button class="agentdoc-view-btn" data-id="${item.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">보기</button>
@@ -4015,6 +4031,10 @@ async function renderAgentDocsMain(){
     btn.addEventListener('click', ()=>{ agentDocsState.category = btn.dataset.cat; renderAgentDocsMain(); });
   });
   document.getElementById('agentDocUploadInput').addEventListener('change', handleAgentDocUpload);
+  document.getElementById('agentDocCustomerInput').addEventListener('input', ()=>{
+    const hint = document.getElementById('agentDocUploadHint');
+    if(hint) hint.style.display = 'none';
+  });
 
   main.querySelectorAll('.agentdoc-field').forEach(el=>{
     el.addEventListener('change', async ()=>{
