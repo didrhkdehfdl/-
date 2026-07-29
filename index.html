@@ -1587,7 +1587,7 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs'){
+  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'none'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
@@ -1598,7 +1598,9 @@ function renderSidebar(){
           ? '<div class="empty-side">사용전점검 확인증 파일을 업로드하면<br>여기에 목록이 아닌 검사 확인 화면이 표시됩니다.</div>'
           : state.activeTab === 'agentDocs'
             ? '<div class="empty-side">계약서·사업자등록증·기타서류를<br>여기가 아닌 영업자용 화면에서 관리할 수 있습니다.</div>'
-            : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
+            : state.activeTab === 'none'
+              ? '<div class="empty-side">접근 가능한 메뉴가 없습니다.<br>관리자에게 문의해주세요.</div>'
+              : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
     return;
   }
   if(newBtn) newBtn.style.display = '';
@@ -2296,6 +2298,10 @@ function computeTotals(c){
 
 function renderMain(loading){
   const main = document.getElementById('main');
+  if(state.activeTab === 'none'){
+    main.innerHTML = `<div class="no-case"><div class="big">접근 가능한 메뉴가 없습니다</div>관리자에게 문의해서 필요한 탭에 대한 접근 권한을 요청해주세요.</div>`;
+    return;
+  }
   if(state.activeTab === 'import'){
     renderImportMain();
     return;
@@ -5572,8 +5578,12 @@ function applyTabPermissions(allowedTabs){
     const allowed = !allowedTabs || allowedTabs.includes(key);
     btn.style.display = allowed ? 'flex' : 'none';
   });
-  if(allowedTabs && allowedTabs.length && !allowedTabs.includes(state.activeTab)){
-    state.activeTab = allowedTabs[0];
+  if(allowedTabs){
+    if(allowedTabs.length === 0){
+      state.activeTab = 'none'; // 허용된 탭이 하나도 없음 — 전용 안내 화면으로 대체
+    } else if(!allowedTabs.includes(state.activeTab)){
+      state.activeTab = allowedTabs[0];
+    }
   }
 }
 
