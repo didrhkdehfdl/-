@@ -333,6 +333,9 @@
       <button class="tab-btn" data-tab="inspection" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">🔍</span> 사용전점검(검사)
       </button>
+      <button class="tab-btn" data-tab="agentDocs" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
+        <span style="width:18px; text-align:center;">👤</span> 영업자용
+      </button>
       <button class="tab-btn" data-tab="adminApproval" id="adminApprovalTabBtn" style="display:none; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">✅</span> 승인관리
       </button>
@@ -421,6 +424,8 @@ let contractsState = { items:[], selected:new Set(), loaded:false, loading:false
 const contractFileCache = {}; // id -> base64 PDF content, loaded lazily from storage
 let inspectionState = { items:[], loaded:false, loading:false };
 const inspectionFileCache = {}; // id -> base64 file content, loaded lazily from storage
+let agentDocsState = { category:'contract', items:[], loaded:false, loading:false };
+const agentDocFileCache = {}; // id -> base64 file content, loaded lazily from storage
 function newPerfRow(){
   return {
     id: rid(),
@@ -699,7 +704,21 @@ function computeProfitCase(p){
   const module2Profit = ((Number(p.module2Sell)||0) - (Number(p.module2Buy)||0)) * (Number(p.module2Qty)||0);
   const inverterAmount = (Number(p.inverterSell)||0) * (Number(p.inverterQty)||0);
   const inverterProfit = ((Number(p.inverterSell)||0) - (Number(p.inverterBuy)||0)) * (Number(p.inverterQty)||0);
-  const structureNaturalAmount = (Number(p.structureSell)||0) * (Number(p.structureQty)||0);
+  // 구조물 판매/구매단가·수량이 아직 한 번도 저장되지 않은 건(부착형 자동단가를
+  // "다시 계산"으로 적용해본 적 없는 예전 건 등)이라도, 분류(구조물 설명)에
+  // "부착형"이 포함되어 있으면 계산 시점에 3kw당 단가(구매 187,495원/판매
+  // 220,000원)를 즉석에서 적용한다 — 이렇게 하면 가로보기·정산내역서·합계
+  // 어디서 봐도 구조물비용이 비어 보이지 않는다. 이미 값이 저장돼 있으면
+  // 그 값을 그대로 쓴다(자동 적용은 값이 전혀 없을 때만).
+  let effStructureBuy = Number(p.structureBuy)||0;
+  let effStructureSell = Number(p.structureSell)||0;
+  let effStructureQty = Number(p.structureQty)||0;
+  if(/부착형/.test(p.structureNote||'') && !effStructureBuy && !effStructureSell){
+    effStructureBuy = 187495;
+    effStructureSell = 220000;
+    if(!effStructureQty) effStructureQty = kw>0 ? kw/3 : 0;
+  }
+  const structureNaturalAmount = effStructureSell * effStructureQty;
   // 구조물 투입비용 상한: 3kw당 50만원 (3kw→50만, 6kw→100만, 9kw→150만 ...).
   // 판매단가×수량으로 계산한 금액이 이 한도를 넘으면 한도 금액으로 잘라서
   // 정산내역서/투입금액 계산에 반영한다. 구조물 투입비용을 수동으로 지정한
@@ -709,7 +728,7 @@ function computeProfitCase(p){
   const structureAmount = (p.structureOverride !== '' && p.structureOverride !== null && p.structureOverride !== undefined)
     ? Number(p.structureOverride)||0
     : structureCappedAmount;
-  const structureProfit = ((Number(p.structureSell)||0) - (Number(p.structureBuy)||0)) * (Number(p.structureQty)||0);
+  const structureProfit = (effStructureSell - effStructureBuy) * effStructureQty;
   const etcMaterial = Number(p.etcMaterial)||0;
   const materialCost = moduleAmount + module2Amount + inverterAmount + structureAmount + etcMaterial;
   const retailProfitTotal = moduleProfit + module2Profit + inverterProfit + structureProfit;
@@ -738,6 +757,7 @@ function computeProfitCase(p){
   return {
     kw, unitBusinessCost, unitDepositPrice, unitSalesCost, unitConstructionCost,
     moduleAmount, moduleProfit, module2Amount, module2Profit, inverterAmount, inverterProfit, structureAmount, structureProfit, structureNaturalAmount,
+    effStructureBuy, effStructureSell, effStructureQty,
     etcMaterial, materialCost, retailProfitTotal,
     safetyFee, constructionTotal, agencyTotal,
     rate, perPersonLabor, laborBase, designLaborFee, laborTotal,
@@ -842,9 +862,9 @@ function computeProfitListRowValues(p, index){
     inverterSell: Number(p.inverterSell)||0,
     inverterAmount: r.inverterAmount,
     structureNote: p.structureNote||'',
-    structureQty: Number(p.structureQty)||0,
-    structureBuy: Number(p.structureBuy)||0,
-    structureSell: Number(p.structureSell)||0,
+    structureQty: r.effStructureQty,
+    structureBuy: r.effStructureBuy,
+    structureSell: r.effStructureSell,
     structureAmount: r.structureAmount,
     etcMaterial: Number(p.etcMaterial)||0,
     materialCost: r.materialCost,
@@ -1154,6 +1174,110 @@ async function deleteInspectionFileData(id){
   try{ await idbDelete(key); }catch(e){}
 }
 
+const AGENT_DOCS_INDEX_KEY = 'agentdocs-index';
+async function loadAgentDocsIndex(){
+  try{
+    const value = await loadFileFromStorage(AGENT_DOCS_INDEX_KEY);
+    return value ? JSON.parse(value) : [];
+  }catch(e){ return []; }
+}
+async function saveAgentDocsIndex(list){
+  try{
+    await saveFileToStorage(AGENT_DOCS_INDEX_KEY, JSON.stringify(list));
+  }catch(e){ console.error(e); }
+}
+async function loadAgentDocFileData(id){
+  if(agentDocFileCache[id]) return agentDocFileCache[id];
+  const value = await loadFileFromStorage('agentdoc-file:'+id, 20000);
+  if(value !== null) agentDocFileCache[id] = value;
+  return value;
+}
+async function saveAgentDocFileData(id, base64){
+  agentDocFileCache[id] = base64;
+  const result = await saveFileToStorage('agentdoc-file:'+id, base64, 20000);
+  if(!result.ok){ delete agentDocFileCache[id]; return result; }
+  return result;
+}
+async function deleteAgentDocFileData(id){
+  delete agentDocFileCache[id];
+  const key = 'agentdoc-file:'+id;
+  if(window.storage){ try{ await storageDelete(key, false); }catch(e){} }
+  try{ await idbDelete(key); }catch(e){}
+}
+
+// ---- 사업자등록증 OCR 파싱 ----
+// 사업자등록증은 라벨(상호/성명/등록번호/업태/종목 등)이 표 형태로 나열되는
+// 문서라, 사용전점검 확인증 파싱과 같은 방식(라벨 뒤 텍스트를 읽어오는 방식)을 쓴다.
+function findAfterLabel(text, labels, maxLen){
+  maxLen = maxLen || 24;
+  for(const label of (Array.isArray(labels)?labels:[labels])){
+    const idx = text.indexOf(label);
+    if(idx < 0) continue;
+    let after = text.slice(idx + label.length, idx + label.length + maxLen);
+    after = after.replace(/^[\s:：]+/, ''); // drop leading colon/whitespace
+    // Stop at the next line break or another known label, whichever comes first.
+    after = after.split(/[\n\r]/)[0];
+    after = after.trim();
+    if(after) return after;
+  }
+  return '';
+}
+// 법인 여부: "법인등록번호"나 "법인명"이 있으면 법인, 그렇지 않고 "성명"(개인
+// 사업자등록증의 대표자 표기)이 있으면 개인으로 본다.
+function parseBizIsCorporate(text){
+  if(/법인등록번호|법인명/.test(text)) return true;
+  if(/성명/.test(text)) return false;
+  return null; // 판단 불가 — 수동 확인 필요
+}
+// 사업자등록번호(3-2-5자리)를 찾는다. "법인등록번호"(6-7자리, 다른 형식)와
+// 헷갈리지 않도록 "사업자등록번호"/"등록번호" 라벨 주변을 먼저 찾고, 그 라벨이
+// "법인등록번호"의 일부인 경우는 건너뛴다.
+function parseBizNumber(text){
+  let idx = text.indexOf('사업자등록번호');
+  if(idx < 0){
+    let searchFrom = 0;
+    while(true){
+      const found = text.indexOf('등록번호', searchFrom);
+      if(found < 0){ idx = -1; break; }
+      if(text.slice(Math.max(0,found-2), found) !== '법인'){ idx = found; break; }
+      searchFrom = found + 4;
+    }
+  }
+  if(idx >= 0){
+    const m = text.slice(idx, idx+40).match(/(\d{3})[-\s]?(\d{2})[-\s]?(\d{5})(?!\d)/);
+    if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  }
+  // 라벨을 못 찾았을 때만, 대시가 실제로 있는 3-2-5 패턴을 마지막 수단으로 찾는다
+  // (대시 없이 찾으면 법인등록번호 같은 긴 숫자 안에서 잘못 걸릴 수 있어 제외).
+  const m2 = text.match(/(?<!\d)(\d{3})-(\d{2})-(\d{5})(?!\d)/);
+  return m2 ? `${m2[1]}-${m2[2]}-${m2[3]}` : '';
+}
+// 업태/종목은 흔히 "[업태] 도소매 [종목] 태양광설비"처럼 대괄호로 나열되므로,
+// 다음 대괄호나 줄바꿈이 나오기 전까지만 값으로 잡는다.
+function parseBizTypeItem(text){
+  let bizType = '', bizItem = '';
+  let m = text.match(/업태\]?\s*[:：]?\s*([^\[\n]{1,20})/);
+  if(m) bizType = m[1].trim();
+  m = text.match(/종목\]?\s*[:：]?\s*([^\[\n]{1,20})/);
+  if(m) bizItem = m[1].trim();
+  return { bizType, bizItem };
+}
+function parseBizRegFromText(text){
+  text = text || '';
+  const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  const isCorporate = parseBizIsCorporate(text);
+  const { bizType, bizItem } = parseBizTypeItem(text);
+  return {
+    isCorporate,
+    bizName: findAfterLabel(text, ['법인명(단체명)','법인명','상호']),
+    ownerName: findAfterLabel(text, isCorporate ? ['대표자'] : ['성명','대표자']),
+    bizNumber: parseBizNumber(text),
+    bizType,
+    bizItem,
+    email: emailMatch ? emailMatch[0] : '',
+  };
+}
+
 // Finds the inspection date ("2026년 07월 23일" style, spacing tolerant)
 // anywhere in OCR'd text. This form only has one such date (점검년월일), so
 // a plain first-match search is more robust than trying to anchor on the
@@ -1291,7 +1415,7 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval'){
+  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
@@ -1300,7 +1424,9 @@ function renderSidebar(){
         ? '<div class="empty-side">계약서 PDF를 업로드하면<br>여기에 목록이 아닌 계약서 관리 화면이 표시됩니다.</div>'
         : state.activeTab === 'inspection'
           ? '<div class="empty-side">사용전점검 확인증 파일을 업로드하면<br>여기에 목록이 아닌 검사 확인 화면이 표시됩니다.</div>'
-          : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
+          : state.activeTab === 'agentDocs'
+            ? '<div class="empty-side">계약서·사업자등록증·기타서류를<br>여기가 아닌 영업자용 화면에서 관리할 수 있습니다.</div>'
+            : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
     return;
   }
   if(newBtn) newBtn.style.display = '';
@@ -2008,6 +2134,10 @@ function renderMain(loading){
   }
   if(state.activeTab === 'inspection'){
     renderInspectionMain();
+    return;
+  }
+  if(state.activeTab === 'agentDocs'){
+    renderAgentDocsMain();
     return;
   }
   if(state.activeTab === 'adminApproval'){
@@ -3591,6 +3721,7 @@ const ALL_TABS = [
   { key:'import', label:'실적리스트' },
   { key:'contracts', label:'계약서' },
   { key:'inspection', label:'사용전점검' },
+  { key:'agentDocs', label:'영업자용' },
 ];
 
 async function renderAdminApprovalList(){
@@ -3679,6 +3810,254 @@ async function renderAdminApprovalList(){
     console.error(e);
     listEl.innerHTML = '<div style="color:var(--neg); font-size:13px;">목록을 불러오지 못했습니다. Firestore 보안 규칙을 확인해주세요.</div>';
   }
+}
+
+// ---------- 영업자용 (agent documents) tab ----------
+
+const AGENT_DOC_CATEGORIES = [
+  { key:'contract', label:'계약서' },
+  { key:'bizreg', label:'사업자등록증' },
+  { key:'other', label:'기타서류' },
+];
+
+async function ensureAgentDocsLoaded(){
+  if(agentDocsState.loaded || agentDocsState.loading) return;
+  agentDocsState.loading = true;
+  agentDocsState.items = await loadAgentDocsIndex();
+  agentDocsState.loading = false;
+  agentDocsState.loaded = true;
+}
+
+// Runs OCR on a 사업자등록증 upload and fills in the parsed business-info
+// fields. Mirrors runOcrForItem's structure (PDF vs image handling, timeout
+// safety) — always leaves the item usable even if OCR fails, since every
+// field stays manually editable regardless.
+async function runBizRegOcrForItem(item){
+  item.ocrStatus = 'running';
+  renderAgentDocsMain();
+  try{
+    const base64 = await loadAgentDocFileData(item.id);
+    if(!base64) throw new Error('file data missing');
+    await loadTesseractLibrary();
+    let canvas;
+    if(item.mime === 'application/pdf'){
+      canvas = await renderPdfFirstPageToCanvas(base64ToBytes(base64));
+    } else {
+      canvas = await loadImageToCanvas(`data:${item.mime};base64,${base64}`);
+    }
+    preprocessCanvasForOcr(canvas);
+    const worker = await withTimeout(Tesseract.createWorker('kor'), 20000);
+    if(!worker) throw new Error('OCR worker failed to start');
+    try{
+      await worker.setParameters({ tessedit_pageseg_mode: '6' });
+      const result = await withTimeout(worker.recognize(canvas), 45000);
+      if(!result) throw new Error('OCR timed out');
+      const text = result.data.text || '';
+      item.ocrText = text;
+      const parsed = parseBizRegFromText(text);
+      item.isCorporate = parsed.isCorporate;
+      item.bizName = parsed.bizName;
+      item.ownerName = parsed.ownerName;
+      item.bizNumber = parsed.bizNumber;
+      item.bizType = parsed.bizType;
+      item.bizItem = parsed.bizItem;
+      item.email = parsed.email;
+      item.ocrStatus = 'done';
+    } finally {
+      try{ await worker.terminate(); }catch(e){}
+    }
+  }catch(err){
+    console.error(err);
+    item.ocrStatus = 'error';
+  }
+  await saveAgentDocsIndex(agentDocsState.items);
+  renderAgentDocsMain();
+}
+
+async function handleAgentDocUpload(e){
+  const files = [...(e.target.files||[])];
+  if(files.length===0) return;
+  const category = agentDocsState.category;
+  const MAX_BYTES = 3.5*1024*1024; // see contracts upload for why (base64 inflates ~33%, storage cap is 5MB)
+  const skipped = [];
+  const newBizregItems = [];
+  for(const file of files){
+    if(file.size > MAX_BYTES){ skipped.push(`${file.name} (5MB 저장 한도 초과)`); continue; }
+    if(file.type !== 'application/pdf' && !file.type.startsWith('image/')){
+      skipped.push(`${file.name} (PDF 또는 이미지 파일만 지원)`); continue;
+    }
+    try{
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const id = rid();
+      const saveResult = await saveAgentDocFileData(id, base64);
+      if(!saveResult.ok){ skipped.push(`${file.name} (저장 실패: ${saveResult.reason})`); continue; }
+      const item = { id, category, fileName: file.name, size: file.size, mime: file.type, uploadedAt: isoDate(new Date()) };
+      if(category === 'bizreg'){
+        Object.assign(item, { isCorporate:null, bizName:'', ownerName:'', bizNumber:'', bizType:'', bizItem:'', email:'', ocrStatus:'pending' });
+      }
+      agentDocsState.items.push(item);
+      if(category === 'bizreg') newBizregItems.push(item);
+    }catch(err){
+      console.error(err);
+      skipped.push(file.name);
+    }
+  }
+  await saveAgentDocsIndex(agentDocsState.items);
+  renderAgentDocsMain();
+  if(skipped.length){
+    alert(`다음 파일은 저장하지 못했습니다:\n${skipped.join('\n')}`);
+  }
+  for(const item of newBizregItems){
+    await runBizRegOcrForItem(item);
+  }
+}
+
+async function renderAgentDocsMain(){
+  const main = document.getElementById('main');
+  if(!agentDocsState.loaded){
+    main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+    await ensureAgentDocsLoaded();
+    if(state.activeTab !== 'agentDocs') return;
+  }
+  const items = agentDocsState.items.filter(it => it.category === agentDocsState.category);
+  const isBizreg = agentDocsState.category === 'bizreg';
+
+  main.innerHTML = `
+    <h2 class="section-title">영업자용 서류 관리</h2>
+    <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
+      계약서, 사업자등록증, 기타서류를 종류별로 나눠서 올려둘 수 있습니다. 사업자등록증은 업로드하면
+      개인/법인 여부와 사업자명·대표자명·사업자번호·업태·종목·이메일을 자동으로 인식해서 채워둡니다
+      (자동 인식이 틀리면 표에서 직접 고칠 수 있습니다).
+    </p>
+    <div style="display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; width:fit-content; margin-bottom:16px;">
+      ${AGENT_DOC_CATEGORIES.map(c => `
+        <button class="agentdoc-cat-btn" data-cat="${c.key}" style="padding:9px 16px; font-size:12.5px; border:none; ${c.key!==AGENT_DOC_CATEGORIES[0].key?'border-left:1px solid var(--line);':''} cursor:pointer; background:${agentDocsState.category===c.key?'var(--panel-2)':'transparent'}; color:${agentDocsState.category===c.key?'var(--gold)':'var(--muted)'};">${c.label}</button>
+      `).join('')}
+    </div>
+    <div style="margin-bottom:16px;">
+      <input type="file" id="agentDocUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
+    </div>
+    ${items.length===0 ? `<div class="empty-side">아직 업로드된 ${AGENT_DOC_CATEGORIES.find(c=>c.key===agentDocsState.category).label}가 없습니다.</div>` : (
+      isBizreg ? `
+      <div class="table-wrap">
+        <table style="width:100%; border-collapse:collapse;">
+          <thead><tr>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:70px;">구분</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:130px;">사업자명</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">대표자명</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:120px;">사업자번호</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">업태</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">종목</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:150px;">이메일</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:150px;">작업</th>
+          </tr></thead>
+          <tbody>
+            ${items.map(item => `
+              <tr data-id="${item.id}">
+                <td style="padding:6px; font-size:12.5px;">${escapeHtml(item.fileName)}<div style="font-size:10px; color:var(--muted);">${fmtFileSize(item.size||0)}</div></td>
+                <td style="padding:6px; text-align:center;">
+                  ${item.ocrStatus==='running' ? `<span style="font-size:11px; color:var(--muted);">인식중</span>` : `
+                  <select class="agentdoc-field" data-id="${item.id}" data-field="isCorporate" style="font-size:11.5px; padding:4px;">
+                    <option value="" ${item.isCorporate===null?'selected':''}>?</option>
+                    <option value="true" ${item.isCorporate===true?'selected':''}>법인</option>
+                    <option value="false" ${item.isCorporate===false?'selected':''}>개인</option>
+                  </select>`}
+                </td>
+                <td style="padding:6px;"><input class="agentdoc-field" data-id="${item.id}" data-field="bizName" value="${escapeHtml(item.bizName||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+                <td style="padding:6px;"><input class="agentdoc-field" data-id="${item.id}" data-field="ownerName" value="${escapeHtml(item.ownerName||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+                <td style="padding:6px;"><input class="agentdoc-field" data-id="${item.id}" data-field="bizNumber" value="${escapeHtml(item.bizNumber||'')}" placeholder="000-00-00000" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+                <td style="padding:6px;"><input class="agentdoc-field" data-id="${item.id}" data-field="bizType" value="${escapeHtml(item.bizType||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+                <td style="padding:6px;"><input class="agentdoc-field" data-id="${item.id}" data-field="bizItem" value="${escapeHtml(item.bizItem||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+                <td style="padding:6px;"><input class="agentdoc-field" data-id="${item.id}" data-field="email" value="${escapeHtml(item.email||'')}" placeholder="인식 안됨" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+                <td style="padding:6px; white-space:nowrap;">
+                  <button class="agentdoc-reocr-btn" data-id="${item.id}" style="font-size:10.5px; padding:4px 6px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">재인식</button>
+                  <button class="agentdoc-view-btn" data-id="${item.id}" style="font-size:10.5px; padding:4px 6px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">보기</button>
+                  <button class="agentdoc-del-btn" data-id="${item.id}" style="font-size:10.5px; padding:4px 6px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ` : `
+      <div class="table-wrap">
+        <table style="width:100%; border-collapse:collapse;">
+          <thead><tr>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:90px;">용량</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:150px;">작업</th>
+          </tr></thead>
+          <tbody>
+            ${items.map(item => `
+              <tr data-id="${item.id}">
+                <td style="padding:8px 6px; font-size:13px;">${escapeHtml(item.fileName)}</td>
+                <td style="padding:8px 6px; font-size:11.5px; color:var(--muted); text-align:center;">${fmtFileSize(item.size||0)}</td>
+                <td style="padding:8px 6px; white-space:nowrap;">
+                  <button class="agentdoc-view-btn" data-id="${item.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">보기</button>
+                  <button class="agentdoc-del-btn" data-id="${item.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      `
+    )}
+  `;
+
+  main.querySelectorAll('.agentdoc-cat-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ agentDocsState.category = btn.dataset.cat; renderAgentDocsMain(); });
+  });
+  document.getElementById('agentDocUploadInput').addEventListener('change', handleAgentDocUpload);
+
+  main.querySelectorAll('.agentdoc-field').forEach(el=>{
+    el.addEventListener('change', async ()=>{
+      const item = agentDocsState.items.find(it=>it.id===el.dataset.id);
+      if(!item) return;
+      const field = el.dataset.field;
+      item[field] = field==='isCorporate' ? (el.value===''?null:el.value==='true') : el.value.trim();
+      await saveAgentDocsIndex(agentDocsState.items);
+    });
+  });
+  main.querySelectorAll('.agentdoc-reocr-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const item = agentDocsState.items.find(it=>it.id===btn.dataset.id);
+      if(item) runBizRegOcrForItem(item);
+    });
+  });
+  main.querySelectorAll('.agentdoc-view-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const item = agentDocsState.items.find(it=>it.id===btn.dataset.id);
+      if(!item) return;
+      const original = btn.textContent;
+      btn.textContent = '여는 중…';
+      const base64 = await loadAgentDocFileData(item.id);
+      btn.textContent = original;
+      if(!base64){ alert('파일을 불러오지 못했습니다.'); return; }
+      const blob = new Blob([base64ToBytes(base64)], { type:item.mime });
+      if(item.mime === 'application/pdf'){
+        showPdfPreviewOverlay([base64ToBytes(base64)], { label: item.fileName, downloadName: item.fileName, downloadBlob: blob });
+      } else {
+        showImagePreviewOverlay(`data:${item.mime};base64,${base64}`, { label: item.fileName, downloadName: item.fileName, downloadBlob: blob });
+      }
+    });
+  });
+  main.querySelectorAll('.agentdoc-del-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 서류를 삭제할까요? 되돌릴 수 없습니다.')) return;
+      const id = btn.dataset.id;
+      agentDocsState.items = agentDocsState.items.filter(it=>it.id!==id);
+      await saveAgentDocsIndex(agentDocsState.items);
+      await deleteAgentDocFileData(id);
+      renderAgentDocsMain();
+    });
+  });
 }
 
 function renderImportMain(){
