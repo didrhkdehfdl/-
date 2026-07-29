@@ -1358,13 +1358,23 @@ function parseInspectionNameFromText(text, fileName){
     if(m && !candidates.includes(m[0])) candidates.push(m[0]);
     idx = text.indexOf('성명', idx+2);
   }
-  if(candidates.length === 0) return '';
   if(fileName){
     const fileNoExt = String(fileName).replace(/\.[^.]+$/, '').replace(/\s/g,'');
+    // 1) "성명" 라벨 근처 후보 중 파일명에 실제로 들어있는 게 있으면 그걸 쓴다
+    //    (대표자/점검자 두 후보 중 진짜 대표자를 골라낸다).
     const inFile = candidates.find(c => fileNoExt.includes(c));
     if(inFile) return inFile;
+    // 2) "성명" 라벨 근처에서 못 찾았어도, 파일명에 있는 이름이 문서 전체
+    //    텍스트 어딘가에 등장하면 그걸 신뢰한다.
+    const fileTokens = extractNameTokensFromFilename(fileName);
+    const tokenInText = fileTokens.find(tok => text.includes(tok));
+    if(tokenInText) return tokenInText;
+    // 3) 파일명과 대조할 수 있는데도 하나도 못 맞혔다면, 후보를 아무거나
+    //    확정하지 않는다 — 검사원 이름처럼 엉뚱한 이름을 자신있게 채워 넣는
+    //    것보다, 빈 칸으로 두고 사람이 직접 입력하게 하는 편이 안전하다.
+    return '';
   }
-  return candidates[0];
+  return candidates[0] || '';
 }
 // Builds every reasonable filename representation of a YYYY-MM-DD date
 // (with/without separators, 2-digit year) so we can check whether any of
