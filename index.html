@@ -1205,6 +1205,45 @@ async function deleteAgentDocFileData(id){
   try{ await idbDelete(key); }catch(e){}
 }
 
+// 계약서 항목에 딸린 현금영수증/세금계산서 첨부파일 저장소 — 메인 파일과
+// 같은 이중 저장(window.storage+IndexedDB) 방식을 그대로 재사용한다.
+const agentDocSubFileCache = {};
+function agentDocSubFileKey(id, sub){ return `agentdoc-subfile:${id}:${sub}`; }
+async function loadAgentDocSubFileData(id, sub){
+  const key = agentDocSubFileKey(id, sub);
+  if(agentDocSubFileCache[key]) return agentDocSubFileCache[key];
+  const value = await loadFileFromStorage(key, 20000);
+  if(value !== null) agentDocSubFileCache[key] = value;
+  return value;
+}
+async function saveAgentDocSubFileData(id, sub, base64){
+  const key = agentDocSubFileKey(id, sub);
+  agentDocSubFileCache[key] = base64;
+  const result = await saveFileToStorage(key, base64, 20000);
+  if(!result.ok){ delete agentDocSubFileCache[key]; return result; }
+  return result;
+}
+async function deleteAgentDocSubFileData(id, sub){
+  const key = agentDocSubFileKey(id, sub);
+  delete agentDocSubFileCache[key];
+  if(window.storage){ try{ await storageDelete(key, false); }catch(e){} }
+  try{ await idbDelete(key); }catch(e){}
+}
+
+// Triggers an actual browser download (not just a preview) for a base64
+// file — builds a Blob + temporary anchor with a download attribute.
+function downloadBase64File(base64, mime, fileName){
+  const blob = new Blob([base64ToBytes(base64)], { type: mime || 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName || 'download';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 5000);
+}
+
 // ---- 사업자등록증 OCR 파싱 ----
 // 사업자등록증은 라벨(상호/성명/등록번호/업태/종목 등)이 표 형태로 나열되는
 // 문서라, 사용전점검 확인증 파싱과 같은 방식(라벨 뒤 텍스트를 읽어오는 방식)을 쓴다.
@@ -3926,6 +3965,29 @@ async function handleAgentDocUpload(e){
   }
 }
 
+// Renders one 현금영수증/세금계산서 cell for a 계약서 row: a checkbox, and
+// — only once checked — either a small upload control (no attachment yet)
+// or the attached file's name with download/remove actions.
+function renderAgentDocSubCell(item, sub, label){
+  const checked = !!item[sub+'Checked'];
+  const file = item[sub+'File'];
+  let inner = `<label style="display:flex; align-items:center; gap:5px; font-size:11.5px; cursor:pointer; white-space:nowrap;">
+    <input type="checkbox" class="agentdoc-subcheck" data-id="${item.id}" data-sub="${sub}" ${checked?'checked':''}> ${escapeHtml(label)}
+  </label>`;
+  if(checked){
+    if(file){
+      inner += `<div style="margin-top:4px; font-size:10.5px; display:flex; align-items:center; gap:5px;">
+        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${escapeHtml(file.fileName)}">${escapeHtml(file.fileName)}</span>
+        <button class="agentdoc-subfile-download" data-id="${item.id}" data-sub="${sub}" style="font-size:10px; padding:2px 5px; border-radius:4px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">다운로드</button>
+        <button class="agentdoc-subfile-remove" data-id="${item.id}" data-sub="${sub}" style="font-size:10px; padding:2px 5px; border-radius:4px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">×</button>
+      </div>`;
+    } else {
+      inner += `<div style="margin-top:4px;"><input type="file" class="agentdoc-subfile-input" data-id="${item.id}" data-sub="${sub}" accept="application/pdf,image/*" style="font-size:10.5px; width:130px;"></div>`;
+    }
+  }
+  return `<td style="padding:6px; vertical-align:top;">${inner}</td>`;
+}
+
 async function renderAgentDocsMain(){
   const main = document.getElementById('main');
   if(!agentDocsState.loaded){
@@ -3992,7 +4054,37 @@ async function renderAgentDocsMain(){
                 <td style="padding:6px; white-space:nowrap;">
                   <button class="agentdoc-reocr-btn" data-id="${item.id}" style="font-size:10.5px; padding:4px 6px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">재인식</button>
                   <button class="agentdoc-view-btn" data-id="${item.id}" style="font-size:10.5px; padding:4px 6px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">보기</button>
+                  <button class="agentdoc-download-btn" data-id="${item.id}" style="font-size:10.5px; padding:4px 6px; border-radius:5px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">다운로드</button>
                   <button class="agentdoc-del-btn" data-id="${item.id}" style="font-size:10.5px; padding:4px 6px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ` : agentDocsState.category==='contract' ? `
+      <div class="table-wrap">
+        <table style="width:100%; border-collapse:collapse;">
+          <thead><tr>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:110px;">고객명</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:140px;">현금영수증</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:140px;">세금계산서</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:80px;">용량</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:170px;">작업</th>
+          </tr></thead>
+          <tbody>
+            ${items.map(item => `
+              <tr data-id="${item.id}">
+                <td style="padding:8px 6px; font-size:13px;">${escapeHtml(item.fileName)}</td>
+                <td style="padding:6px;"><input class="agentdoc-field" data-id="${item.id}" data-field="customerName" value="${escapeHtml(item.customerName||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+                ${renderAgentDocSubCell(item, 'cashReceipt', '현금영수증')}
+                ${renderAgentDocSubCell(item, 'taxInvoice', '세금계산서')}
+                <td style="padding:8px 6px; font-size:11.5px; color:var(--muted); text-align:center;">${fmtFileSize(item.size||0)}</td>
+                <td style="padding:8px 6px; white-space:nowrap;">
+                  <button class="agentdoc-view-btn" data-id="${item.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">보기</button>
+                  <button class="agentdoc-download-btn" data-id="${item.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">다운로드</button>
+                  <button class="agentdoc-del-btn" data-id="${item.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button>
                 </td>
               </tr>
             `).join('')}
@@ -4006,7 +4098,7 @@ async function renderAgentDocsMain(){
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:130px;">고객명</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:90px;">용량</th>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:150px;">작업</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:170px;">작업</th>
           </tr></thead>
           <tbody>
             ${items.map(item => `
@@ -4016,6 +4108,7 @@ async function renderAgentDocsMain(){
                 <td style="padding:8px 6px; font-size:11.5px; color:var(--muted); text-align:center;">${fmtFileSize(item.size||0)}</td>
                 <td style="padding:8px 6px; white-space:nowrap;">
                   <button class="agentdoc-view-btn" data-id="${item.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">보기</button>
+                  <button class="agentdoc-download-btn" data-id="${item.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">다운로드</button>
                   <button class="agentdoc-del-btn" data-id="${item.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button>
                 </td>
               </tr>
@@ -4066,6 +4159,80 @@ async function renderAgentDocsMain(){
       } else {
         showImagePreviewOverlay(`data:${item.mime};base64,${base64}`, { label: item.fileName, downloadName: item.fileName, downloadBlob: blob });
       }
+    });
+  });
+  main.querySelectorAll('.agentdoc-download-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const item = agentDocsState.items.find(it=>it.id===btn.dataset.id);
+      if(!item) return;
+      const original = btn.textContent;
+      btn.textContent = '받는 중…';
+      const base64 = await loadAgentDocFileData(item.id);
+      btn.textContent = original;
+      if(!base64){ alert('파일을 불러오지 못했습니다.'); return; }
+      downloadBase64File(base64, item.mime, item.fileName);
+    });
+  });
+  main.querySelectorAll('.agentdoc-subcheck').forEach(cb=>{
+    cb.addEventListener('change', async ()=>{
+      const item = agentDocsState.items.find(it=>it.id===cb.dataset.id);
+      if(!item) return;
+      item[cb.dataset.sub+'Checked'] = cb.checked;
+      await saveAgentDocsIndex(agentDocsState.items);
+      renderAgentDocsMain();
+    });
+  });
+  main.querySelectorAll('.agentdoc-subfile-input').forEach(inp=>{
+    inp.addEventListener('change', async (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      const item = agentDocsState.items.find(it=>it.id===inp.dataset.id);
+      if(!item) return;
+      const sub = inp.dataset.sub;
+      if(file.size > 3.5*1024*1024){ alert('파일 용량이 너무 큽니다 (3.5MB 이하로 올려주세요).'); e.target.value=''; return; }
+      try{
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        const saveResult = await saveAgentDocSubFileData(item.id, sub, base64);
+        if(!saveResult.ok){ alert(`저장 실패: ${saveResult.reason}`); return; }
+        item[sub+'File'] = { fileName: file.name, size: file.size, mime: file.type };
+        await saveAgentDocsIndex(agentDocsState.items);
+        renderAgentDocsMain();
+      }catch(err){
+        console.error(err);
+        alert('파일을 저장하지 못했습니다.');
+      }
+    });
+  });
+  main.querySelectorAll('.agentdoc-subfile-download').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const item = agentDocsState.items.find(it=>it.id===btn.dataset.id);
+      if(!item) return;
+      const sub = btn.dataset.sub;
+      const file = item[sub+'File'];
+      if(!file) return;
+      const original = btn.textContent;
+      btn.textContent = '받는 중…';
+      const base64 = await loadAgentDocSubFileData(item.id, sub);
+      btn.textContent = original;
+      if(!base64){ alert('파일을 불러오지 못했습니다.'); return; }
+      downloadBase64File(base64, file.mime, file.fileName);
+    });
+  });
+  main.querySelectorAll('.agentdoc-subfile-remove').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('첨부한 파일을 삭제할까요?')) return;
+      const item = agentDocsState.items.find(it=>it.id===btn.dataset.id);
+      if(!item) return;
+      const sub = btn.dataset.sub;
+      delete item[sub+'File'];
+      await deleteAgentDocSubFileData(item.id, sub);
+      await saveAgentDocsIndex(agentDocsState.items);
+      renderAgentDocsMain();
     });
   });
   main.querySelectorAll('.agentdoc-del-btn').forEach(btn=>{
