@@ -254,7 +254,8 @@
 
   /* ---- 기안지 ---- */
   .giwanji-top{ display:flex; align-items:stretch; }
-  table.giwanji-grid{ border-collapse:collapse; flex:1; min-width:0; table-layout:fixed; border:2px solid #000; }
+  table.giwanji-grid{ border-collapse:collapse; flex:1; min-width:0; table-layout:fixed; }
+  .giwanji-outer-border{ border:2px solid #000; padding:2px; }
   table.giwanji-grid td{ border:1px solid #000; text-align:center; padding:5px 3px; font-size:14.5px; height:16px; }
   table.giwanji-grid td.title-cell{ font-size:32px; font-weight:700; letter-spacing:8px; vertical-align:middle; }
   table.giwanji-grid td.title-cell .check-line{ font-size:10px; font-weight:400; letter-spacing:0; margin-top:10px; white-space:nowrap; }
@@ -262,22 +263,26 @@
   table.giwanji-grid td.hdr{ font-weight:600; background:#f2f2f2; height:40px; }
   table.giwanji-grid td.sig-blank{ height:44px; }
   table.giwanji-grid td.slash{ color:#555; }
-  table.giwanji-grid td.label{ background:#f2f2f2; font-weight:600; }
-  table.giwanji-grid td.value{ text-align:left; padding-left:8px; font-size:11.5px; }
+  table.giwanji-grid td.label{ background:#f2f2f2; font-weight:600; white-space:nowrap; }
+  table.giwanji-grid td.value{ text-align:left; padding-left:8px; font-size:14px; }
   .giwanji-body{ padding:16px 6px 8px; font-size:16px; line-height:1.9; }
   .giwanji-arae{ text-align:center; font-weight:700; letter-spacing:6px; margin:10px 0; font-size:13px; }
+  .giwanji-lower-box{ padding:14px 16px 10px; }
   table.giwanji-info{ width:100%; border-collapse:collapse; margin-bottom:16px; }
+  table.giwanji-info td{ border:none; }
   table.giwanji-info td{ padding:5px 6px; font-size:15px; line-height:1.4; }
   table.giwanji-info td:first-child{ width:150px; white-space:nowrap; }
-  table.giwanji-worktable{ width:100%; border-collapse:collapse; margin-bottom:16px; }
+  table.giwanji-worktable{ width:100%; border-collapse:collapse; margin-bottom:16px; table-layout:fixed; }
   table.giwanji-worktable th, table.giwanji-worktable td{ border:1px solid #000; padding:6px 10px; font-size:14.5px; }
-  table.giwanji-worktable thead th{ background:#f2f2f2; text-align:center; }
+  table.giwanji-worktable thead th{ background:#f2f2f2; text-align:center; border-bottom:2px solid #000; }
+  table.giwanji-worktable th:first-child, table.giwanji-worktable td:nth-child(1){ width:44%; }
+  table.giwanji-worktable th:not(:first-child), table.giwanji-worktable td:not(:nth-child(1)){ width:18.67%; }
   table.giwanji-worktable td.left{ text-align:left; }
-  table.giwanji-worktable td.num{ text-align:right; }
+  table.giwanji-worktable td.num{ text-align:center; }
   table.giwanji-worktable td.center{ text-align:center; }
   table.giwanji-worktable tr.sumrow td{ background:#f7f7f7; font-weight:700; }
   .giwanji-footer{ font-size:12px; line-height:2.3; margin-top:12px; }
-  .giwanji-company{ text-align:center; font-size:13px; font-weight:700; margin-top:16px; border:1px solid #000; padding:10px 0; }
+  .giwanji-company{ text-align:center; font-size:13px; font-weight:700; margin-top:16px; border:1px solid #000; padding:5px 0; }
   .giwanji-formcode{ font-size:10px; color:#333; margin-top:8px; }
 
   /* ---- 지출결의서 ---- */
@@ -287,6 +292,7 @@
   table.jichul-headtable td{ border:1px solid #000; text-align:center; vertical-align:middle; padding:14px 10px; font-size:13px; }
   table.jichul-headtable td.label{ background:#f2f2f2; font-weight:600; }
   .jichul-title{ text-align:center; font-size:22px; font-weight:700; letter-spacing:10px; margin:22px 0; }
+  .jichul-outer-border{ border:2px solid #000; padding:2px; }
   table.jichul-plain{ width:100%; border-collapse:collapse; margin-bottom:10px; table-layout:fixed; }
   table.jichul-plain td{ padding:14px 4px; font-size:15px; }
   table.jichul-bordered{ width:100%; border-collapse:collapse; table-layout:fixed; margin-top:-1px; }
@@ -1941,10 +1947,11 @@ function buildGiwanjiHtml(c, totals){
   const fillerRows = Array.from({length: 3}, ()=>`<tr><td class="left">&nbsp;</td><td></td><td></td><td></td></tr>`).join('');
   // Column widths below are proportional to the original spreadsheet's actual
   // column widths (A through X), so the grid matches its real layout ratios.
-  const colWidths = [2.302,1.708,3.044,2.45,3.044,5.008,5.008,5.008,8.985, 5.287,5.287,5.287,5.287,5.287,5.287,5.287,5.287, 3.5247,3.5247,3.5247, 2.6435,2.6435,2.6435,2.6435];
+  const colWidths = [2.902,2.308,3.644,3.15,3.044,5.008,5.008,5.008,6.485, 5.287,5.287,5.287,5.287,5.287,5.287,5.287,5.287, 3.5247,3.5247,3.5247, 2.6435,2.6435,2.6435,2.6435];
 
   return `
   <div class="print-page doc-page portrait">
+    <div class="giwanji-outer-border">
     <div class="giwanji-top">
       <table class="giwanji-grid">
         <colgroup>${colWidths.map(w=>`<col style="width:${w}%">`).join('')}</colgroup>
@@ -2019,31 +2026,35 @@ function buildGiwanjiHtml(c, totals){
     </div>
 
     <div class="giwanji-body">${bodyLines}</div>
-    <div class="giwanji-arae">-　아　래　-</div>
 
-    <table class="giwanji-info">
-      <tr><td>1. 영업자 이름 &nbsp; : &nbsp;</td><td>${escapeHtml(c.agentName)||'(미입력)'}</td></tr>
-      <tr><td>2. 일 &nbsp; &nbsp; &nbsp; &nbsp; 자 &nbsp; : &nbsp;</td><td>${escapeHtml(c.draftDate)||'(미입력)'}</td></tr>
-      <tr><td>3. 처 리 과 목 &nbsp; : &nbsp;</td><td>영업비용</td></tr>
-      <tr><td>4. 지 급 금 액 &nbsp; : </td><td>${fmtWon(totals.net)} &nbsp;&nbsp;(개인소득세 신고후 지급금액)</td></tr>
-    </table>
+    <div class="giwanji-lower-box">
+      <div class="giwanji-arae">-　아　래　-</div>
 
-    <table class="giwanji-worktable">
-      <thead><tr><th>업 무 내 용</th><th>영업비용</th><th>3.3% 소득세</th><th>지급금액</th></tr></thead>
-      <tbody>
-        <tr><td class="left">${escapeHtml(workDesc)}</td><td class="num">${fmtNum(totals.pay)}</td><td class="num">${acctCellHtml(-totals.tax)}</td><td class="num">${fmtNum(totals.net)}</td></tr>
-        ${fillerRows}
-        <tr class="sumrow"><td colspan="3" class="center">합　계</td><td class="num">${fmtNum(totals.net)}</td></tr>
-      </tbody>
-    </table>
+      <table class="giwanji-info">
+        <tr><td>1. 영업자 이름 &nbsp; : &nbsp;</td><td>${escapeHtml(c.agentName)||'(미입력)'}</td></tr>
+        <tr><td>2. 일 &nbsp; &nbsp; &nbsp; &nbsp; 자 &nbsp; : &nbsp;</td><td>${escapeHtml(c.draftDate)||'(미입력)'}</td></tr>
+        <tr><td>3. 처 리 과 목 &nbsp; : &nbsp;</td><td>영업비용</td></tr>
+        <tr><td>4. 지 급 금 액 &nbsp; : </td><td>${fmtWon(totals.net)} &nbsp;&nbsp;(개인소득세 신고후 지급금액)</td></tr>
+      </table>
 
-    <div class="giwanji-footer">
-      <div>※ 지급방식 : 계좌이체 (V)　현금(　)　카드(　)　기타(내용:　　　　　　　)</div>
-      <div>※ 예 금 주 : ${escapeHtml(c.bankOwner)||'(미입력)'}</div>
-      <div>※ 계좌번호 : ${escapeHtml(c.bankAccount)||'(미입력)'}</div>
-      <div>※ 붙　　임 : *영업비 정산내역서 1부.</div>
+      <table class="giwanji-worktable">
+        <thead><tr><th>업 무 내 용</th><th>영업비용</th><th>3.3% 소득세</th><th>지급금액</th></tr></thead>
+        <tbody>
+          <tr><td class="left">${escapeHtml(workDesc)}</td><td class="num">${fmtNum(totals.pay)}</td><td class="num">${acctCellHtml(-totals.tax)}</td><td class="num">${fmtNum(totals.net)}</td></tr>
+          ${fillerRows}
+          <tr class="sumrow"><td colspan="3" class="center">합　계</td><td class="num">${fmtNum(totals.net)}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="giwanji-footer">
+        <div>※ 지급방식 : 계좌이체 (V)　현금(　)　카드(　)　기타(내용:　　　　　　　)</div>
+        <div>※ 예 금 주 : ${escapeHtml(c.bankOwner)||'(미입력)'}</div>
+        <div>※ 계좌번호 : ${escapeHtml(c.bankAccount)||'(미입력)'}</div>
+        <div>※ 붙　　임 : *영업비 정산내역서 1부.</div>
+      </div>
+      <div class="giwanji-company">${escapeHtml(c.companyName)}</div>
     </div>
-    <div class="giwanji-company">${escapeHtml(c.companyName)}</div>
+    </div>
   </div>`;
 }
 
@@ -2059,6 +2070,7 @@ function buildJichulHtml(c, totals){
 
   return `
   <div class="print-page doc-page portrait">
+    <div class="jichul-outer-border">
     <div class="jichul-headrow">
       <div class="jichul-head-spacer"></div>
       <table class="jichul-headtable">
@@ -2139,6 +2151,7 @@ function buildJichulHtml(c, totals){
       <tr><td class="label" colspan="6">지 출 요 청 일</td><td colspan="4">${fmtKoreanDateWithWeekday(c.requestDate)}</td></tr>
       <tr><td class="label" colspan="4">신 청 부 서</td><td colspan="2">${escapeHtml(c.department)}</td><td class="label" colspan="2">영 수 자</td><td colspan="2"></td></tr>
     </table>
+    </div>
     <div class="jichul-code-row">
       <span>P201-16</span><span>${escapeHtml(c.companyName)}</span><span>A4(210× 297)</span>
     </div>
