@@ -1547,12 +1547,16 @@ function computeInspectionMatch(item){
     const tokens = extractNameTokensFromFilename(item.fileName);
     fulltextMatch = tokens.some(tok => item.ocrText.includes(tok));
   }
-  const autoMatch = fulltextMatch || nameMatch;
-  // 점검년월일은 일치 여부 판정에는 쓰지 않고, 참고용으로 항상 채워서
-  // 보여주기만 한다 — 일치 여부는 이름이 파일명/문서에 함께 등장하는지로 자동
-  // 판정하되, 사람이 "일치로 표시"를 눌러 직접 수동으로 뒤집을 수 있다.
+  const nameOk = fulltextMatch || nameMatch;
+  // 점검년월일도 파일명에 적힌 날짜와 실제로 맞는지 함께 확인한다 — 이름만
+  // 맞고 날짜가 다르면(OCR 오인식 등) "일치"로 잘못 표시되지 않도록, 이름과
+  // 날짜 둘 다 파일명과 맞아야만 자동으로 일치 처리한다.
+  const dateVariants = dateFilenameVariants(item.extractedDate);
+  const dateOk = dateVariants.length>0 && dateVariants.some(v => item.fileName.includes(v));
+  const autoMatch = nameOk && dateOk;
+  // 사람이 "일치로 표시"를 눌러 직접 수동으로 뒤집을 수 있다.
   const overall = item.manualMatch === true ? true : autoMatch;
-  return { nameMatch: autoMatch, overall, manual: item.manualMatch === true };
+  return { nameMatch: nameOk, dateMatch: dateOk, overall, manual: item.manualMatch === true };
 }
 
 // 사용전점검 확인증의 파일명/인식된 이름과 고객명이 일치하는 실적리스트 행을
@@ -1576,6 +1580,7 @@ function addCertDateIfMissing(row, date){
   const existing = String(row.certDate||'').split('\n').map(s=>s.trim()).filter(Boolean);
   if(existing.includes(date)) return false;
   row.certDate = existing.concat([date]).join('\n');
+  row.certDateAuto = true; // 실적리스트에 원래 없던 값을 자동으로 채웠음을 표시 (초록색 표시용)
   return true;
 }
 // 일치로 확정된 사용전점검 확인증의 점검년월일을, 같은 고객명을 가진 실적리스트
@@ -3772,9 +3777,10 @@ async function renderInspectionMain(){
   main.innerHTML = `
     <h2 class="section-title">사용전점검(검사) 확인증 관리</h2>
     <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 14px;">
-      사용전점검 확인증 PDF/이미지를 업로드하면, 파일 이름에 들어있는 이름이 문서 안에 실제로 등장하는지 확인해서
-      (등장하면 일치로 처리) 자동으로 판정합니다. <b>점검년월일</b>은 일치 판정과 상관없이 참고용으로 항상 자동 인식해서 채워둡니다.
-      자동 인식이 틀렸다면 표에서 직접 값을 고칠 수 있고, 일치 여부는 바로 다시 계산됩니다.
+      사용전점검 확인증 PDF/이미지를 업로드하면, 파일 이름에 들어있는 <b>이름과 날짜가 문서 인식 결과와 실제로 맞는지</b>
+      함께 확인해서 (둘 다 맞아야 일치로 처리) 자동으로 판정합니다. 이름이나 날짜 중 하나라도 다르면 "불일치"로 표시되고
+      어느 쪽이 다른지 표에 바로 안내됩니다. 자동 인식이 틀렸다면 표에서 직접 값을 고칠 수 있고, 일치 여부는 바로 다시 계산됩니다.
+      일치로 확정된 건은 점검년월일이 같은 고객명의 실적리스트 필증일자 칸에 자동으로 채워집니다.
     </p>
     <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:16px;">
       <input type="file" id="inspectionUploadInput" accept="application/pdf,image/*" capture="environment" multiple style="font-size:13px; color:var(--muted);">
@@ -3805,6 +3811,7 @@ async function renderInspectionMain(){
               ? `<button class="inspection-forcematch-btn" data-id="${item.id}" style="margin-top:4px; font-size:10.5px; padding:3px 7px; border-radius:5px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">일치로 표시</button>`
               : (m.manual ? `<button class="inspection-unforce-btn" data-id="${item.id}" style="margin-top:4px; font-size:10.5px; padding:3px 7px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">자동판정으로</button>` : '');
             const nameNote = item.extractedName && !m.nameMatch ? `<div style="font-size:10.5px; color:var(--neg);">이름 불일치</div>` : '';
+            const dateNote = item.extractedDate && !m.dateMatch ? `<div style="font-size:10.5px; color:var(--neg);">날짜 불일치</div>` : '';
             return `
             <tr data-id="${item.id}">
               <td style="padding:7px 6px; font-size:13px;">${escapeHtml(item.fileName)}<div style="font-size:10.5px; color:var(--muted);">${fmtFileSize(item.size||0)}</div></td>
@@ -3814,6 +3821,7 @@ async function renderInspectionMain(){
               </td>
               <td style="padding:7px 6px;">
                 <input type="text" class="inspection-date-input" data-id="${item.id}" value="${escapeHtml(item.extractedDate||'')}" placeholder="YYYY-MM-DD" style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:6px 8px; color:var(--text); font-size:12.5px;">
+                ${dateNote}
               </td>
               <td style="padding:7px 6px; text-align:center;">${statusHtml}${toggleMatchBtn ? `<div>${toggleMatchBtn}</div>` : ''}</td>
               <td style="padding:7px 6px; white-space:nowrap;">
@@ -4614,6 +4622,7 @@ function renderUploadMode(){
       if(!row) return;
       const field = inp.dataset.perf;
       row[field] = isNumeric ? (parseFloat(String(inp.value).replace(/,/g,''))||0) : inp.value;
+      if(field === 'certDate') delete row.certDateAuto; // 사람이 직접 손댔으니 자동 채움 표시는 지운다
       if(field === 'moduleModel' || field === 'structureType'){
         const price = computePerfCompanyPrice(row);
         if(price !== null){
@@ -4806,7 +4815,12 @@ function perfCellHtml(r, field, type){
   }
   if(type === 'multidate'){
     const lineCount = v ? String(v).split('\n').length : 1;
-    return `<textarea data-perf="${field}" placeholder="2026-07-21" rows="${Math.max(2, Math.min(lineCount, 4))}" style="width:100%; resize:vertical; font-size:12px; line-height:1.35; white-space:pre;">${escapeHtml(v)}</textarea>`;
+    // 필증일자가 사용전점검 일치 확인으로 자동 채워진 경우, 원래 실적리스트에
+    // 없던 값임을 초록색으로 표시한다.
+    const isAuto = field === 'certDate' && r.certDateAuto;
+    const autoStyle = isAuto ? ' background:rgba(47,125,92,.15); border-color:var(--pos) !important; color:var(--pos); font-weight:600;' : '';
+    const title = isAuto ? '사용전점검 일치 확인으로 자동 채워진 날짜입니다' : '';
+    return `<textarea data-perf="${field}" placeholder="2026-07-21" title="${title}" rows="${Math.max(2, Math.min(lineCount, 4))}" style="width:100%; resize:vertical; font-size:12px; line-height:1.35; white-space:pre;${autoStyle}">${escapeHtml(v)}</textarea>`;
   }
   if(type === 'multitext'){
     const lineCount = v ? String(v).split('\n').length : 1;
@@ -4869,6 +4883,7 @@ function wirePerfRowEvents(){
       if(!row) return;
       const field = inp.dataset.perf;
       row[field] = isNumeric ? (parseFloat(String(inp.value).replace(/,/g,''))||0) : inp.value;
+      if(field === 'certDate') delete row.certDateAuto; // 사람이 직접 손댔으니 자동 채움 표시는 지운다
       if(field === 'moduleModel' || field === 'structureType'){
         const price = computePerfCompanyPrice(row);
         if(price !== null){
