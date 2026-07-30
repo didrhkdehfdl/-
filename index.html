@@ -3727,7 +3727,16 @@ async function runOcrForItem(item){
       const text = result.data.text || '';
       item.ocrText = text;
       item.extractedName = parseInspectionNameFromText(text, item.fileName);
-      item.extractedDate = parseInspectionDateFromText(text);
+      // 날짜는 별도로 한 번 더 인식한다: 일반 문자 인식은 숫자와 모양이
+      // 비슷한 다른 문자(예: 2와 9)를 헷갈리기 쉬운데, 인식 대상을 숫자와
+      // "년월일"로만 제한하면 훨씬 정확해진다.
+      let dateText = text;
+      try{
+        await worker.setParameters({ tessedit_pageseg_mode: '6', tessedit_char_whitelist: '0123456789년월일 .-_' });
+        const dateResult = await withTimeout(worker.recognize(canvas), 45000);
+        if(dateResult && dateResult.data.text) dateText = dateResult.data.text;
+      }catch(e){ /* 실패하면 그냥 기존 일반 인식 결과로 날짜를 찾는다 */ }
+      item.extractedDate = parseInspectionDateFromText(dateText) || parseInspectionDateFromText(text);
       item.ocrStatus = (item.extractedName || item.extractedDate) ? 'done' : 'unrecognized';
     } finally {
       try{ await worker.terminate(); }catch(e){}
