@@ -197,7 +197,11 @@
 
   @media (max-width: 860px){
     #app{ flex-direction:column; }
-    #sidebar{ width:100%; max-height:220px; overflow-y:auto; position:relative; border-right:none; border-bottom:1px solid var(--line);}
+    #sidebar{
+      width:100%; max-height:46vh; overflow-y:auto; position:relative; border-right:none; border-bottom:1px solid var(--line);
+      background-image: linear-gradient(to bottom, transparent, transparent), linear-gradient(to bottom, transparent, rgba(0,0,0,.06));
+      background-position: 0 0, 0 100%; background-repeat: no-repeat; background-size: 100% 24px, 100% 24px; background-attachment: local, scroll;
+    }
     #main{ padding:20px; }
     .field-grid{ grid-template-columns:1fr 1fr; }
     .totals-table{ max-width:100%; }
@@ -207,7 +211,7 @@
     .field-grid{ grid-template-columns:1fr; }
     h2.section-title{ font-size:14px; flex-wrap:wrap; gap:8px; height:auto; }
     .case-title-input{ font-size:17px; }
-    #sidebar{ max-height:260px; overflow-y:auto; }
+    #sidebar{ max-height:50vh; }
     .side-head{ padding:calc(14px + env(safe-area-inset-top)) 14px 10px; }
     #newCaseBtn, #profitListToggleBtn{ margin-left:14px; margin-right:14px; }
   }
@@ -5866,7 +5870,7 @@ function startApp(allowedTabs){
 }
 
 // ---------- Firebase 로그인 / 가입 승인 ----------
-const ADMIN_EMAILS = ['pract@naver.com', 'chanho@admin'];
+const ADMIN_EMAILS = ['pract@naver.com', 'chanho@admin.com'];
 function isAdminEmail(email){ return ADMIN_EMAILS.includes(email); }
 const firebaseConfig = {
   apiKey: "AIzaSyCRUnr99J5LPYOS-BmeG_peLJ6mLw-w1WM",
