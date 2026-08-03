@@ -390,7 +390,6 @@
     </div>
     <button id="migrateOldDataBtn" style="margin:0 18px 10px; padding:8px 12px; border-radius:7px; border:1px dashed var(--sky); background:transparent; color:var(--sky); font-size:12px; font-weight:500; cursor:pointer; text-align:left;">📦 이 기기의 이전 데이터 복구하기</button>
     <div id="caseList"></div>
-    <button id="dataRecoverBtn" style="margin:0 18px 6px; padding:8px 12px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:11.5px; cursor:pointer;">📦 예전 로컬 데이터 복구</button>
     <button id="appLogoutBtn" style="margin:0 18px 16px; padding:9px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:12px; cursor:pointer;">로그아웃</button>
   </aside>
   <main id="main"></main>
@@ -1144,6 +1143,22 @@ function withTimeout(promise, ms){
     );
   });
 }
+// withTimeout은 실패했을 때 이유를 그냥 삼켜버리고 undefined로 처리한다(대부분의
+// 호출부는 "시간 안에 응답이 없으면 그냥 빈 값으로 넘어간다"는 동작을 원해서
+// 그렇게 설계했다). 하지만 "왜 실패했는지" 사용자에게 보여줘야 하는 곳(파일
+// 불러오기 등)에서는 진짜 오류 내용이 필요하므로, 실패 시 그 오류를 그대로
+// 던지는 버전을 따로 둔다.
+function withTimeoutRethrow(promise, ms, timeoutMessage){
+  ms = ms || 3000;
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const timer = setTimeout(()=>{ if(!done){ done = true; reject(new Error(timeoutMessage || '시간 초과')); } }, ms);
+    Promise.resolve(promise).then(
+      (v)=>{ if(!done){ done = true; clearTimeout(timer); resolve(v); } },
+      (err)=>{ if(!done){ done = true; clearTimeout(timer); reject(err); } }
+    );
+  });
+}
 
 // window.storage only exists inside the Claude.ai artifact runtime. When this
 // file is downloaded and opened directly in a browser, window.storage is
@@ -1365,69 +1380,6 @@ function idbDelete(key){
   }));
 }
 
-// ---- 예전 로컬 데이터 복구 (Firebase 전환 전, 이 기기에만 남아있던 데이터) ----
-// Firestore/Storage로 넘어오기 전에는 이 기기의 IndexedDB(파일류)와
-// localStorage(작은 JSON류)에 데이터가 저장되어 있었다. 그 흔적이 아직
-// 남아있는 기기에서 한 번 실행하면, 지금 저장돼있는 모든 키를 찾아서
-// 새 공유 저장소(Firestore/Storage)로 옮겨준다. 이미 클라우드에 같은 키가
-// 있으면 (다른 기기에서 이미 올라간 데이터일 수 있으므로) 덮어쓰지 않고
-// 건너뛴다 — 이 기기의 예전 데이터가 최신이라는 보장이 없기 때문이다.
-function getAllOldIdbKeys(){
-  return openFileDB().then(db => new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readonly');
-    const store = tx.objectStore(IDB_STORE);
-    const entries = [];
-    const req = store.openCursor();
-    req.onsuccess = (e) => {
-      const cursor = e.target.result;
-      if(cursor){
-        entries.push({ key: cursor.key, value: cursor.value });
-        cursor.continue();
-      } else {
-        resolve(entries);
-      }
-    };
-    req.onerror = () => reject(req.error);
-  })).catch(()=>[]);
-}
-function getAllOldLocalStorageKeys(){
-  const entries = [];
-  try{
-    for(let i=0;i<localStorage.length;i++){
-      const fullKey = localStorage.key(i);
-      if(fullKey && fullKey.startsWith(LOCAL_PREFIX)){
-        entries.push({ key: fullKey.slice(LOCAL_PREFIX.length), value: localStorage.getItem(fullKey) });
-      }
-    }
-  }catch(e){}
-  return entries;
-}
-// 실제로 옮기기 전에 몇 개나 있는지만 먼저 세어보는 용도 (확인창에 보여주기 위함).
-async function scanOldLocalData(){
-  const idbEntries = await getAllOldIdbKeys();
-  const localEntries = getAllOldLocalStorageKeys();
-  const merged = new Map();
-  idbEntries.forEach(({key,value})=>merged.set(key,value));
-  localEntries.forEach(({key,value})=>{ if(!merged.has(key)) merged.set(key,value); });
-  return merged;
-}
-async function migrateOldLocalDataToFirebase(onProgress){
-  const merged = await scanOldLocalData();
-  const result = { total: merged.size, migrated:0, skipped:0, failed:0 };
-  let done = 0;
-  for(const [key, value] of merged){
-    done++;
-    if(onProgress) onProgress(done, result.total, key);
-    try{
-      const existing = await loadFileFromStorage(key, 10000);
-      if(existing !== null){ result.skipped++; continue; } // 클라우드에 이미 있으면 덮어쓰지 않음
-      const saveResult = await saveFileToStorage(key, value, 20000);
-      if(saveResult.ok) result.migrated++; else result.failed++;
-    }catch(e){ result.failed++; }
-  }
-  return result;
-}
-
 // ---- 공유 저장소: Firestore(작은 데이터) + Firebase Storage(실제 파일) ----
 // 이 두 함수가 앱의 사실상 모든 저장/불러오기(정산 건, 계약서 목록, 사용전점검,
 // 영업자용 서류, 모듈 단가 등)의 공통 통로다. 값의 크기를 보고 자동으로
@@ -1438,15 +1390,17 @@ const FIRESTORE_VALUE_LIMIT = 900*1024; // Firestore 문서당 1MiB 제한에 �
 function appDataDoc(key){ return fbDb.collection('app_data').doc(key.replace(/\//g,'__')); }
 function fileStorageRef(key){ return fbStorage.ref('files/'+key.replace(/\//g,'__')); }
 
+let lastStorageLoadError = ''; // "파일을 불러오지 못했습니다" 대화상자에 구체적인 원인을 함께 보여주기 위함
 async function loadFileFromStorage(key, timeoutMs){
   try{
-    const snap = await withTimeout(appDataDoc(key).get(), timeoutMs || 20000);
+    const snap = await withTimeoutRethrow(appDataDoc(key).get(), timeoutMs || 20000, 'Firestore 응답 시간 초과');
     if(!snap || !snap.exists) return null;
     const data = snap.data();
     if(data.storedIn === 'storage'){
-      const url = await withTimeout(fileStorageRef(key).getDownloadURL(), timeoutMs || 20000);
+      const url = await withTimeoutRethrow(fileStorageRef(key).getDownloadURL(), timeoutMs || 20000, 'Storage 다운로드 URL 요청 시간 초과');
       if(!url) return null;
       const resp = await fetch(url);
+      if(!resp.ok) throw new Error(`파일 다운로드 실패 (HTTP ${resp.status})`);
       const blob = await resp.blob();
       return await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -1458,6 +1412,7 @@ async function loadFileFromStorage(key, timeoutMs){
     return data.value;
   }catch(e){
     console.error(e);
+    lastStorageLoadError = (e && (e.message || e.code)) ? `${e.code||''} ${e.message||''}`.trim() : String(e);
     return null;
   }
 }
@@ -1469,15 +1424,16 @@ async function saveFileToStorage(key, value, timeoutMs){
       // 파일용량이 커서 Firestore 문서 한도를 넘으므로, 실제 내용은 Firebase
       // Storage에 올리고 Firestore에는 "저장 위치" 표시만 남긴다.
       const base64Data = value.includes(',') && value.startsWith('data:') ? value.split(',')[1] : value;
-      await withTimeout(fileStorageRef(key).putString(base64Data, 'base64'), timeoutMs);
-      await withTimeout(appDataDoc(key).set({ storedIn:'storage', updatedAt: firebase.firestore.FieldValue.serverTimestamp() }), timeoutMs);
+      await withTimeoutRethrow(fileStorageRef(key).putString(base64Data, 'base64'), timeoutMs, 'Storage 업로드 시간 초과');
+      await withTimeoutRethrow(appDataDoc(key).set({ storedIn:'storage', updatedAt: firebase.firestore.FieldValue.serverTimestamp() }), timeoutMs, 'Firestore 저장 시간 초과');
     } else {
-      await withTimeout(appDataDoc(key).set({ storedIn:'firestore', value, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }), timeoutMs);
+      await withTimeoutRethrow(appDataDoc(key).set({ storedIn:'firestore', value, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }), timeoutMs, 'Firestore 저장 시간 초과');
     }
     return { ok:true };
   }catch(e){
     console.error(e);
-    return { ok:false, reason: (e && e.message) ? e.message : '알 수 없는 오류' };
+    const detail = (e && (e.message || e.code)) ? `${e.code||''} ${e.message||''}`.trim() : '알 수 없는 오류';
+    return { ok:false, reason: detail };
   }
 }
 
@@ -3599,7 +3555,7 @@ async function renderContractsMain(){
       여러 건을 체크한 뒤 "선택한 PDF 한꺼번에 인쇄"를 누르면 한 파일로 합쳐서 인쇄할 수 있습니다.
     </p>
     <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
-      <input type="file" id="contractUploadInput" accept="application/pdf,image/*" capture="environment" multiple style="font-size:13px; color:var(--muted);">
+      <input type="file" id="contractUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
       <button id="contractSortToggleBtn" style="font-size:12px; padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">
         날짜 ${contractsState.sortOrder==='asc' ? '오름차순 ▲' : '내림차순 ▼'}
       </button>
@@ -3691,7 +3647,7 @@ async function renderContractsMain(){
       btn.textContent = '여는 중…';
       const base64 = await loadContractFileData(btn.dataset.id);
       btn.textContent = original;
-      if(!base64){ alert('파일을 불러오지 못했습니다.'); return; }
+      if(!base64){ alert('파일을 불러오지 못했습니다.' + (lastStorageLoadError ? `\n\n(원인: ${lastStorageLoadError})` : '')); return; }
       const item = contractsState.items.find(it=>it.id===btn.dataset.id) || {};
       const fileName = item.fileName || '계약서.pdf';
       const mime = item.mime || 'application/pdf';
@@ -4056,7 +4012,7 @@ function loadImageToCanvas(dataUrl){
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const targetWidth = 2200; // upscale small photos/scans; downscale is skipped (canvas just uses natural size if already larger)
+      const targetWidth = 2800; // upscale small photos/scans; downscale is skipped (canvas just uses natural size if already larger). Raised from 2200 for denser-text documents like 사업자등록증.
       const scale = img.naturalWidth < targetWidth ? targetWidth / img.naturalWidth : 1;
       const canvas = document.createElement('canvas');
       canvas.width = Math.round(img.naturalWidth * scale);
@@ -4076,14 +4032,43 @@ function loadImageToCanvas(dataUrl){
 // certificates are normally solid black text on a white background, so
 // binarizing removes scan noise/gray halos around characters that
 // otherwise make similar digits (1/2/4/5, 0/6/8) harder for OCR to tell apart.
+// Otsu's method: picks the black/white cutoff automatically from the image's
+// own brightness histogram, instead of a single fixed number. A flat-lit
+// scanned PDF and a handheld phone photo (glare, shadow, warm indoor light)
+// need very different cutoffs — a fixed threshold works for one and not the
+// other, which is exactly the kind of "camera photos OCR worse than scans"
+// gap this fixes.
+function otsuThreshold(histogram, totalPixels){
+  let sum = 0;
+  for(let t=0; t<256; t++) sum += t * histogram[t];
+  let sumB = 0, wB = 0, wF = 0, maxVar = 0, threshold = 127;
+  for(let t=0; t<256; t++){
+    wB += histogram[t];
+    if(wB === 0) continue;
+    wF = totalPixels - wB;
+    if(wF === 0) break;
+    sumB += t * histogram[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const varBetween = wB * wF * (mB - mF) * (mB - mF);
+    if(varBetween > maxVar){ maxVar = varBetween; threshold = t; }
+  }
+  return threshold;
+}
 function preprocessCanvasForOcr(canvas){
   const ctx = canvas.getContext('2d');
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const d = imgData.data;
-  const threshold = 150;
-  for(let i=0; i<d.length; i+=4){
-    const gray = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-    const v = gray > threshold ? 255 : 0;
+  const grays = new Uint8ClampedArray(d.length/4);
+  const histogram = new Array(256).fill(0);
+  for(let i=0, p=0; i<d.length; i+=4, p++){
+    const gray = Math.round(0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]);
+    grays[p] = gray;
+    histogram[gray]++;
+  }
+  const threshold = otsuThreshold(histogram, grays.length);
+  for(let i=0, p=0; i<d.length; i+=4, p++){
+    const v = grays[p] > threshold ? 255 : 0;
     d[i] = d[i+1] = d[i+2] = v;
   }
   ctx.putImageData(imgData, 0, 0);
@@ -4185,7 +4170,7 @@ async function renderInspectionMain(){
       일치로 확정된 건은 점검년월일이 같은 고객명의 실적리스트 필증일자 칸에 자동으로 채워집니다.
     </p>
     <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:16px;">
-      <input type="file" id="inspectionUploadInput" accept="application/pdf,image/*" capture="environment" multiple style="font-size:13px; color:var(--muted);">
+      <input type="file" id="inspectionUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
       ${items.length>0 ? `<button id="inspectionReocrAllBtn" style="font-size:12px; padding:8px 14px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">🔄 전체 다시 인식</button>` : ''}
       <div style="display:flex; gap:8px; font-size:13px; font-weight:600;">
         <span style="padding:6px 12px; border-radius:6px; background:rgba(47,125,92,.15); color:var(--pos);">✓ 일치 ${matchCount}건</span>
@@ -4296,7 +4281,7 @@ async function renderInspectionMain(){
       btn.textContent = '여는 중…';
       const base64 = await loadInspectionFileData(item.id);
       btn.textContent = original;
-      if(!base64){ alert('파일을 불러오지 못했습니다.'); return; }
+      if(!base64){ alert('파일을 불러오지 못했습니다.' + (lastStorageLoadError ? `\n\n(원인: ${lastStorageLoadError})` : '')); return; }
       const blob = new Blob([base64ToBytes(base64)], { type:item.mime });
       if(item.mime === 'application/pdf'){
         showPdfPreviewOverlay([base64ToBytes(base64)], { label: item.fileName, downloadName: item.fileName, downloadBlob: blob });
@@ -4517,7 +4502,18 @@ async function runBizRegOcrForItem(item){
       if(!result) throw new Error('OCR timed out');
       const text = result.data.text || '';
       item.ocrText = text;
+      // 사업자등록번호는 별도로 한 번 더 인식한다: 일반 문자 인식은 숫자를
+      // 주변 한글/기호와 헷갈리기 쉬운데, 인식 대상을 숫자와 대시로만
+      // 제한하면 훨씬 정확해진다 (사용전점검 날짜 인식과 같은 방식).
+      let digitText = '';
+      try{
+        await worker.setParameters({ tessedit_pageseg_mode: '6', tessedit_char_whitelist: '0123456789-' });
+        const digitResult = await withTimeout(worker.recognize(canvas), 45000);
+        if(digitResult && digitResult.data.text) digitText = digitResult.data.text;
+      }catch(e){ /* 실패하면 그냥 기존 일반 인식 결과로 번호를 찾는다 */ }
       const parsed = parseBizRegFromText(text);
+      const digitBizNumber = parseBizNumber(digitText);
+      if(digitBizNumber) parsed.bizNumber = digitBizNumber; // 숫자 전용 패스에서 찾았다면 그걸 우선 사용
       item.isCorporate = parsed.isCorporate;
       item.bizName = parsed.bizName;
       item.ownerName = parsed.ownerName;
@@ -4618,7 +4614,7 @@ function renderAgentDocSubCell(item, sub, label){
         <button class="agentdoc-subfile-remove" data-id="${item.id}" data-sub="${sub}" style="font-size:10px; padding:2px 5px; border-radius:4px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">×</button>
       </div>`;
     } else {
-      inner += `<div style="margin-top:4px;"><input type="file" class="agentdoc-subfile-input" data-id="${item.id}" data-sub="${sub}" accept="application/pdf,image/*" capture="environment" style="font-size:10.5px; width:130px;"></div>`;
+      inner += `<div style="margin-top:4px;"><input type="file" class="agentdoc-subfile-input" data-id="${item.id}" data-sub="${sub}" accept="application/pdf,image/*" style="font-size:10.5px; width:130px;"></div>`;
     }
   }
   return `<td style="padding:6px; vertical-align:top;">${inner}</td>`;
@@ -4649,7 +4645,7 @@ async function renderAgentDocsMain(){
     <div style="margin-bottom:16px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
       <label style="font-size:13px; color:var(--muted);">고객명</label>
       <input type="text" id="agentDocCustomerInput" placeholder="예: 최정연" value="${escapeHtml(agentDocsState.pendingCustomer||'')}" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:180px;">
-      <input type="file" id="agentDocUploadInput" accept="application/pdf,image/*" capture="environment" multiple style="font-size:13px; color:var(--muted);">
+      <input type="file" id="agentDocUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
     </div>
     <div id="agentDocUploadHint" style="display:none; color:var(--neg); font-size:12px; margin:-10px 0 16px;">먼저 고객명을 입력해주세요.</div>
     ${items.length===0 ? `<div class="empty-side">아직 업로드된 ${AGENT_DOC_CATEGORIES.find(c=>c.key===agentDocsState.category).label}가 없습니다.</div>` : (
@@ -4790,7 +4786,7 @@ async function renderAgentDocsMain(){
       btn.textContent = '여는 중…';
       const base64 = await loadAgentDocFileData(item.id);
       btn.textContent = original;
-      if(!base64){ alert('파일을 불러오지 못했습니다.'); return; }
+      if(!base64){ alert('파일을 불러오지 못했습니다.' + (lastStorageLoadError ? `\n\n(원인: ${lastStorageLoadError})` : '')); return; }
       const blob = new Blob([base64ToBytes(base64)], { type:item.mime });
       if(item.mime === 'application/pdf'){
         showPdfPreviewOverlay([base64ToBytes(base64)], { label: item.fileName, downloadName: item.fileName, downloadBlob: blob });
@@ -4807,7 +4803,7 @@ async function renderAgentDocsMain(){
       btn.textContent = '받는 중…';
       const base64 = await loadAgentDocFileData(item.id);
       btn.textContent = original;
-      if(!base64){ alert('파일을 불러오지 못했습니다.'); return; }
+      if(!base64){ alert('파일을 불러오지 못했습니다.' + (lastStorageLoadError ? `\n\n(원인: ${lastStorageLoadError})` : '')); return; }
       downloadBase64File(base64, item.mime, item.fileName);
     });
   });
@@ -4857,7 +4853,7 @@ async function renderAgentDocsMain(){
       btn.textContent = '여는 중…';
       const base64 = await loadAgentDocSubFileData(item.id, sub);
       btn.textContent = original;
-      if(!base64){ alert('파일을 불러오지 못했습니다.'); return; }
+      if(!base64){ alert('파일을 불러오지 못했습니다.' + (lastStorageLoadError ? `\n\n(원인: ${lastStorageLoadError})` : '')); return; }
       const blob = new Blob([base64ToBytes(base64)], { type:file.mime });
       if(file.mime === 'application/pdf'){
         showPdfPreviewOverlay([base64ToBytes(base64)], { label: file.fileName, downloadName: file.fileName, downloadBlob: blob });
@@ -4877,7 +4873,7 @@ async function renderAgentDocsMain(){
       btn.textContent = '받는 중…';
       const base64 = await loadAgentDocSubFileData(item.id, sub);
       btn.textContent = original;
-      if(!base64){ alert('파일을 불러오지 못했습니다.'); return; }
+      if(!base64){ alert('파일을 불러오지 못했습니다.' + (lastStorageLoadError ? `\n\n(원인: ${lastStorageLoadError})` : '')); return; }
       downloadBase64File(base64, file.mime, file.fileName);
     });
   });
@@ -6860,31 +6856,6 @@ async function renderAdminList(){
 }
 
 document.getElementById('appLogoutBtn').addEventListener('click', ()=>fbAuth.signOut());
-document.getElementById('dataRecoverBtn').addEventListener('click', async ()=>{
-  const btn = document.getElementById('dataRecoverBtn');
-  const original = btn.textContent;
-  btn.disabled = true; btn.textContent = '확인 중…';
-  try{
-    const merged = await scanOldLocalData();
-    if(merged.size === 0){
-      alert('이 기기(브라우저)에는 옮길 예전 로컬 데이터가 없습니다.');
-      return;
-    }
-    const ok = confirm(`이 기기에서 예전 데이터 ${merged.size}개를 발견했습니다.\n지금 클라우드(모든 사람이 공유하는 저장소)로 옮길까요?\n\n이미 클라우드에 같은 항목이 있으면 그건 덮어쓰지 않고 그대로 둡니다.`);
-    if(!ok) return;
-    btn.textContent = '복구 중… (0%)';
-    const result = await migrateOldLocalDataToFirebase((done, total)=>{
-      btn.textContent = `복구 중… (${Math.round(done/total*100)}%)`;
-    });
-    alert(`복구가 끝났습니다.\n\n새로 옮긴 항목: ${result.migrated}개\n이미 클라우드에 있어 건너뜀: ${result.skipped}개\n실패: ${result.failed}개\n\n확인을 누르면 최신 데이터로 화면을 다시 불러옵니다.`);
-    location.reload();
-  }catch(e){
-    console.error(e);
-    alert('복구 중 오류가 발생했습니다: ' + (e && e.message ? e.message : '알 수 없는 오류'));
-  }finally{
-    btn.disabled = false; btn.textContent = original;
-  }
-});
 
 let isAdminUser = false;
 
