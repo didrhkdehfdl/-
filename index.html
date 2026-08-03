@@ -374,6 +374,9 @@
       <button class="tab-btn" data-tab="cardrecon" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">🔄</span> 카드관리
       </button>
+      <button class="tab-btn" data-tab="history" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
+        <span style="width:18px; text-align:center;">🕒</span> 변경 이력
+      </button>
       <button class="tab-btn" data-tab="adminApproval" id="adminApprovalTabBtn" style="display:none; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">✅</span> 승인관리
       </button>
@@ -385,8 +388,10 @@
       <button id="importBtn" style="flex:1; font-size:11.5px; padding:7px 4px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">가져오기</button>
       <input type="file" id="importFile" accept="application/json" style="display:none;">
     </div>
+    <button id="migrateOldDataBtn" style="margin:0 18px 10px; padding:8px 12px; border-radius:7px; border:1px dashed var(--sky); background:transparent; color:var(--sky); font-size:12px; font-weight:500; cursor:pointer; text-align:left;">📦 이 기기의 이전 데이터 복구하기</button>
     <div id="caseList"></div>
-    <button id="appLogoutBtn" style="margin:10px 18px 16px; padding:9px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:12px; cursor:pointer;">로그아웃</button>
+    <button id="dataRecoverBtn" style="margin:0 18px 6px; padding:8px 12px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:11.5px; cursor:pointer;">📦 예전 로컬 데이터 복구</button>
+    <button id="appLogoutBtn" style="margin:0 18px 16px; padding:9px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:12px; cursor:pointer;">로그아웃</button>
   </aside>
   <main id="main"></main>
 </div>
@@ -422,6 +427,16 @@
       <button id="caseHistoryCloseBtn" style="border:none; background:transparent; font-size:18px; color:var(--muted); cursor:pointer;">✕</button>
     </div>
     <div id="caseHistoryList" style="padding:14px 20px; overflow-y:auto; flex:1;"></div>
+  </div>
+</div>
+
+<div id="migrateOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:95; display:none; align-items:center; justify-content:center; padding:20px;">
+  <div style="background:var(--bg); border-radius:12px; width:520px; max-width:100%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line);">
+      <div style="font-family:'Noto Serif KR', serif; font-weight:700; font-size:15px;">📦 이전 데이터 복구</div>
+      <button id="migrateCloseBtn" style="border:none; background:transparent; font-size:18px; color:var(--muted); cursor:pointer;">✕</button>
+    </div>
+    <div id="migrateBody" style="padding:18px 20px; overflow-y:auto; flex:1; font-size:13px; line-height:1.7;"></div>
   </div>
 </div>
 
@@ -1350,6 +1365,69 @@ function idbDelete(key){
   }));
 }
 
+// ---- 예전 로컬 데이터 복구 (Firebase 전환 전, 이 기기에만 남아있던 데이터) ----
+// Firestore/Storage로 넘어오기 전에는 이 기기의 IndexedDB(파일류)와
+// localStorage(작은 JSON류)에 데이터가 저장되어 있었다. 그 흔적이 아직
+// 남아있는 기기에서 한 번 실행하면, 지금 저장돼있는 모든 키를 찾아서
+// 새 공유 저장소(Firestore/Storage)로 옮겨준다. 이미 클라우드에 같은 키가
+// 있으면 (다른 기기에서 이미 올라간 데이터일 수 있으므로) 덮어쓰지 않고
+// 건너뛴다 — 이 기기의 예전 데이터가 최신이라는 보장이 없기 때문이다.
+function getAllOldIdbKeys(){
+  return openFileDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const store = tx.objectStore(IDB_STORE);
+    const entries = [];
+    const req = store.openCursor();
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if(cursor){
+        entries.push({ key: cursor.key, value: cursor.value });
+        cursor.continue();
+      } else {
+        resolve(entries);
+      }
+    };
+    req.onerror = () => reject(req.error);
+  })).catch(()=>[]);
+}
+function getAllOldLocalStorageKeys(){
+  const entries = [];
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const fullKey = localStorage.key(i);
+      if(fullKey && fullKey.startsWith(LOCAL_PREFIX)){
+        entries.push({ key: fullKey.slice(LOCAL_PREFIX.length), value: localStorage.getItem(fullKey) });
+      }
+    }
+  }catch(e){}
+  return entries;
+}
+// 실제로 옮기기 전에 몇 개나 있는지만 먼저 세어보는 용도 (확인창에 보여주기 위함).
+async function scanOldLocalData(){
+  const idbEntries = await getAllOldIdbKeys();
+  const localEntries = getAllOldLocalStorageKeys();
+  const merged = new Map();
+  idbEntries.forEach(({key,value})=>merged.set(key,value));
+  localEntries.forEach(({key,value})=>{ if(!merged.has(key)) merged.set(key,value); });
+  return merged;
+}
+async function migrateOldLocalDataToFirebase(onProgress){
+  const merged = await scanOldLocalData();
+  const result = { total: merged.size, migrated:0, skipped:0, failed:0 };
+  let done = 0;
+  for(const [key, value] of merged){
+    done++;
+    if(onProgress) onProgress(done, result.total, key);
+    try{
+      const existing = await loadFileFromStorage(key, 10000);
+      if(existing !== null){ result.skipped++; continue; } // 클라우드에 이미 있으면 덮어쓰지 않음
+      const saveResult = await saveFileToStorage(key, value, 20000);
+      if(saveResult.ok) result.migrated++; else result.failed++;
+    }catch(e){ result.failed++; }
+  }
+  return result;
+}
+
 // ---- 공유 저장소: Firestore(작은 데이터) + Firebase Storage(실제 파일) ----
 // 이 두 함수가 앱의 사실상 모든 저장/불러오기(정산 건, 계약서 목록, 사용전점검,
 // 영업자용 서류, 모듈 단가 등)의 공통 통로다. 값의 크기를 보고 자동으로
@@ -1408,6 +1486,115 @@ async function saveFileToStorage(key, value, timeoutMs){
 async function deleteFromStorage(key){
   try{ await appDataDoc(key).delete(); }catch(e){}
   try{ await fileStorageRef(key).delete(); }catch(e){}
+}
+
+// ---- 이전 데이터 복구 (window.storage/IndexedDB → Firestore/Storage 이전) ----
+// 최근에 저장 백엔드를 Firestore/Storage로 바꾸면서, 이전까지 이 브라우저의
+// window.storage/IndexedDB에만 있던 데이터(정산 건, 계약서, 사용전점검 등)를
+// 앱이 더 이상 읽지 않게 되었다 — 데이터 자체가 지워진 건 아니고, "어디를
+// 보는지"만 바뀐 것이다. 이 함수는 예전 방식 그대로 그 데이터를 읽어와서,
+// 지금의 공유 백엔드(Firestore/Storage)에 다시 저장해준다. 반드시 데이터가
+// 남아있던 "그 브라우저/기기"에서 실행해야 한다 (다른 기기에는 애초에 없다).
+async function loadFromOldLocalStorage(key, timeoutMs){
+  if(window.storage){
+    try{
+      const r = await storageGet(key, false, timeoutMs || 20000);
+      if(r) return r.value;
+    }catch(e){}
+  }
+  try{
+    const v = await idbGet(key);
+    if(v !== null) return v;
+  }catch(e){}
+  return null;
+}
+async function migrateAllDataToCloud(onProgress){
+  const report = { migrated: [], skipped: [], failed: [] };
+  const tryMigrateKey = async (key, label) => {
+    try{
+      const value = await loadFromOldLocalStorage(key, 20000);
+      if(value === null || value === undefined){ report.skipped.push(label); return false; }
+      const result = await saveFileToStorage(key, value, 30000);
+      if(result.ok){ report.migrated.push(label); return true; }
+      report.failed.push(`${label} (${result.reason||'알 수 없는 오류'})`);
+      return false;
+    }catch(e){
+      report.failed.push(`${label} (${e.message||e})`);
+      return false;
+    }
+  };
+
+  if(onProgress) onProgress('영업비 정산·사업 이윤정산 건 목록 확인 중…');
+  const casesIndexRaw = await loadFromOldLocalStorage(STORE_INDEX, 20000);
+  if(casesIndexRaw){
+    await saveFileToStorage(STORE_INDEX, casesIndexRaw, 30000);
+    report.migrated.push('정산 건 목록');
+    let caseList = [];
+    try{ caseList = JSON.parse(casesIndexRaw); }catch(e){}
+    for(const entry of caseList){
+      if(onProgress) onProgress(`정산 건 이전 중: ${entry.title || entry.docNo || entry.id}`);
+      await tryMigrateKey('case:'+entry.id, `정산 건 - ${entry.title || entry.docNo || entry.id}`);
+    }
+  } else {
+    report.skipped.push('정산 건 목록 (이전 데이터 없음)');
+  }
+
+  if(onProgress) onProgress('계약서 목록 확인 중…');
+  const contractsIndexRaw = await loadFromOldLocalStorage(CONTRACTS_INDEX_KEY, 20000);
+  if(contractsIndexRaw){
+    await saveFileToStorage(CONTRACTS_INDEX_KEY, contractsIndexRaw, 30000);
+    report.migrated.push('계약서 목록');
+    let items = [];
+    try{ items = JSON.parse(contractsIndexRaw); }catch(e){}
+    for(const item of items){
+      if(onProgress) onProgress(`계약서 파일 이전 중: ${item.fileName}`);
+      await tryMigrateKey('contract-file:'+item.id, `계약서 파일 - ${item.fileName}`);
+    }
+  } else {
+    report.skipped.push('계약서 목록 (이전 데이터 없음)');
+  }
+
+  if(onProgress) onProgress('사용전점검 확인증 목록 확인 중…');
+  const inspectionIndexRaw = await loadFromOldLocalStorage(INSPECTION_INDEX_KEY, 20000);
+  if(inspectionIndexRaw){
+    await saveFileToStorage(INSPECTION_INDEX_KEY, inspectionIndexRaw, 30000);
+    report.migrated.push('사용전점검 확인증 목록');
+    let items = [];
+    try{ items = JSON.parse(inspectionIndexRaw); }catch(e){}
+    for(const item of items){
+      if(onProgress) onProgress(`사용전점검 파일 이전 중: ${item.fileName}`);
+      await tryMigrateKey('inspection-file:'+item.id, `사용전점검 파일 - ${item.fileName}`);
+    }
+  } else {
+    report.skipped.push('사용전점검 확인증 목록 (이전 데이터 없음)');
+  }
+
+  if(onProgress) onProgress('영업자용 서류 목록 확인 중…');
+  const agentDocsIndexRaw = await loadFromOldLocalStorage(AGENT_DOCS_INDEX_KEY, 20000);
+  if(agentDocsIndexRaw){
+    await saveFileToStorage(AGENT_DOCS_INDEX_KEY, agentDocsIndexRaw, 30000);
+    report.migrated.push('영업자용 서류 목록');
+    let items = [];
+    try{ items = JSON.parse(agentDocsIndexRaw); }catch(e){}
+    for(const item of items){
+      if(onProgress) onProgress(`영업자용 서류 이전 중: ${item.fileName || item.customerName}`);
+      await tryMigrateKey('agentdoc-file:'+item.id, `영업자용 서류 - ${item.fileName || item.customerName}`);
+      if(item.cashReceiptFile) await tryMigrateKey(agentDocSubFileKey(item.id,'cashReceipt'), `현금영수증 첨부 - ${item.customerName}`);
+      if(item.taxInvoiceFile) await tryMigrateKey(agentDocSubFileKey(item.id,'taxInvoice'), `세금계산서 첨부 - ${item.customerName}`);
+    }
+  } else {
+    report.skipped.push('영업자용 서류 목록 (이전 데이터 없음)');
+  }
+
+  if(onProgress) onProgress('실적리스트·모듈 단가·카드관리 데이터 확인 중…');
+  await tryMigrateKey(PERF_ROWS_KEY, '실적리스트 (직접입력)');
+  await tryMigrateKey(IMPORT_DATA_KEY, '실적리스트 (엑셀 업로드)');
+  await tryMigrateKey(MODULE_MASTER_KEY, '모듈 단가 관리');
+  await tryMigrateKey(CARDRECON_META_KEY, '카드관리 설정');
+  await tryMigrateKey(CARDRECON_LEDGER_KEY, '카드관리 관리대장 파일');
+  await tryMigrateKey(CARDRECON_APPROVAL_KEY, '카드관리 승인내역 파일');
+
+  return report;
 }
 
 async function saveContractFileData(id, base64){
@@ -1806,7 +1993,7 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'none'){
+  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'history' || state.activeTab === 'none'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
@@ -1821,9 +2008,11 @@ function renderSidebar(){
               ? '<div class="empty-side">모듈 단가 마스터를 관리하는 화면입니다.<br>여기서 수정한 단가는 새로 만드는 정산 건부터 적용됩니다.</div>'
               : state.activeTab === 'cardrecon'
                 ? '<div class="empty-side">법인카드 관리대장·승인내역·통합본을 올리면<br>카드 대사와 통합본 자동 업데이트를 진행합니다.</div>'
-                : state.activeTab === 'none'
-                  ? '<div class="empty-side">접근 가능한 메뉴가 없습니다.<br>관리자에게 문의해주세요.</div>'
-                  : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
+                : state.activeTab === 'history'
+                  ? '<div class="empty-side">모든 정산 건의 변경 이력을<br>한 곳에서 확인하고 복원할 수 있습니다.</div>'
+                  : state.activeTab === 'none'
+                    ? '<div class="empty-side">접근 가능한 메뉴가 없습니다.<br>관리자에게 문의해주세요.</div>'
+                    : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
     return;
   }
   if(newBtn) newBtn.style.display = '';
@@ -2565,6 +2754,10 @@ function renderMain(loading){
   }
   if(state.activeTab === 'cardrecon'){
     renderCardReconMain();
+    return;
+  }
+  if(state.activeTab === 'history'){
+    renderHistoryMain();
     return;
   }
   if(state.activeTab === 'adminApproval'){
@@ -4191,6 +4384,7 @@ const ALL_TABS = [
   { key:'agentDocs', label:'영업자용' },
   { key:'moduleprices', label:'모듈 단가 관리' },
   { key:'cardrecon', label:'카드관리' },
+  { key:'history', label:'변경 이력' },
 ];
 
 async function renderAdminApprovalList(){
@@ -4811,6 +5005,59 @@ function renderModulePricesMain(){
       rebuildModuleDerived();
       debouncedSaveModuleMaster();
       renderModulePricesMain();
+    });
+  });
+}
+
+// ---------- 변경 이력 (모든 정산 건을 한 곳에서) ----------
+// 건 각각의 상세 화면에 있던 "🕒 변경 이력" 버튼과 완전히 같은 오버레이
+// (openCaseHistoryOverlay)를 재사용한다 — 여기서는 건을 하나하나 열지 않고도
+// 바로 이력을 확인·복원할 수 있도록 전체 목록만 모아서 보여준다.
+async function renderHistoryMain(){
+  const main = document.getElementById('main');
+  main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+  const list = await loadIndex(); // 사이드바용 캐시(state.cases)가 오래됐을 수 있으니 항상 새로 불러온다
+  if(state.activeTab !== 'history') return; // 불러오는 동안 다른 탭으로 이동했으면 무시
+  state.cases = list;
+
+  const sorted = [...list].sort((a,b)=>b.updated-a.updated);
+
+  main.innerHTML = `
+    <h2 class="section-title">변경 이력</h2>
+    <p style="font-size:12.5px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
+      영업비 정산·사업 이윤정산 건들의 변경 이력을 한 곳에서 확인하고, 필요하면 이전 시점으로 되돌릴 수 있습니다.
+      건을 수정할 때마다(최소 1분 간격으로) 자동으로 기록되며, 각 건당 최근 20개 버전까지 보관됩니다.
+    </p>
+    ${sorted.length===0 ? `<div class="empty-side">아직 저장된 정산 건이 없습니다.</div>` : `
+    <div class="table-wrap">
+      <table style="width:100%; border-collapse:collapse;">
+        <thead><tr>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:90px;">종류</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">건 제목 / 고객명</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:150px;">마지막 수정</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:140px;">작업</th>
+        </tr></thead>
+        <tbody>
+          ${sorted.map(c => `
+            <tr data-id="${c.id}">
+              <td style="padding:7px 6px; font-size:12.5px;">${c.caseType==='profit' ? '📊 이윤정산' : '💰 영업비'}</td>
+              <td style="padding:7px 6px; font-size:13px;">${escapeHtml(c.title||'제목 없음')}</td>
+              <td style="padding:7px 6px; font-size:11.5px; color:var(--muted);">${new Date(c.updated).toLocaleString('ko-KR')}</td>
+              <td style="padding:7px 6px;">
+                <button class="history-view-btn" data-id="${c.id}" data-type="${c.caseType||'sales'}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">🕒 이력 보기</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    `}
+  `;
+
+  main.querySelectorAll('.history-view-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state.activeId = btn.dataset.id; // openCaseHistoryOverlay의 "다른 곳으로 이동했는지" 확인 로직과 맞춰준다
+      openCaseHistoryOverlay(btn.dataset.id);
     });
   });
 }
@@ -6102,6 +6349,36 @@ document.body.addEventListener('click', (e)=>{
   if(wrap) wrap.scrollBy({ left: Number(btn.dataset.dir) * 500, behavior: 'smooth' });
 });
 
+document.getElementById('migrateOldDataBtn').addEventListener('click', async ()=>{
+  if(!confirm('이 기기(브라우저)에 예전에 저장되어 있던 정산 건·계약서·사용전점검·영업자용 서류·모듈 단가·카드관리 데이터를 지금 로그인 계정으로 옮깁니다.\n\n반드시 예전에 실제로 사용하시던 그 기기/브라우저에서 눌러주세요 (다른 기기에는 옮길 데이터가 없습니다). 계속할까요?')) return;
+  const overlay = document.getElementById('migrateOverlay');
+  const body = document.getElementById('migrateBody');
+  overlay.style.display = 'flex';
+  body.innerHTML = '<div style="color:var(--muted);">시작하는 중…</div>';
+  try{
+    const report = await migrateAllDataToCloud((msg)=>{ body.innerHTML = `<div style="color:var(--muted);">${escapeHtml(msg)}</div>`; });
+    const lines = [];
+    lines.push(`<div style="font-weight:700; color:var(--pos); margin-bottom:10px;">✅ 옮긴 항목: ${report.migrated.length}건</div>`);
+    if(report.migrated.length) lines.push(`<div style="font-size:12px; color:var(--muted); margin-bottom:14px; white-space:pre-line;">${report.migrated.map(escapeHtml).join('\n')}</div>`);
+    if(report.skipped.length){
+      lines.push(`<div style="font-weight:700; color:var(--muted); margin-bottom:6px;">⏭️ 이 기기에 없던 항목: ${report.skipped.length}건</div>`);
+      lines.push(`<div style="font-size:12px; color:var(--muted); margin-bottom:14px; white-space:pre-line;">${report.skipped.map(escapeHtml).join('\n')}</div>`);
+    }
+    if(report.failed.length){
+      lines.push(`<div style="font-weight:700; color:var(--neg); margin-bottom:6px;">⚠️ 옮기지 못한 항목: ${report.failed.length}건</div>`);
+      lines.push(`<div style="font-size:12px; color:var(--neg); white-space:pre-line;">${report.failed.map(escapeHtml).join('\n')}</div>`);
+    }
+    lines.push(`<div style="margin-top:16px; font-size:12.5px; color:var(--muted);">복구가 끝났습니다. 이 창을 닫고 페이지를 새로고침하면 반영된 내용을 확인할 수 있습니다.</div>`);
+    body.innerHTML = lines.join('');
+  }catch(e){
+    console.error(e);
+    body.innerHTML = `<div style="color:var(--neg);">복구 중 오류가 발생했습니다: ${escapeHtml(e.message||String(e))}</div>`;
+  }
+});
+document.getElementById('migrateCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('migrateOverlay').style.display = 'none';
+});
+
 document.getElementById('exportBtn').addEventListener('click', async ()=>{
   const all = [];
   for(const entry of state.cases){
@@ -6583,6 +6860,31 @@ async function renderAdminList(){
 }
 
 document.getElementById('appLogoutBtn').addEventListener('click', ()=>fbAuth.signOut());
+document.getElementById('dataRecoverBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('dataRecoverBtn');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = '확인 중…';
+  try{
+    const merged = await scanOldLocalData();
+    if(merged.size === 0){
+      alert('이 기기(브라우저)에는 옮길 예전 로컬 데이터가 없습니다.');
+      return;
+    }
+    const ok = confirm(`이 기기에서 예전 데이터 ${merged.size}개를 발견했습니다.\n지금 클라우드(모든 사람이 공유하는 저장소)로 옮길까요?\n\n이미 클라우드에 같은 항목이 있으면 그건 덮어쓰지 않고 그대로 둡니다.`);
+    if(!ok) return;
+    btn.textContent = '복구 중… (0%)';
+    const result = await migrateOldLocalDataToFirebase((done, total)=>{
+      btn.textContent = `복구 중… (${Math.round(done/total*100)}%)`;
+    });
+    alert(`복구가 끝났습니다.\n\n새로 옮긴 항목: ${result.migrated}개\n이미 클라우드에 있어 건너뜀: ${result.skipped}개\n실패: ${result.failed}개\n\n확인을 누르면 최신 데이터로 화면을 다시 불러옵니다.`);
+    location.reload();
+  }catch(e){
+    console.error(e);
+    alert('복구 중 오류가 발생했습니다: ' + (e && e.message ? e.message : '알 수 없는 오류'));
+  }finally{
+    btn.disabled = false; btn.textContent = original;
+  }
+});
 
 let isAdminUser = false;
 
