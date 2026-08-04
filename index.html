@@ -2807,8 +2807,9 @@ function wireSalesLedgerPanel(c){
         const url = URL.createObjectURL(result.blob);
         const a = document.createElement('a');
         a.href = url;
-        const base = (s.fileName||'정산데이터.xlsx').replace(/\.xlsx$/i,'');
-        a.download = `${base}_영업비기록_${isoDate(new Date())}.xlsx`;
+        const rawName = `${c.docNo||''} ${(c.title||computeAutoTitle(c)).replace(/^'/,'')}`.trim();
+        const safeName = rawName.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g,' ').trim() || '영업비_정산';
+        a.download = `${safeName}.xlsx`;
         document.body.appendChild(a); a.click(); a.remove();
         URL.revokeObjectURL(url);
         s.message = result.message;
