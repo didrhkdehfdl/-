@@ -635,13 +635,13 @@ function newRecord(defaultCorp){
 const MODULE_MASTER_KEY = 'module-price-master';
 let moduleMaster = [
   { id:'m1', modelCode:'HiS-T500OH-ET', displayName:'현대 500', watt:500, grade:'',
-    materialBuyPerWatt:230, materialSellPerWatt:280, depositSlab:2830000, depositAttached:null, noteOrder:'attached-first' },
+    materialBuyPerWatt:230, materialSellPerWatt:280, depositSlab:2830000, depositAttached:null, noteOrder:'attached-first', baseKw:3 },
   { id:'m2', modelCode:'HiS-S500NR-ESB', displayName:'현대 500', watt:500, grade:'2등급',
-    materialBuyPerWatt:250, materialSellPerWatt:300, depositSlab:2900000, depositAttached:null, noteOrder:'slab-first' },
+    materialBuyPerWatt:250, materialSellPerWatt:300, depositSlab:2900000, depositAttached:null, noteOrder:'slab-first', baseKw:3 },
   { id:'m3', modelCode:'HIC-T640OJ', displayName:'현대 640', watt:640, grade:'',
-    materialBuyPerWatt:210, materialSellPerWatt:260, depositSlab:2900000, depositAttached:null, noteOrder:'slab-first' },
+    materialBuyPerWatt:210, materialSellPerWatt:260, depositSlab:2900000, depositAttached:null, noteOrder:'slab-first', baseKw:3.2 },
   { id:'m4', modelCode:'Q.PEAK DUO ML-G11S.2 KC1 500', displayName:'한화 500', watt:500, grade:'',
-    materialBuyPerWatt:275, materialSellPerWatt:275, depositSlab:2830000, depositAttached:null, noteOrder:'slab-first' },
+    materialBuyPerWatt:275, materialSellPerWatt:275, depositSlab:2830000, depositAttached:null, noteOrder:'slab-first', baseKw:3 },
 ];
 // 부착형 입금가: 개별 override가 없으면 "슬라브형 - 10만원" 규칙을 그대로 적용.
 function moduleDepositAttached(m){
@@ -2739,6 +2739,315 @@ function renderMain(loading){
   renderSalesMain();
 }
 
+// ---------- 영업비 정산 → "기안지" + "영업비(지에스이)" 통합 엑셀에 기록 ----------
+// 카드관리·이윤정산 기록 기능과 같은 이유로 이 파일도 저장해두지 않는다.
+let salesLedgerState = { open:false, buffer:null, fileName:'', busy:false, error:'', message:'' };
+const GIWANJI_SHEET = '기안지(기타참고)';
+const SALES_LEDGER_SHEET = '영업비(지에스이)';
+// "3.0kw" 같은 문자열에서 숫자만 뽑아낸다 (영업비 시트 O열 설비용량은 숫자로 저장됨).
+function parseCapacityNumber(capacityStr){
+  const m = String(capacityStr||'').match(/[\d.]+/);
+  return m ? Number(m[0]) : 0;
+}
+// 레코드의 note에는 이 앱이 자동으로 붙이는 "영업비용: ... = ..." 요약 줄이
+// 맨 끝에 있는데, 영업비(지에스이) 시트에서는 그 요약을 바로 아래 행의 수식이
+// 대신 보여주므로 중복되지 않도록 떼어내고 옮긴다.
+function stripBusinessSummaryLine(note){
+  const lines = (note||'').split('\n');
+  const idx = lines.findIndex(l => l.trim().startsWith('영업비용'));
+  if(idx < 0) return note||'';
+  const removeFrom = (idx>0 && lines[idx-1].trim()==='') ? idx-1 : idx;
+  lines.splice(removeFrom, idx - removeFrom + 1);
+  return lines.join('\n');
+}
+function excelDateSerial(dateStr){
+  if(!dateStr) return '';
+  const d = new Date(dateStr);
+  if(isNaN(d.getTime())) return '';
+  const epoch = new Date(Date.UTC(1899,11,30));
+  return Math.round((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()) - epoch.getTime())/86400000);
+}
+function renderSalesLedgerPanel(c){
+  const s = salesLedgerState;
+  return `
+    <div class="table-wrap" style="padding:16px; margin-bottom:16px;">
+      <div style="font-size:12.5px; color:var(--muted); line-height:1.7; margin-bottom:10px;">
+        "기안지"와 "영업비(지에스이)" 시트에 이 건의 내용을 채워 넣습니다. 지출결의서는 기안지를 그대로 참조하는 구조라 따로 채울 필요가 없습니다.
+        다른 시트·수식·서식은 건드리지 않습니다. 이 파일은 여러 사람이 같이 쓰는 파일이라 저장해두지 않으니, 매번 최신 파일을 새로 올려주세요.
+      </div>
+      <input type="file" id="salesLedgerFileInput" accept=".xlsx,.xls" style="font-size:11.5px;">
+      ${s.fileName ? `<div style="margin-top:6px; font-size:11px; color:var(--muted);">올린 파일: ${escapeHtml(s.fileName)}</div>` : ''}
+      ${s.error ? `<div style="margin-top:10px; padding:10px 12px; border-radius:6px; background:rgba(255,80,80,0.12); border:1px solid rgba(255,80,80,0.4); color:#ff9d9d; font-size:12px; white-space:pre-line;">${escapeHtml(s.error)}</div>` : ''}
+      ${s.message ? `<div style="margin-top:10px; padding:10px 12px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px; white-space:pre-line;">${escapeHtml(s.message)}</div>` : ''}
+      <div style="margin-top:12px;">
+        <button id="salesLedgerWriteBtn" style="padding:9px 16px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:12.5px; font-weight:600; cursor:pointer;" ${(!s.buffer || s.busy)?'disabled':''}>${s.busy?'처리중…':'기록하고 다운로드'}</button>
+      </div>
+    </div>
+  `;
+}
+function wireSalesLedgerPanel(c){
+  const s = salesLedgerState;
+  const fileInput = document.getElementById('salesLedgerFileInput');
+  if(fileInput) fileInput.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    s.error=''; s.message='';
+    try{ s.buffer = await file.arrayBuffer(); s.fileName = file.name; }
+    catch(err){ s.error = '파일을 읽지 못했습니다: '+err.message; }
+    renderSalesMain();
+  });
+  const writeBtn = document.getElementById('salesLedgerWriteBtn');
+  if(writeBtn) writeBtn.addEventListener('click', async ()=>{
+    s.error=''; s.message=''; s.busy=true; renderSalesMain();
+    try{
+      const result = await writeSalesCaseToLedger(s.buffer, c);
+      if(result.error){
+        s.error = result.error;
+      }else{
+        const url = URL.createObjectURL(result.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const base = (s.fileName||'정산데이터.xlsx').replace(/\.xlsx$/i,'');
+        a.download = `${base}_영업비기록_${isoDate(new Date())}.xlsx`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        s.message = result.message;
+      }
+    }catch(err){
+      s.error = '기록 중 오류가 발생했습니다: '+err.message;
+    }
+    s.busy=false;
+    renderSalesMain();
+  });
+}
+
+// 워크북 zip에서 시트 이름으로 실제 sheetN.xml 경로와 파싱된 문서를 열어준다.
+// 카드관리·이윤정산 기록 기능과 같은 패턴을 공유 함수로 뽑아 재사용한다.
+async function openLedgerSheetXml(zip, parser, sheetLabel){
+  const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const wbFile = zip.file('xl/workbook.xml');
+  if(!wbFile) return { error: '엑셀 구조를 인식할 수 없습니다(workbook.xml 없음).' };
+  const wbXmlText = await wbFile.async('string');
+  const wbDoc = parser.parseFromString(wbXmlText, 'application/xml');
+  const sheetEl = Array.from(wbDoc.getElementsByTagName('sheet')).find(el => el.getAttribute('name') === sheetLabel);
+  if(!sheetEl) return { error: `"${sheetLabel}" 시트를 찾을 수 없습니다.` };
+  const rId = sheetEl.getAttributeNS(REL_NS, 'id');
+  const relsFile = zip.file('xl/_rels/workbook.xml.rels');
+  if(!relsFile) return { error: '워크북 관계 정보를 찾을 수 없습니다.' };
+  const relsText = await relsFile.async('string');
+  const relsDoc = parser.parseFromString(relsText, 'application/xml');
+  const relEl = Array.from(relsDoc.getElementsByTagName('Relationship')).find(el => el.getAttribute('Id') === rId);
+  if(!relEl) return { error: '시트 경로 정보를 찾을 수 없습니다.' };
+  let target = (relEl.getAttribute('Target')||'').replace(/^\.?\//,'');
+  const sheetPath = target.startsWith('xl/') ? target : ('xl/' + target);
+  const sheetFile = zip.file(sheetPath);
+  if(!sheetFile) return { error: `시트 파일(${sheetPath})을 찾을 수 없습니다.` };
+  const sheetXmlText = await sheetFile.async('string');
+  const sheetDoc = parser.parseFromString(sheetXmlText, 'application/xml');
+  const sheetDataEl = sheetDoc.getElementsByTagName('sheetData')[0];
+  if(!sheetDataEl) return { error: '시트 데이터 영역을 찾을 수 없습니다.' };
+  return { wbDoc, sheetDoc, sheetPath, sheetDataEl, rowEls: Array.from(sheetDataEl.getElementsByTagName('row')) };
+}
+function ledgerFindCell(rowEl, colLetter){
+  const rowNum = rowEl.getAttribute('r');
+  return Array.from(rowEl.getElementsByTagName('c')).find(el => el.getAttribute('r') === colLetter+rowNum) || null;
+}
+function ledgerCellText(rowEl, colLetter, sharedStrings){
+  const c = ledgerFindCell(rowEl, colLetter);
+  if(!c) return '';
+  const t = c.getAttribute('t');
+  if(t === 's'){
+    const vEl = c.getElementsByTagName('v')[0];
+    const idx = vEl ? parseInt(vEl.textContent,10) : -1;
+    return sharedStrings[idx] || '';
+  }
+  if(t === 'inlineStr'){
+    const isEl = c.getElementsByTagName('is')[0];
+    return isEl ? Array.from(isEl.getElementsByTagName('t')).map(t=>t.textContent).join('') : '';
+  }
+  const vEl = c.getElementsByTagName('v')[0];
+  return vEl ? vEl.textContent : '';
+}
+function ledgerSetCell(sheetDoc, rowEl, colLetter, raw, isNumeric, isDate){
+  const rowNum = rowEl.getAttribute('r');
+  let cEl = ledgerFindCell(rowEl, colLetter);
+  if(!cEl){
+    cEl = sheetDoc.createElementNS('http://schemas.openxmlformats.org/spreadsheetml/2006/main','c');
+    cEl.setAttribute('r', colLetter+rowNum);
+    rowEl.appendChild(cEl);
+  }
+  while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
+  const SS_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  if((isNumeric || isDate) ){
+    cEl.removeAttribute('t');
+    const v = isDate ? excelDateSerial(raw) : (Number(raw)||0);
+    const vEl = sheetDoc.createElementNS(SS_NS,'v');
+    vEl.textContent = String(v===''?0:v);
+    cEl.appendChild(vEl);
+  }else{
+    cEl.setAttribute('t','inlineStr');
+    const isEl = sheetDoc.createElementNS(SS_NS,'is');
+    const tEl = sheetDoc.createElementNS(SS_NS,'t');
+    tEl.textContent = String(raw||'');
+    isEl.appendChild(tEl);
+    cEl.appendChild(isEl);
+  }
+}
+
+async function writeSalesCaseToLedger(masterArrayBuffer, salesCase){
+  await loadJSZipLib();
+  const zip = await window.JSZip.loadAsync(masterArrayBuffer);
+  const parser = new DOMParser();
+  const serializer = new XMLSerializer();
+  const SS_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+
+  let sharedStrings = [];
+  const ssFile = zip.file('xl/sharedStrings.xml');
+  if(ssFile){
+    const ssText = await ssFile.async('string');
+    const ssDoc = parser.parseFromString(ssText, 'application/xml');
+    sharedStrings = Array.from(ssDoc.getElementsByTagName('si')).map(si =>
+      Array.from(si.getElementsByTagName('t')).map(t=>t.textContent).join('')
+    );
+  }
+
+  // ---------- 기안지 ----------
+  const gw = await openLedgerSheetXml(zip, parser, GIWANJI_SHEET);
+  if(gw.error) return { error: gw.error };
+  const gwRows = gw.rowEls;
+  function gwRow(n){ return gwRows.find(r=>r.getAttribute('r')===String(n)); }
+  const headerCheck = gwRow(5);
+  if(headerCheck){
+    const txt = ledgerCellText(headerCheck,'A',sharedStrings).replace(/\s/g,'');
+    if(txt && !txt.includes('문서번호')){
+      return { error: `"${GIWANJI_SHEET}" 시트 구성이 예상과 달라 중단했습니다 (A5열: "${txt}").` };
+    }
+  }
+  const totals = computeTotals(salesCase);
+  const customerNames = salesCase.records.map(r=>oneLine(r.customer)).filter(Boolean).join(', ');
+  const workDesc = `${customerNames || '(고객명 미입력)'} 영업비용`;
+  const bodyLines = buildDoc1(salesCase, totals).split('\n');
+  // bodyLines = [1.문구, 2.문구, 3.문구, ...moduleLines, 4.문구(자동 formula라 안씀), 지급문구(고정 텍스트라 안씀)]
+  const moduleLines = bodyLines.slice(3, bodyLines.length-2);
+
+  if(gwRow(7)) ledgerSetCell(gw.sheetDoc, gwRow(7), 'E', salesCase.department, false, false);
+  if(gwRow(8)) ledgerSetCell(gw.sheetDoc, gwRow(8), 'E', salesCase.preparer, false, false);
+  if(gwRow(10)){ ledgerSetCell(gw.sheetDoc, gwRow(10), 'E', salesCase.project, false, false); ledgerSetCell(gw.sheetDoc, gwRow(10), 'O', '영업비용 정산', false, false); }
+  if(gwRow(28)) ledgerSetCell(gw.sheetDoc, gwRow(28), 'I', salesCase.agentName, false, false);
+  if(gwRow(30)) ledgerSetCell(gw.sheetDoc, gwRow(30), 'I', '영업비용', false, false);
+  if(gwRow(34)){ ledgerSetCell(gw.sheetDoc, gwRow(34), 'B', workDesc, false, false); ledgerSetCell(gw.sheetDoc, gwRow(34), 'J', totals.pay, true, false); }
+  if(gwRow(41)) ledgerSetCell(gw.sheetDoc, gwRow(41), 'H', salesCase.bankOwner, false, false);
+  if(gwRow(42)) ledgerSetCell(gw.sheetDoc, gwRow(42), 'H', salesCase.bankAccount, false, false);
+  if(gwRow(45)) ledgerSetCell(gw.sheetDoc, gwRow(45), 'E', salesCase.companyName, false, false);
+  const introRows = [12,13,14];
+  introRows.forEach((rowNum,i)=>{
+    const rowEl = gwRow(rowNum);
+    if(rowEl && bodyLines[i]!==undefined) ledgerSetCell(gw.sheetDoc, rowEl, 'B', bodyLines[i], false, false);
+  });
+
+  // 사용모듈별 입금가 설명(3번 항목 아래, 12~14행은 고정 문구라서 15~20행 6칸에
+  // 한 줄씩 채운다. 6줄을 넘으면 두 줄씩 한 칸에 합쳐서 최대 12줄까지 담고,
+  // 그래도 넘치면 "...외 N건"으로 줄여서 표시한다(행을 새로 끼워 넣으면
+  // 아래 지출결의서가 참조하는 행 번호가 다 어긋나 버려서, 늘리지 않는다).
+  const moduleSlotRows = [15,16,17,18,19,20];
+  let packed = moduleLines;
+  let overflowNote = '';
+  if(moduleLines.length > moduleSlotRows.length){
+    if(moduleLines.length <= moduleSlotRows.length*2){
+      packed = [];
+      for(let i=0;i<moduleLines.length;i+=2){
+        packed.push(moduleLines.slice(i,i+2).join('\n'));
+      }
+    }else{
+      const shown = moduleLines.slice(0, moduleSlotRows.length*2-1);
+      packed = [];
+      for(let i=0;i<shown.length;i+=2) packed.push(shown.slice(i,i+2).join('\n'));
+      packed.push(`...외 ${moduleLines.length - shown.length}건 (앱에서 전체 목록 확인)`);
+      overflowNote = `모듈별 입금가 설명이 너무 많아(${moduleLines.length}줄) 기안지에는 일부만 담겼습니다. 전체 내용은 앱에서 확인해주세요.`;
+    }
+  }
+  moduleSlotRows.forEach((rowNum, i)=>{
+    const rowEl = gwRow(rowNum);
+    if(!rowEl) return;
+    if(i < packed.length){
+      ledgerSetCell(gw.sheetDoc, rowEl, 'B', packed[i], false, false);
+      rowEl.removeAttribute('hidden');
+    }else{
+      ledgerSetCell(gw.sheetDoc, rowEl, 'B', '', false, false);
+      rowEl.setAttribute('hidden','1');
+    }
+  });
+
+  zip.file(gw.sheetPath, serializer.serializeToString(gw.sheetDoc));
+
+  // ---------- 영업비(지에스이) ----------
+  const sl = await openLedgerSheetXml(zip, parser, SALES_LEDGER_SHEET);
+  if(sl.error) return { error: sl.error };
+  const slHeader = sl.rowEls.find(r=>r.getAttribute('r')==='1');
+  if(slHeader){
+    const txt = ledgerCellText(slHeader,'G',sharedStrings).replace(/\s/g,'');
+    if(txt && !txt.includes('소비자')){
+      return { error: `"${SALES_LEDGER_SHEET}" 시트 구성이 예상과 달라 중단했습니다 (G1열: "${txt}").` };
+    }
+  }
+  // 데이터는 2행 1블록(데이터행 + 그 아래 수식행)으로 짝수 행(2,4,6,8,10...)에서 시작한다.
+  const dataBlockRows = sl.rowEls.filter(r => {
+    const n = Number(r.getAttribute('r'));
+    return n>=2 && n%2===0 && n < 12; // 합계 영역(13행~) 앞까지만
+  });
+  const skipped = [];
+  for(const rec of salesCase.records){
+    if(!rec.customer) continue;
+    const matches = dataBlockRows.filter(r => ledgerCellText(r,'G',sharedStrings).trim() === String(rec.customer).trim());
+    if(matches.length > 1){
+      skipped.push(`${rec.customer}: 같은 이름이 여러 행에 있어 건너뜀`);
+      continue;
+    }
+    let dataRow = matches[0];
+    if(!dataRow){
+      // 값이 비어있는 기존 블록(예: G열이 비어있는 슬롯)을 찾아서 채운다.
+      dataRow = dataBlockRows.find(r => !ledgerCellText(r,'G',sharedStrings).trim());
+      if(!dataRow){
+        skipped.push(`${rec.customer}: 채울 수 있는 빈 칸이 없어 건너뜀(엑셀에서 행을 직접 추가해주세요)`);
+        continue;
+      }
+    }
+    const rowNum = dataRow.getAttribute('r');
+    const noteText = stripBusinessSummaryLine(rec.note);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'B', rec.date, false, true);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'E', rec.contractDate, false, true);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'F', rec.corp, false, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'G', rec.customer, false, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'H', rec.address, false, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'K', salesCase.agentName, false, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'L', rec.team, false, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'M', rec.module, false, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'N', rec.inverter, false, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'O', parseCapacityNumber(rec.capacity), true, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'P', rec.structureType, false, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'S', Number(rec.deposit)||0, true, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'U', -(Number(rec.companyPrice)||0), true, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'V', -(Number(rec.extra)||0), true, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'Y', noteText, false, false);
+  }
+
+  zip.file(sl.sheetPath, serializer.serializeToString(sl.sheetDoc));
+
+  let calcPr = gw.wbDoc.getElementsByTagName('calcPr')[0];
+  if(!calcPr){
+    calcPr = gw.wbDoc.createElementNS(SS_NS, 'calcPr');
+    gw.wbDoc.documentElement.appendChild(calcPr);
+  }
+  calcPr.setAttribute('fullCalcOnLoad','1');
+  zip.file('xl/workbook.xml', serializer.serializeToString(gw.wbDoc));
+
+  const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
+  let message = '기안지·영업비(지에스이) 시트에 기록했습니다.';
+  if(overflowNote) message += '\n' + overflowNote;
+  if(skipped.length) message += '\n' + skipped.join('\n');
+  return { blob, message };
+}
+
 function renderSalesMain(){
   const main = document.getElementById('main');
   const c = activeCase;
@@ -2748,10 +3057,12 @@ function renderSalesMain(){
     <h2 class="section-title">
       건 정보
       <span>
+        <button id="salesLedgerToggleBtn" style="background:transparent; border:1px solid var(--gold-dim); color:var(--gold); border-radius:6px; padding:7px 12px; font-size:12px; cursor:pointer; margin-right:6px;">📊 정산데이터에 기록</button>
         <button id="caseHistoryBtn" style="background:transparent; border:1px solid var(--line); color:var(--sky); border-radius:6px; padding:7px 12px; font-size:12px; cursor:pointer; margin-right:6px;">🕒 변경 이력</button>
         <button id="deleteCaseBtn">이 건 삭제</button>
       </span>
     </h2>
+    ${salesLedgerState.open ? renderSalesLedgerPanel(c) : ''}
     <div class="case-header-row">
       <input class="case-title-input" id="titleInput" value="${escapeHtml(c.title)}" placeholder="제목 (예: 26년 주택용 사급태양광 - 최석관 영업비 정산의 건)">
     </div>
@@ -2871,6 +3182,11 @@ function renderSalesMain(){
 
   document.getElementById('deleteCaseBtn').addEventListener('click', removeActiveCase);
   document.getElementById('caseHistoryBtn').addEventListener('click', ()=> openCaseHistoryOverlay(c.id));
+  document.getElementById('salesLedgerToggleBtn').addEventListener('click', ()=>{
+    salesLedgerState.open = !salesLedgerState.open;
+    renderSalesMain();
+  });
+  if(salesLedgerState.open) wireSalesLedgerPanel(c);
   document.getElementById('printPreviewBtn').addEventListener('click', openPrintPreview);
   document.getElementById('addRowBtn').addEventListener('click', ()=>{
     c.records.push(newRecord(c.defaultCorp));
@@ -3626,7 +3942,7 @@ function renderProfitMain(){
     const inverterPrices = PROFIT_INVERTER_PRICES[String(p.inverterModel||'').trim()];
     if(inverterPrices){ p.inverterBuy = inverterPrices.buy; p.inverterSell = inverterPrices.sell; }
     applyAttachedStructurePricing(p);
-    const price = computePerfCompanyPrice({ moduleModel: p.moduleModel, structureType: p.structureNote });
+    const price = computePerfCompanyPrice({ moduleModel: p.moduleModel, structureType: p.structureNote, capacityKw: p.capacityKw });
     if(price !== null) p.depositPrice = price;
     p.constructionCost = computeConstructionCost(p.capacityKw);
     p.salesCost = computeFinalSalesCost(p.customerDeposit, p.depositPrice, p.salesDeduction);
@@ -3672,7 +3988,7 @@ function renderProfitMain(){
         }
       }
       if(key === 'moduleModel' || key === 'structureNote'){
-        const price = computePerfCompanyPrice({ moduleModel: p.moduleModel, structureType: p.structureNote });
+        const price = computePerfCompanyPrice({ moduleModel: p.moduleModel, structureType: p.structureNote, capacityKw: p.capacityKw });
         if(price !== null) p.depositPrice = price;
       }
       if(key === 'structureNote'){
@@ -5360,7 +5676,7 @@ function newModuleMasterRow(){
   return {
     id: rid(), modelCode:'', displayName:'', watt:500, grade:'',
     materialBuyPerWatt:0, materialSellPerWatt:0, depositSlab:0, depositAttached:null,
-    noteOrder:'slab-first'
+    noteOrder:'slab-first', baseKw:3
   };
 }
 function moduleMasterFieldHtml(m, field, label, width){
@@ -5383,6 +5699,8 @@ function renderModulePricesMain(){
       사업 이윤정산의 자재비 구매·판매 단가에 공통으로 쓰입니다. 단가를 수정해도 <b>이미 저장된 정산 건의 숫자는 바뀌지 않으며</b>,
       새로 만드는 건이나 "다시 계산" 버튼을 눌렀을 때만 반영됩니다.
       부착형 입금가는 비워두면 슬라브형 - 10만원이 자동 적용됩니다.
+      "기준 용량"은 여기 적힌 입금가가 실제로 몇 kW 시스템 기준인지를 뜻하며(예: 500W 모듈 6장=3kW, 640W 모듈 5장=3.2kW),
+      실제 설치 용량이 이 기준 용량의 배수면 입금가도 그 배수만큼 자동으로 늘어납니다.
     </p>
     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
       <button id="mmAddBtn" style="padding:9px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 모듈 추가</button>
@@ -5397,7 +5715,8 @@ function renderModulePricesMain(){
             <th style="padding:7px 6px; font-size:10.5px; color:var(--muted);">실적리스트 모델코드</th>
             <th style="padding:7px 6px; font-size:10.5px; color:var(--muted);">자재 구매단가(원/W)</th>
             <th style="padding:7px 6px; font-size:10.5px; color:var(--muted);">자재 판매단가(원/W)</th>
-            <th style="padding:7px 6px; font-size:10.5px; color:var(--muted);">슬라브형 입금가(원)</th>
+            <th style="padding:7px 6px; font-size:10.5px; color:var(--muted);">기준 용량(kW)</th>
+            <th style="padding:7px 6px; font-size:10.5px; color:var(--muted);">슬라브형 입금가(원, 기준용량 기준)</th>
             <th style="padding:7px 6px; font-size:10.5px; color:var(--muted);">부착형 입금가(원, 비우면 자동)</th>
             <th style="padding:7px 6px; font-size:10.5px; color:var(--muted);">자재구매/판매 금액</th>
             <th style="padding:7px 6px; font-size:10.5px; color:var(--muted);">삭제</th>
@@ -5414,6 +5733,7 @@ function renderModulePricesMain(){
               ${moduleMasterFieldHtml(m,'modelCode','모델코드',180)}
               ${moduleMasterFieldHtml(m,'materialBuyPerWatt','자재구매단가',90)}
               ${moduleMasterFieldHtml(m,'materialSellPerWatt','자재판매단가',90)}
+              ${moduleMasterFieldHtml(m,'baseKw','기준용량',70)}
               ${moduleMasterFieldHtml(m,'depositSlab','슬라브형입금가',100)}
               ${moduleMasterFieldHtml(m,'depositAttached','부착형입금가',100)}
               <td style="padding:6px; font-size:11.5px; color:var(--muted); white-space:nowrap;">${fmtWon(buyAmt)} / ${fmtWon(sellAmt)}</td>
@@ -6175,11 +6495,19 @@ const PROFIT_INVERTER_PRICES = {
 // rebuildModuleDerived() near the top of the script (모듈 단가 마스터 데이터).
 
 // 부착형 시공은 (override가 없는 한) 슬라브형보다 10만원 낮은 단가를 쓴다.
+// 입금가는 모듈마다 정해진 "기준 용량"(예: 500W 모듈은 3kW, 640W 모듈은
+// 3.2kW) 기준으로 매겨져 있는데, 실제 설치 용량이 그 배수(예: 6kW, 6.4kW)면
+// 입금가도 같은 배수로 늘어나야 한다. row에 capacityKw(이윤정산 건) 또는
+// capacity(실적리스트 행, 문자열) 중 있는 값을 읽어서 비례 계산한다.
 function computePerfCompanyPrice(row){
   const m = moduleMaster.find(x=>x.modelCode===row.moduleModel);
   if(!m) return null;
   const isAttached = /부착형/.test(row.structureType||'');
-  return isAttached ? moduleDepositAttached(m) : (Number(m.depositSlab)||0);
+  const basePrice = isAttached ? moduleDepositAttached(m) : (Number(m.depositSlab)||0);
+  const baseKw = Number(m.baseKw) || 3;
+  const capacityKw = Number(row.capacityKw) || parseFloat(row.capacity) || 0;
+  if(!capacityKw) return basePrice; // 용량 정보가 없으면 기준가 그대로(기존 동작 유지)
+  return Math.round(basePrice * (capacityKw / baseKw));
 }
 // Maps each 실적리스트 module name to its matching index in MODULE_NOTE_OPTIONS
 // (via PERF_MODULE_TO_NOTE_INDEX, derived from moduleMaster), so the 비고's
