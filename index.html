@@ -2741,7 +2741,29 @@ function renderMain(loading){
 
 // ---------- 영업비 정산 → "기안지" + "영업비(지에스이)" 통합 엑셀에 기록 ----------
 // 카드관리·이윤정산 기록 기능과 같은 이유로 이 파일도 저장해두지 않는다.
-let salesLedgerState = { open:false, buffer:null, fileName:'', busy:false, error:'', message:'' };
+// 영업비 정산은 건마다 독립된 새 파일을 만드는 방식이라(누적이 아님), 한 번
+// 올린 양식 파일을 계속 저장해둬도 다른 사람 작업을 덮어쓸 위험이 없다.
+let salesLedgerState = { open:false, buffer:null, fileName:'', savedAt:'', busy:false, error:'', message:'' };
+const SALES_LEDGER_TEMPLATE_KEY = 'sales-ledger-template-b64';
+const SALES_LEDGER_META_KEY = 'sales-ledger-template-meta';
+async function saveSalesLedgerTemplate(buffer, fileName){
+  const savedAt = new Date().toISOString();
+  await saveFileToStorage(SALES_LEDGER_TEMPLATE_KEY, arrayBufferToBase64(buffer), 30000);
+  await saveFileToStorage(SALES_LEDGER_META_KEY, JSON.stringify({ fileName, savedAt }));
+  return savedAt;
+}
+async function restoreSalesLedgerTemplate(){
+  try{
+    const metaText = await loadFileFromStorage(SALES_LEDGER_META_KEY);
+    if(!metaText) return;
+    const meta = JSON.parse(metaText);
+    const b64 = await loadFileFromStorage(SALES_LEDGER_TEMPLATE_KEY, 30000);
+    if(!b64) return;
+    salesLedgerState.buffer = base64ToArrayBuffer(b64);
+    salesLedgerState.fileName = meta.fileName || '';
+    salesLedgerState.savedAt = meta.savedAt || '';
+  }catch(e){ console.error('영업비 정산 양식 복원 실패', e); }
+}
 const GIWANJI_SHEET = '기안지(기타참고)';
 const SALES_LEDGER_SHEET = '영업비(지에스이)';
 // "3.0kw" 같은 문자열에서 숫자만 뽑아낸다 (영업비 시트 O열 설비용량은 숫자로 저장됨).
@@ -2772,11 +2794,15 @@ function renderSalesLedgerPanel(c){
   return `
     <div class="table-wrap" style="padding:16px; margin-bottom:16px;">
       <div style="font-size:12.5px; color:var(--muted); line-height:1.7; margin-bottom:10px;">
-        "기안지"와 "영업비(지에스이)" 시트에 이 건의 내용을 채워 넣습니다. 지출결의서는 기안지를 그대로 참조하는 구조라 따로 채울 필요가 없습니다.
-        다른 시트·수식·서식은 건드리지 않습니다. 이 파일은 여러 사람이 같이 쓰는 파일이라 저장해두지 않으니, 매번 최신 파일을 새로 올려주세요.
+        "기안지"·"영업비(지에스이)" 시트에 이 건의 내용을 채워서, 이 건 하나만 담은 새 엑셀 파일로 내려받습니다(누적 아님 — 건마다 독립된 파일).
+        지출결의서는 기안지를 그대로 참조하는 구조라 따로 채울 필요가 없습니다. 다른 시트·수식·서식은 건드리지 않습니다.
+        건마다 새 파일을 만드는 방식이라, 양식 파일은 한 번 올려두면 계속 기억해서 씁니다.
       </div>
+      ${s.fileName ? `<div style="margin-bottom:8px; padding:8px 10px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px;">
+          저장된 양식: ${escapeHtml(s.fileName)} ${s.savedAt ? `(올린 시각: ${escapeHtml(new Date(s.savedAt).toLocaleString('ko-KR'))})` : ''}
+        </div>` : ''}
       <input type="file" id="salesLedgerFileInput" accept=".xlsx,.xls" style="font-size:11.5px;">
-      ${s.fileName ? `<div style="margin-top:6px; font-size:11px; color:var(--muted);">올린 파일: ${escapeHtml(s.fileName)}</div>` : ''}
+      <div style="margin-top:4px; font-size:11px; color:var(--muted);">${s.fileName ? '양식을 바꾸려면 새 파일을 올려주세요.' : '기안지·영업비(지에스이) 양식이 있는 엑셀을 한 번 올려주세요.'}</div>
       ${s.error ? `<div style="margin-top:10px; padding:10px 12px; border-radius:6px; background:rgba(255,80,80,0.12); border:1px solid rgba(255,80,80,0.4); color:#ff9d9d; font-size:12px; white-space:pre-line;">${escapeHtml(s.error)}</div>` : ''}
       ${s.message ? `<div style="margin-top:10px; padding:10px 12px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px; white-space:pre-line;">${escapeHtml(s.message)}</div>` : ''}
       <div style="margin-top:12px;">
@@ -2792,7 +2818,11 @@ function wireSalesLedgerPanel(c){
     const file = e.target.files[0];
     if(!file) return;
     s.error=''; s.message='';
-    try{ s.buffer = await file.arrayBuffer(); s.fileName = file.name; }
+    try{
+      s.buffer = await file.arrayBuffer();
+      s.fileName = file.name;
+      s.savedAt = await saveSalesLedgerTemplate(s.buffer, file.name);
+    }
     catch(err){ s.error = '파일을 읽지 못했습니다: '+err.message; }
     renderSalesMain();
   });
@@ -3411,7 +3441,33 @@ function applyAttachedStructurePricing(p){
 // 카드관리와 같은 이유로 이 통합 엑셀 파일도 저장해두지 않는다 — 여러 사람이
 // 같이 쓰는 "지금 이 순간의 최신본"이라, 캐시된 옛 버전을 계속 다시 써버리면
 // 그사이 다른 사람이 채워넣은 행을 덮어쓸 위험이 있다. 매번 새로 올린다.
-let profitLedgerState = { open:false, buffer:null, fileName:'', busy:false, error:'', message:'' };
+// 이윤정산은 "정산데이터" 시트에 계속 누적해서 쓰는 방식이라, 저장해둔 파일을
+// 그대로 다시 쓰면 그 사이 다른 건이 추가된 최신 내용을 놓칠 위험이 있다.
+// 그래서 파일은 저장해두되, 마지막으로 올린 시각을 보여주고 "최신이 맞다"는
+// 확인을 받아야만 기록을 진행한다. 이번 세션에서 직접 새로 올렸다면 그 자체가
+// 최신이라는 뜻이라 별도 확인 없이 바로 진행된다.
+let profitLedgerState = { open:false, buffer:null, fileName:'', savedAt:'', freshThisSession:false, ackFresh:false, busy:false, error:'', message:'' };
+const PROFIT_LEDGER_TEMPLATE_KEY = 'profit-ledger-template-b64';
+const PROFIT_LEDGER_META_KEY = 'profit-ledger-template-meta';
+async function saveProfitLedgerTemplate(buffer, fileName){
+  const savedAt = new Date().toISOString();
+  await saveFileToStorage(PROFIT_LEDGER_TEMPLATE_KEY, arrayBufferToBase64(buffer), 30000);
+  await saveFileToStorage(PROFIT_LEDGER_META_KEY, JSON.stringify({ fileName, savedAt }));
+  return savedAt;
+}
+async function restoreProfitLedgerTemplate(){
+  try{
+    const metaText = await loadFileFromStorage(PROFIT_LEDGER_META_KEY);
+    if(!metaText) return;
+    const meta = JSON.parse(metaText);
+    const b64 = await loadFileFromStorage(PROFIT_LEDGER_TEMPLATE_KEY, 30000);
+    if(!b64) return;
+    profitLedgerState.buffer = base64ToArrayBuffer(b64);
+    profitLedgerState.fileName = meta.fileName || '';
+    profitLedgerState.savedAt = meta.savedAt || '';
+    profitLedgerState.freshThisSession = false; // 복원된 파일은 이번 세션에 새로 올린 게 아니므로 확인이 필요
+  }catch(e){ console.error('이윤정산 정산데이터 복원 실패', e); }
+}
 const PROFIT_LEDGER_SHEET = '정산데이터';
 // 같은 고객명을 쓰는 영업비 정산 건(케이스+레코드)을 전체 건 목록에서 찾는다.
 // 이 앱에서는 영업비 정산 건과 이윤정산 건이 서로 다른 화면에서 따로 관리되지만,
@@ -3439,12 +3495,15 @@ function computeLedgerStructureSell(profitCase, salesRecord){
 function renderProfitLedgerPanel(p){
   const s = profitLedgerState;
   const match = findMatchingSalesRecord(p.customer);
+  const needsAck = !!s.fileName && !s.freshThisSession;
+  const canWrite = s.buffer && (s.freshThisSession || s.ackFresh);
   return `
     <div class="table-wrap" style="padding:16px; margin-bottom:16px;">
       <div style="font-size:12.5px; color:var(--muted); line-height:1.7; margin-bottom:10px;">
         "정산데이터" 통합 엑셀 파일을 올리면, 이 이윤정산 건과 같은 고객명의 영업비 정산 건을 자동으로 찾아 합쳐서
         해당 고객의 행(이미 있으면 그 행, 없으면 새 행)에 값을 채워 넣습니다. 다른 고객 행·다른 시트·수식은 건드리지 않습니다.
-        이 파일은 여러 사람이 같이 쓰는 파일이라 저장해두지 않으니, 매번 최신 파일을 새로 올려주세요.
+        이 파일은 계속 누적되는 공유 파일이라 한 번 올려두면 기억은 하지만, 그 사이 다른 건이 추가됐을 수 있어서
+        매번 "최신이 맞다" 확인을 받은 뒤에만 기록을 진행합니다.
       </div>
       ${match
         ? `<div style="padding:8px 10px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px; margin-bottom:10px;">
@@ -3454,12 +3513,20 @@ function renderProfitLedgerPanel(p){
              고객명 "${escapeHtml(p.customer||'')}"과(와) 일치하는 영업비 정산 건을 찾지 못했습니다. 영업비 쪽 열(회사입금가·영업비공제금 등)은 비워둔 채로 기록됩니다. 먼저 영업비 정산 건을 만들어두시면 같이 채워집니다.
            </div>`
       }
+      ${s.fileName ? `<div style="margin-bottom:8px; padding:8px 10px; border-radius:6px; background:var(--panel-2); border:1px solid var(--line); font-size:12px;">
+          저장된 정산데이터 파일: ${escapeHtml(s.fileName)}${s.savedAt ? ` (마지막으로 올린 시각: ${escapeHtml(new Date(s.savedAt).toLocaleString('ko-KR'))})` : ''}
+        </div>` : ''}
       <input type="file" id="ledgerFileInput" accept=".xlsx,.xls" style="font-size:11.5px;">
-      ${s.fileName ? `<div style="margin-top:6px; font-size:11px; color:var(--muted);">올린 파일: ${escapeHtml(s.fileName)}</div>` : ''}
+      <div style="margin-top:4px; font-size:11px; color:var(--muted);">최신 정산데이터 파일이면 다시 올려서 갱신해주세요.</div>
+      ${needsAck ? `
+        <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; margin-top:12px; cursor:pointer;">
+          <input type="checkbox" id="ledgerAckFreshBox" ${s.ackFresh?'checked':''}> 위 저장된 파일이 지금 기준 최신 정산데이터가 맞습니다.
+        </label>
+      ` : ''}
       ${s.error ? `<div style="margin-top:10px; padding:10px 12px; border-radius:6px; background:rgba(255,80,80,0.12); border:1px solid rgba(255,80,80,0.4); color:#ff9d9d; font-size:12px; white-space:pre-line;">${escapeHtml(s.error)}</div>` : ''}
       ${s.message ? `<div style="margin-top:10px; padding:10px 12px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px;">${escapeHtml(s.message)}</div>` : ''}
       <div style="margin-top:12px;">
-        <button id="ledgerWriteBtn" style="padding:9px 16px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:12.5px; font-weight:600; cursor:pointer;" ${(!s.buffer || s.busy)?'disabled':''}>${s.busy?'처리중…':'기록하고 다운로드'}</button>
+        <button id="ledgerWriteBtn" style="padding:9px 16px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:12.5px; font-weight:600; cursor:pointer;" ${(!canWrite || s.busy)?'disabled':''}>${s.busy?'처리중…':'기록하고 다운로드'}</button>
       </div>
     </div>
   `;
@@ -3474,9 +3541,14 @@ function wireProfitLedgerPanel(p){
     try{
       s.buffer = await file.arrayBuffer();
       s.fileName = file.name;
+      s.freshThisSession = true; // 방금 직접 올렸으니 최신이라는 확인이 따로 필요 없음
+      s.ackFresh = false;
+      s.savedAt = await saveProfitLedgerTemplate(s.buffer, file.name);
     }catch(err){ s.error = '파일을 읽지 못했습니다: '+err.message; }
     renderProfitMain();
   });
+  const ackBox = document.getElementById('ledgerAckFreshBox');
+  if(ackBox) ackBox.addEventListener('change', (e)=>{ s.ackFresh = e.target.checked; renderProfitMain(); });
   const writeBtn = document.getElementById('ledgerWriteBtn');
   if(writeBtn) writeBtn.addEventListener('click', async ()=>{
     s.error=''; s.message=''; s.busy=true; renderProfitMain();
@@ -7442,6 +7514,8 @@ async function init(){
     rebuildModuleDerived();
   }
   await restoreCardReconFiles();
+  await restoreSalesLedgerTemplate();
+  await restoreProfitLedgerTemplate();
   renderSidebar();
   renderMain();
 }
