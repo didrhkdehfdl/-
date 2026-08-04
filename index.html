@@ -3090,6 +3090,363 @@ function applyAttachedStructurePricing(p){
   return false;
 }
 
+// ---------- 사업 이윤정산 → "정산데이터" 통합 엑셀에 기록 ----------
+// 카드관리와 같은 이유로 이 통합 엑셀 파일도 저장해두지 않는다 — 여러 사람이
+// 같이 쓰는 "지금 이 순간의 최신본"이라, 캐시된 옛 버전을 계속 다시 써버리면
+// 그사이 다른 사람이 채워넣은 행을 덮어쓸 위험이 있다. 매번 새로 올린다.
+let profitLedgerState = { open:false, buffer:null, fileName:'', busy:false, error:'', message:'' };
+const PROFIT_LEDGER_SHEET = '정산데이터';
+// 같은 고객명을 쓰는 영업비 정산 건(케이스+레코드)을 전체 건 목록에서 찾는다.
+// 이 앱에서는 영업비 정산 건과 이윤정산 건이 서로 다른 화면에서 따로 관리되지만,
+// "정산데이터" 시트는 같은 고객의 두 정보를 한 행에 합쳐 담는 형식이라 필요하다.
+function findMatchingSalesRecord(customerName){
+  const name = String(customerName||'').trim();
+  if(!name) return null;
+  for(const c of state.cases){
+    if(c.caseType !== 'sales' || !c.records) continue;
+    const rec = c.records.find(r => String(r.customer||'').trim() === name);
+    if(rec) return { salesCase:c, record:rec };
+  }
+  return null;
+}
+// 구조물 판매단가(정산데이터 AC열): 부착형이면 3kW당 22만원, 그 외에는
+// 구매단가×1.2 하되 3kW당 50만원을 넘지 않도록 — 용량에 비례해서 커진다.
+function computeLedgerStructureSell(profitCase, salesRecord){
+  const kwFactor = (Number(profitCase.capacityKw)||0) / 3;
+  const isAttached = /부착형/.test((salesRecord && salesRecord.structureType) || '');
+  if(isAttached) return Math.round(220000 * kwFactor);
+  const capped = Math.round(500000 * kwFactor);
+  const scaled = Math.round((Number(profitCase.structureBuy)||0) * 1.2);
+  return Math.min(scaled, capped);
+}
+function renderProfitLedgerPanel(p){
+  const s = profitLedgerState;
+  const match = findMatchingSalesRecord(p.customer);
+  return `
+    <div class="table-wrap" style="padding:16px; margin-bottom:16px;">
+      <div style="font-size:12.5px; color:var(--muted); line-height:1.7; margin-bottom:10px;">
+        "정산데이터" 통합 엑셀 파일을 올리면, 이 이윤정산 건과 같은 고객명의 영업비 정산 건을 자동으로 찾아 합쳐서
+        해당 고객의 행(이미 있으면 그 행, 없으면 새 행)에 값을 채워 넣습니다. 다른 고객 행·다른 시트·수식은 건드리지 않습니다.
+        이 파일은 여러 사람이 같이 쓰는 파일이라 저장해두지 않으니, 매번 최신 파일을 새로 올려주세요.
+      </div>
+      ${match
+        ? `<div style="padding:8px 10px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px; margin-bottom:10px;">
+             연결된 영업비 정산 건 찾음: "${escapeHtml(match.salesCase.title||'')}" 안의 ${escapeHtml(match.record.customer)} (담당 ${escapeHtml(match.salesCase.agentName||'')}, 회사입금가 ${fmtWon(Number(match.record.companyPrice)||0)})
+           </div>`
+        : `<div style="padding:8px 10px; border-radius:6px; background:rgba(255,180,60,0.12); border:1px solid rgba(255,180,60,0.4); color:#ffcf8a; font-size:12px; margin-bottom:10px;">
+             고객명 "${escapeHtml(p.customer||'')}"과(와) 일치하는 영업비 정산 건을 찾지 못했습니다. 영업비 쪽 열(회사입금가·영업비공제금 등)은 비워둔 채로 기록됩니다. 먼저 영업비 정산 건을 만들어두시면 같이 채워집니다.
+           </div>`
+      }
+      <input type="file" id="ledgerFileInput" accept=".xlsx,.xls" style="font-size:11.5px;">
+      ${s.fileName ? `<div style="margin-top:6px; font-size:11px; color:var(--muted);">올린 파일: ${escapeHtml(s.fileName)}</div>` : ''}
+      ${s.error ? `<div style="margin-top:10px; padding:10px 12px; border-radius:6px; background:rgba(255,80,80,0.12); border:1px solid rgba(255,80,80,0.4); color:#ff9d9d; font-size:12px; white-space:pre-line;">${escapeHtml(s.error)}</div>` : ''}
+      ${s.message ? `<div style="margin-top:10px; padding:10px 12px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px;">${escapeHtml(s.message)}</div>` : ''}
+      <div style="margin-top:12px;">
+        <button id="ledgerWriteBtn" style="padding:9px 16px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:12.5px; font-weight:600; cursor:pointer;" ${(!s.buffer || s.busy)?'disabled':''}>${s.busy?'처리중…':'기록하고 다운로드'}</button>
+      </div>
+    </div>
+  `;
+}
+function wireProfitLedgerPanel(p){
+  const s = profitLedgerState;
+  const fileInput = document.getElementById('ledgerFileInput');
+  if(fileInput) fileInput.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    s.error=''; s.message='';
+    try{
+      s.buffer = await file.arrayBuffer();
+      s.fileName = file.name;
+    }catch(err){ s.error = '파일을 읽지 못했습니다: '+err.message; }
+    renderProfitMain();
+  });
+  const writeBtn = document.getElementById('ledgerWriteBtn');
+  if(writeBtn) writeBtn.addEventListener('click', async ()=>{
+    s.error=''; s.message=''; s.busy=true; renderProfitMain();
+    try{
+      const match = findMatchingSalesRecord(p.customer);
+      const result = await writeProfitCaseToLedger(s.buffer, p, match);
+      if(result.error){
+        s.error = result.error;
+      }else{
+        const url = URL.createObjectURL(result.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const base = (s.fileName||'정산데이터.xlsx').replace(/\.xlsx$/i,'');
+        a.download = `${base}_${escapeHtml(p.customer)||'업데이트'}_${isoDate(new Date())}.xlsx`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        s.message = result.wasNewRow ? `새 행(${result.rowNum}행)에 기록했습니다.` : `기존 ${result.rowNum}행을 갱신했습니다.`;
+      }
+    }catch(err){
+      s.error = '기록 중 오류가 발생했습니다: '+err.message;
+    }
+    s.busy=false;
+    renderProfitMain();
+  });
+}
+// 정산데이터 시트에 값을 채워 넣는다 — 카드관리와 같은 원리로, ZIP 안의 해당
+// 시트 XML만 직접 수정해서 다른 시트·수식·서식을 절대 건드리지 않는다.
+// 새 행을 만들 때는 마지막 데이터 행을 그대로 복제한 뒤(서식·수식이 같이 딸려옴)
+// 행번호만 새로 바꾸고, 값 칸만 새 내용으로 덮어쓴다.
+// 행 복제로는 안전하게 옮겨지지 않는 수식들 — 원본 파일에 "공유 수식(shared
+// formula)" 팔로워 셀(자기 텍스트 없이 다른 셀의 수식을 참조)이 섞여 있어서,
+// 그런 셀을 그대로 복제하면 빈 "=" 수식이 되어버린다. 그래서 이 열들은 항상
+// 아래 정확한 수식 문구를 새 행 번호에 맞춰 직접 써넣는다(95행 실제 데이터로
+// 검증한 내용).
+const LEDGER_FORMULA_TEMPLATES = {
+  M: n => `L${n}/1.1`,
+  N: n => `M${n}*0.1`,
+  T: n => `Q${n}*S${n}`,
+  Y: n => `V${n}*X${n}`,
+  AD: n => `AA${n}*AC${n}`,
+  AF: n => `T${n}+Y${n}+AD${n}+AE${n}`,
+  AM: n => `SUM(AG${n}:AL${n})`,
+  AO: n => `M${n}`,
+  AR: n => `AO${n}-AP${n}-AQ${n}`,
+  AT: n => `VLOOKUP(K${n},단가표!$U$3:$X$8,3,TRUE)`,
+  AV: n => `SUM(AT${n}:AU${n})`,
+  AW: n => `M${n}-AF${n}-AM${n}-(AQ${n}+AR${n})`,
+  AX: n => `AW${n}-AV${n}`,
+  AY: n => `AX${n}/M${n}`,
+};
+async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch){
+  await loadJSZipLib();
+  const zip = await window.JSZip.loadAsync(masterArrayBuffer);
+  const parser = new DOMParser();
+  const serializer = new XMLSerializer();
+  const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const SS_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+
+  const wbFile = zip.file('xl/workbook.xml');
+  if(!wbFile) return { error: '엑셀 구조를 인식할 수 없습니다(workbook.xml 없음).' };
+  const wbXmlText = await wbFile.async('string');
+  const wbDoc = parser.parseFromString(wbXmlText, 'application/xml');
+  const sheetEl = Array.from(wbDoc.getElementsByTagName('sheet')).find(el => el.getAttribute('name') === PROFIT_LEDGER_SHEET);
+  if(!sheetEl) return { error: `"${PROFIT_LEDGER_SHEET}" 시트를 찾을 수 없습니다.` };
+  const rId = sheetEl.getAttributeNS(REL_NS, 'id');
+
+  const relsFile = zip.file('xl/_rels/workbook.xml.rels');
+  if(!relsFile) return { error: '워크북 관계 정보를 찾을 수 없습니다.' };
+  const relsText = await relsFile.async('string');
+  const relsDoc = parser.parseFromString(relsText, 'application/xml');
+  const relEl = Array.from(relsDoc.getElementsByTagName('Relationship')).find(el => el.getAttribute('Id') === rId);
+  if(!relEl) return { error: '시트 경로 정보를 찾을 수 없습니다.' };
+  let target = (relEl.getAttribute('Target')||'').replace(/^\.?\//,'');
+  const sheetPath = target.startsWith('xl/') ? target : ('xl/' + target);
+  const sheetFile = zip.file(sheetPath);
+  if(!sheetFile) return { error: `시트 파일(${sheetPath})을 찾을 수 없습니다.` };
+
+  let sharedStrings = [];
+  const ssFile = zip.file('xl/sharedStrings.xml');
+  if(ssFile){
+    const ssText = await ssFile.async('string');
+    const ssDoc = parser.parseFromString(ssText, 'application/xml');
+    sharedStrings = Array.from(ssDoc.getElementsByTagName('si')).map(si =>
+      Array.from(si.getElementsByTagName('t')).map(t=>t.textContent).join('')
+    );
+  }
+
+  const sheetXmlText = await sheetFile.async('string');
+  const sheetDoc = parser.parseFromString(sheetXmlText, 'application/xml');
+  const sheetDataEl = sheetDoc.getElementsByTagName('sheetData')[0];
+  if(!sheetDataEl) return { error: '시트 데이터 영역을 찾을 수 없습니다.' };
+  const rowEls = Array.from(sheetDataEl.getElementsByTagName('row'));
+
+  function findCell(rowEl, colLetter){
+    const rowNum = rowEl.getAttribute('r');
+    return Array.from(rowEl.getElementsByTagName('c')).find(el => el.getAttribute('r') === colLetter+rowNum) || null;
+  }
+  function cellText(rowEl, colLetter){
+    const c = findCell(rowEl, colLetter);
+    if(!c) return '';
+    const t = c.getAttribute('t');
+    if(t === 's'){
+      const vEl = c.getElementsByTagName('v')[0];
+      const idx = vEl ? parseInt(vEl.textContent,10) : -1;
+      return sharedStrings[idx] || '';
+    }
+    if(t === 'inlineStr'){
+      const isEl = c.getElementsByTagName('is')[0];
+      return isEl ? Array.from(isEl.getElementsByTagName('t')).map(t=>t.textContent).join('') : '';
+    }
+    const vEl = c.getElementsByTagName('v')[0];
+    return vEl ? vEl.textContent : '';
+  }
+
+  // 헤더 안전 점검
+  const headerRow = rowEls.find(r => r.getAttribute('r') === '4');
+  if(headerRow){
+    const expected = { C:'고객명', L:'총사업비', AP:'회사입금가' };
+    for(const [col,label] of Object.entries(expected)){
+      const txt = cellText(headerRow, col).replace(/\s/g,'');
+      if(txt && !txt.includes(label)){
+        return { error: `"${PROFIT_LEDGER_SHEET}" 시트의 열 구성이 예상과 달라 안전하게 처리할 수 없습니다 (${col}열: "${txt}"). 수동 확인이 필요합니다.` };
+      }
+    }
+  }
+
+  const dataRows = rowEls.filter(r => Number(r.getAttribute('r')) >= 6);
+  const customerName = String(profitCase.customer||'').trim();
+  const matchingRows = customerName ? dataRows.filter(r => cellText(r,'C').trim() === customerName) : [];
+  if(matchingRows.length > 1){
+    const rowNums = matchingRows.map(r=>r.getAttribute('r')).join(', ');
+    return { error: `"${customerName}" 이름이 이미 ${matchingRows.length}개 행(${rowNums}행)에 있어서 어느 행을 갱신해야 할지 자동으로 정할 수 없습니다. 엑셀에서 중복 행을 정리하신 뒤 다시 시도해주세요.` };
+  }
+  let targetRow = matchingRows[0] || null;
+  let wasNewRow = false;
+  let newRowNum = null;
+
+  if(!targetRow){
+    // 새 행: 마지막으로 값이 채워진 행을 찾아 복제(서식·수식 그대로 딸려옴).
+    let lastFilled = null;
+    for(const r of dataRows){
+      if(cellText(r,'C').trim()) lastFilled = r;
+    }
+    if(!lastFilled) return { error: '기존 데이터 행을 찾지 못해 새 행의 서식을 복제할 수 없습니다.' };
+    const oldRowNum = lastFilled.getAttribute('r');
+    newRowNum = String(Number(oldRowNum)+1);
+    const cloned = lastFilled.cloneNode(true);
+    cloned.setAttribute('r', newRowNum);
+    Array.from(cloned.getElementsByTagName('c')).forEach(c=>{
+      const ref = c.getAttribute('r')||'';
+      const col = ref.replace(/\d+$/,'');
+      c.setAttribute('r', col+newRowNum);
+      const template = LEDGER_FORMULA_TEMPLATES[col];
+      const fEls = Array.from(c.getElementsByTagName('f'));
+      if(template){
+        // 이 열은 공식이 정해져 있으니(shared-formula 팔로워라 텍스트가 비어
+        // 있을 위험을 피하려고) 항상 정확한 수식을 직접 써넣는다.
+        while(c.firstChild) c.removeChild(c.firstChild);
+        c.removeAttribute('t');
+        const fEl = sheetDoc.createElementNS(SS_NS, 'f');
+        fEl.textContent = template(newRowNum);
+        c.appendChild(fEl);
+      }else if(fEls.length){
+        fEls.forEach(fEl=>{
+          fEl.removeAttribute('t');
+          fEl.removeAttribute('ref');
+          fEl.removeAttribute('si');
+          const re = new RegExp('([A-Z]{1,3})' + oldRowNum + '(?!\\d)', 'g');
+          fEl.textContent = fEl.textContent.replace(re, '$1'+newRowNum);
+        });
+      }
+    });
+    // 이 행 번호가 이미 (내용은 비어있지만) 예약된 행으로 존재하는 경우가 있다
+    // — 실제로 이 파일에서 데이터가 없는 행에 번호(B열)만 미리 채워둔 구간이
+    // 있었다. 그런 행과 번호가 겹치면 새로 끼워넣지 말고 그 자리를 대신 채운다
+    // (그 행에 남아있던 B열 값 등은 보존).
+    const existingStub = rowEls.find(r => r.getAttribute('r') === newRowNum);
+    if(existingStub){
+      const stubB = findCell(existingStub, 'B');
+      if(stubB && stubB.textContent.trim()){
+        let clonedB = findCell(cloned, 'B');
+        if(!clonedB){
+          clonedB = sheetDoc.createElementNS(SS_NS,'c');
+          clonedB.setAttribute('r', 'B'+newRowNum);
+          cloned.insertBefore(clonedB, cloned.firstChild);
+        }
+        while(clonedB.firstChild) clonedB.removeChild(clonedB.firstChild);
+        Array.from(stubB.attributes).forEach(a=>{ if(a.name!=='r') clonedB.setAttribute(a.name, a.value); });
+        Array.from(stubB.childNodes).forEach(ch=>clonedB.appendChild(ch.cloneNode(true)));
+      }
+      existingStub.parentNode.replaceChild(cloned, existingStub);
+    }else{
+      lastFilled.parentNode.insertBefore(cloned, lastFilled.nextSibling);
+    }
+    targetRow = cloned;
+    wasNewRow = true;
+  }
+
+  const r = computeProfitCase(profitCase);
+  const rec = salesMatch ? salesMatch.record : null;
+  const salesCase = salesMatch ? salesMatch.salesCase : null;
+  const structureSell = computeLedgerStructureSell(profitCase, rec);
+
+  const plainValues = {
+    C: profitCase.customer || '',
+    D: profitCase.branch || '',
+    E: profitCase.constructionDate ? isoDate(new Date(profitCase.constructionDate)) : '',
+    F: '#N/A',
+    G: rec ? (rec.corp||'') : '',
+    H: salesCase ? (salesCase.agentName||'') : '',
+    I: 'X',
+    J: profitCase.teamName || '',
+    K: Number(profitCase.capacityKw)||0,
+    L: Number(profitCase.totalBusinessCost)||0,
+    O: '사무실',
+    P: profitCase.moduleModel || '',
+    Q: Number(profitCase.moduleQty)||0,
+    R: Number(profitCase.moduleBuy)||0,
+    S: Number(profitCase.moduleSell)||0,
+    U: profitCase.inverterModel || '',
+    V: Number(profitCase.inverterQty)||0,
+    W: Number(profitCase.inverterBuy)||0,
+    X: Number(profitCase.inverterSell)||0,
+    Z: profitCase.structureNote || '',
+    AA: Number(profitCase.structureQty)||0,
+    AB: Number(profitCase.structureBuy)||0,
+    AC: structureSell,
+    AE: Number(profitCase.etcMaterial)||0,
+    AG: Number(profitCase.structureReviewCost)||0,
+    AH: Number(profitCase.designSupervisionCost)||0,
+    AI: Number(profitCase.inspectionFeeCost)||0,
+    AJ: Number(profitCase.constructionCost)||0,
+    AK: Number(profitCase.etcAgencyCost)||0,
+    AP: rec ? (Number(rec.companyPrice)||0) : '',
+    AQ: Number(profitCase.salesDeduction)||0,
+    AS: profitCase.salesDeductionNote || '',
+    AU: Number(profitCase.maintenanceCost)||0,
+  };
+  const dateCols = new Set(['E']);
+  const numericCols = new Set(['K','L','Q','R','S','V','W','X','AA','AB','AC','AE','AG','AH','AI','AJ','AK','AP','AQ','AU']);
+
+  Object.entries(plainValues).forEach(([col, raw])=>{
+    let cEl = findCell(targetRow, col);
+    if(!cEl){
+      cEl = sheetDoc.createElementNS(SS_NS,'c');
+      cEl.setAttribute('r', col+targetRow.getAttribute('r'));
+      targetRow.appendChild(cEl);
+    }
+    while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
+    if(dateCols.has(col) && raw){
+      // 엑셀 날짜 일련번호로 저장(1900-01-01 기준) — 문자열로 넣으면 날짜 서식이 깨진다.
+      const d = new Date(raw);
+      const epoch = new Date(Date.UTC(1899,11,30));
+      const days = Math.round((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()) - epoch.getTime())/86400000);
+      cEl.removeAttribute('t');
+      const vEl = sheetDoc.createElementNS(SS_NS,'v');
+      vEl.textContent = String(days);
+      cEl.appendChild(vEl);
+    }else if(numericCols.has(col)){
+      cEl.removeAttribute('t');
+      const vEl = sheetDoc.createElementNS(SS_NS,'v');
+      vEl.textContent = String(Number(raw)||0);
+      cEl.appendChild(vEl);
+    }else{
+      cEl.setAttribute('t','inlineStr');
+      const isEl = sheetDoc.createElementNS(SS_NS,'is');
+      const tEl = sheetDoc.createElementNS(SS_NS,'t');
+      tEl.textContent = String(raw||'');
+      isEl.appendChild(tEl);
+      cEl.appendChild(isEl);
+    }
+  });
+
+  zip.file(sheetPath, serializer.serializeToString(sheetDoc));
+
+  let calcPr = wbDoc.getElementsByTagName('calcPr')[0];
+  if(!calcPr){
+    calcPr = wbDoc.createElementNS(SS_NS, 'calcPr');
+    wbDoc.documentElement.appendChild(calcPr);
+  }
+  calcPr.setAttribute('fullCalcOnLoad','1');
+  zip.file('xl/workbook.xml', serializer.serializeToString(wbDoc));
+
+  const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
+  return { blob, wasNewRow, rowNum: targetRow.getAttribute('r') };
+}
+
 function renderProfitMain(){
   const main = document.getElementById('main');
   const p = activeCase;
@@ -3099,10 +3456,12 @@ function renderProfitMain(){
     <h2 class="section-title">
       건 정보 (사업 이윤정산)
       <span>
+        <button id="ledgerWriteToggleBtn" style="background:transparent; border:1px solid var(--gold-dim); color:var(--gold); border-radius:6px; padding:7px 12px; font-size:12px; cursor:pointer; margin-right:6px;">📊 정산데이터에 기록</button>
         <button id="caseHistoryBtn" style="background:transparent; border:1px solid var(--line); color:var(--sky); border-radius:6px; padding:7px 12px; font-size:12px; cursor:pointer; margin-right:6px;">🕒 변경 이력</button>
         <button id="deleteCaseBtn">이 건 삭제</button>
       </span>
     </h2>
+    ${profitLedgerState.open ? renderProfitLedgerPanel(p) : ''}
     <div class="case-header-row">
       <div class="case-title-input" style="padding:4px 0; font-family:'Noto Serif KR',serif; font-size:20px; font-weight:700;">${escapeHtml(p.customer||'새 이윤정산 건')} ${p.capacityKw?`(${p.capacityKw}kW)`:''}</div>
     </div>
@@ -3253,6 +3612,11 @@ function renderProfitMain(){
 
   document.getElementById('deleteCaseBtn').addEventListener('click', removeActiveCase);
   document.getElementById('caseHistoryBtn').addEventListener('click', ()=> openCaseHistoryOverlay(p.id));
+  document.getElementById('ledgerWriteToggleBtn').addEventListener('click', ()=>{
+    profitLedgerState.open = !profitLedgerState.open;
+    renderProfitMain();
+  });
+  if(profitLedgerState.open) wireProfitLedgerPanel(p);
   document.getElementById('profitPrintBtn').addEventListener('click', openProfitPrintPreview);
   document.getElementById('profitRecalcBtn').addEventListener('click', ()=>{
     const modulePrices = PROFIT_MODULE_PRICES[p.moduleModel];
