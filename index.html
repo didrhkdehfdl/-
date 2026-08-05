@@ -1792,17 +1792,17 @@ function parseBizRegFromText(text){
   const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
   const isCorporate = parseBizIsCorporate(text);
   const { bizType, bizItem } = parseBizTypeItem(text);
-  // 법인등록번호 등 옆칸 숫자가 상호명 뒤에 같은 줄로 붙어 인식되는 경우가 있어
-  // (예: "(주)그랜드번기술단(아그10840160|0109 ...)"), 그 잡음 괄호를 통째로
-  // 걷어내려면 닫는 괄호까지 온전히 잡아야 해서 상호명은 길게 읽어둔다.
+  // 법인등록번호 등 옆칸 숫자가 상호명 뒤에 같은 줄로 붙어 인식되는 경우가 있는데,
+  // 재인식마다 그 잡음이 괄호/구두점 모양을 다르게 달고 나와서 괄호 모양에 기대는
+  // 방식으로는 계속 못 잡는 경우가 생긴다. 대신 상호명에는 원래 숫자가 없다는 점을
+  // 이용해서, 첫 숫자가 나오는 지점에서 그냥 잘라낸다.
   const bizNameRaw = findAfterLabel(text, ['법인명(단체명)','법인명','상호(법인명)','상호','명칭'], 120);
   const ownerNameRaw = findAfterLabel(text, isCorporate ? ['대표자'] : ['성명','대표자'], 30);
-  // 숫자나 "|" 같은 OCR 잡음이 섞인 괄호 뭉치는 걷어낸다
-  // (단, "(주)"처럼 실제 상호 일부인 괄호는 숫자가 없으니 그대로 남는다).
-  let bizNameClean = bizNameRaw.replace(/^[:：\s]+/, '').replace(/\([^)]*[\d|][^)]*\)/g, '').trim();
-  // 잡음 괄호가 maxLen 안에서도 안 닫힌 채 잘렸다면(예: "...(아그108401"), 그
-  // 닫히지 않은 괄호부터는 통째로 잘라낸다.
-  bizNameClean = bizNameClean.replace(/\([^)]*$/, '').trim().slice(0, 40);
+  let bizNameClean = bizNameRaw.replace(/^[:：\s]+/, '');
+  const digitIdx = bizNameClean.search(/[0-9]/);
+  if(digitIdx >= 0) bizNameClean = bizNameClean.slice(0, digitIdx);
+  // 숫자 앞에 남은 여는 괄호나 구두점 찌꺼기를 정리한다.
+  bizNameClean = bizNameClean.replace(/[\s(（][^)）]*$/, '').trim().slice(0, 40);
   return {
     isCorporate,
     bizName: bizNameClean,
