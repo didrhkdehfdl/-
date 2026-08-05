@@ -1690,12 +1690,20 @@ function downloadBase64File(base64, mime, fileName){
 // ---- 사업자등록증 OCR 파싱 ----
 // 사업자등록증은 라벨(상호/성명/등록번호/업태/종목 등)이 표 형태로 나열되는
 // 문서라, 사용전점검 확인증 파싱과 같은 방식(라벨 뒤 텍스트를 읽어오는 방식)을 쓴다.
+// OCR은 "법인명"을 "법인 명"처럼 글자 사이에 없던 공백을 종종 끼워넣으므로,
+// 라벨을 찾을 때는 글자 사이 공백을 허용하는 정규식으로 매칭한다.
+function labelPattern(label){
+  return label.split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+}
 function findAfterLabel(text, labels, maxLen){
   maxLen = maxLen || 24;
   for(const label of (Array.isArray(labels)?labels:[labels])){
-    const idx = text.indexOf(label);
-    if(idx < 0) continue;
-    let after = text.slice(idx + label.length, idx + label.length + maxLen);
+    const m = new RegExp(labelPattern(label)).exec(text);
+    if(!m) continue;
+    const idx = m.index + m[0].length;
+    let after = text.slice(idx, idx + maxLen);
+    // 라벨 바로 뒤에 "(대표유형)"처럼 부가설명이 괄호로 붙어있으면 먼저 걷어낸다.
+    after = after.replace(/^\s*\([^)]*\)\s*/, '');
     after = after.replace(/^[\s:：]+/, ''); // drop leading colon/whitespace
     // Stop at the next line break or another known label, whichever comes first.
     after = after.split(/[\n\r]/)[0];
@@ -1707,8 +1715,8 @@ function findAfterLabel(text, labels, maxLen){
 // 법인 여부: "법인등록번호"나 "법인명"이 있으면 법인, 그렇지 않고 "성명"(개인
 // 사업자등록증의 대표자 표기)이 있으면 개인으로 본다.
 function parseBizIsCorporate(text){
-  if(/법인등록번호|법인명/.test(text)) return true;
-  if(/성명/.test(text)) return false;
+  if(new RegExp(labelPattern('법인등록번호')).test(text) || new RegExp(labelPattern('법인명')).test(text)) return true;
+  if(new RegExp(labelPattern('성명')).test(text)) return false;
   return null; // 판단 불가 — 수동 확인 필요
 }
 // 사업자등록번호(3-2-5자리)를 찾는다. "법인등록번호"(6-7자리, 다른 형식)와
