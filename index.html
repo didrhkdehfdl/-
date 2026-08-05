@@ -5491,7 +5491,7 @@ function renderAgentDocSubCell(item, sub, label){
       inner += `<div style="margin-top:4px;"><input type="file" class="agentdoc-subfile-input" data-id="${item.id}" data-sub="${sub}" accept="application/pdf,image/*" style="font-size:10.5px; width:130px;"></div>`;
     }
   }
-  return `<td style="padding:6px; vertical-align:top;">${inner}</td>`;
+  return `<td data-label="${escapeHtml(label)}" style="padding:6px; vertical-align:top;">${inner}</td>`;
 }
 
 async function renderAgentDocsMain(){
