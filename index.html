@@ -1803,6 +1803,9 @@ function parseBizRegFromText(text){
   if(digitIdx >= 0) bizNameClean = bizNameClean.slice(0, digitIdx);
   // 숫자 앞에 남은 여는 괄호나 구두점 찌꺼기를 정리한다.
   bizNameClean = bizNameClean.replace(/[\s(（][^)）]*$/, '').trim().slice(0, 40);
+  // 상호명에 한글이 하나도 없이 숫자/기호만 남았다면 라벨을 엉뚱한 자리에서
+  // 잘못 붙잡은 것으로 보고, 잘못된 값을 보여주느니 빈 칸으로 둔다.
+  if(!/[가-힣]/.test(bizNameClean)) bizNameClean = '';
   return {
     isCorporate,
     bizName: bizNameClean,
