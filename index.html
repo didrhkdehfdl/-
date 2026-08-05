@@ -1795,11 +1795,14 @@ function parseBizRegFromText(text){
   // 법인등록번호 등 옆칸 숫자가 상호명 뒤에 같은 줄로 붙어 인식되는 경우가 있어
   // (예: "(주)그랜드번기술단(아그10840160|0109 ...)"), 그 잡음 괄호를 통째로
   // 걷어내려면 닫는 괄호까지 온전히 잡아야 해서 상호명은 길게 읽어둔다.
-  const bizNameRaw = findAfterLabel(text, ['법인명(단체명)','법인명','상호(법인명)','상호','명칭'], 80);
+  const bizNameRaw = findAfterLabel(text, ['법인명(단체명)','법인명','상호(법인명)','상호','명칭'], 120);
   const ownerNameRaw = findAfterLabel(text, isCorporate ? ['대표자'] : ['성명','대표자'], 30);
   // 숫자나 "|" 같은 OCR 잡음이 섞인 괄호 뭉치는 걷어낸다
   // (단, "(주)"처럼 실제 상호 일부인 괄호는 숫자가 없으니 그대로 남는다).
-  const bizNameClean = bizNameRaw.replace(/^[:：\s]+/, '').replace(/\([^)]*[\d|][^)]*\)/g, '').trim().slice(0, 40);
+  let bizNameClean = bizNameRaw.replace(/^[:：\s]+/, '').replace(/\([^)]*[\d|][^)]*\)/g, '').trim();
+  // 잡음 괄호가 maxLen 안에서도 안 닫힌 채 잘렸다면(예: "...(아그108401"), 그
+  // 닫히지 않은 괄호부터는 통째로 잘라낸다.
+  bizNameClean = bizNameClean.replace(/\([^)]*$/, '').trim().slice(0, 40);
   return {
     isCorporate,
     bizName: bizNameClean,
