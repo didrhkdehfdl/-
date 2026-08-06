@@ -7010,7 +7010,12 @@ function buildSalesRecordFromRow(row, defaultCorp){
   const noteIdx = findPerfModuleNoteIndex(row);
   if(noteIdx >= 0){
     rec.usedModuleNoteIndex = noteIdx; // read by createSalesCaseFromRows to sync the case-level checklist
-    if(!row.companyPrice) updateNoteModuleLineByIndex(rec, noteIdx);
+    // 회사입금가가 채워져 있어도, 그 값이 이 모듈의 표준 단가와 같다면(단지
+    // 원본 시트에 값이 이미 적혀 있었을 뿐 실제로는 표준가인 경우) 입금가
+    // 문구를 그대로 써준다 — 표준가와 다른, 진짜 수동 협의가는 여전히 건너뛴다.
+    const standardPrice = MODULE_OPTION_PRICES[noteIdx];
+    const matchesStandard = !row.companyPrice || Math.abs(Number(row.companyPrice)||0) === standardPrice;
+    if(matchesStandard) updateNoteModuleLineByIndex(rec, noteIdx);
   }
   if(row.extraNote){
     // 추가비내역 can itself span several lines (e.g. "전선추가비 5만원\n구조물 추가비 60만원") —
