@@ -3116,17 +3116,29 @@ async function writeSalesCaseToLedger(masterArrayBuffer, salesCase){
     ledgerSetCell(sl.sheetDoc, dataRow, 'N', rec.inverter, false, false);
     ledgerSetCell(sl.sheetDoc, dataRow, 'O', parseCapacityNumber(rec.capacity), true, false);
     ledgerSetCell(sl.sheetDoc, dataRow, 'P', rec.structureType, false, false);
+    // 앱 내부에서는 회사입금가·추가비를 이미 음수(공제액)로 저장해서 그대로
+    // 더하면 지급금이 나오는 구조라(payOf: deposit+vat+companyPrice+extra),
+    // 여기서 다시 부호를 뒤집으면 안 된다 — 그대로 옮겨쓴다.
     ledgerSetCell(sl.sheetDoc, dataRow, 'S', Number(rec.deposit)||0, true, false);
-    ledgerSetCell(sl.sheetDoc, dataRow, 'U', -(Number(rec.companyPrice)||0), true, false);
-    ledgerSetCell(sl.sheetDoc, dataRow, 'V', -(Number(rec.extra)||0), true, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'U', Number(rec.companyPrice)||0, true, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'V', Number(rec.extra)||0, true, false);
     ledgerSetCell(sl.sheetDoc, dataRow, 'Y', noteText, false, false);
+    dataRow.removeAttribute('hidden');
+    const pairRow = sl.rowEls.find(r => r.getAttribute('r')===String(Number(dataRow.getAttribute('r'))+1));
+    if(pairRow) pairRow.removeAttribute('hidden');
   });
+  // 이 건의 실제 건수보다 남는 칸은 값을 비우는 것은 물론, 표에서 아예 안
+  // 보이도록 행 자체를 숨긴다(병합 짝인 바로 아래 행도 같이 숨겨야 빈 줄이
+  // 안 남는다).
   for(let i=records.length; i<dataBlockRows.length; i++){
     const dataRow = dataBlockRows[i];
     ledgerSetCell(sl.sheetDoc, dataRow, 'B', '', false, false);
     ledgerSetCell(sl.sheetDoc, dataRow, 'E', '', false, false);
     writableTextCols.forEach(col => ledgerSetCell(sl.sheetDoc, dataRow, col, '', false, false));
     writableNumericCols.forEach(col => ledgerSetCell(sl.sheetDoc, dataRow, col, 0, true, false));
+    dataRow.setAttribute('hidden','1');
+    const pairRow = sl.rowEls.find(r => r.getAttribute('r')===String(Number(dataRow.getAttribute('r'))+1));
+    if(pairRow) pairRow.setAttribute('hidden','1');
   }
 
   // 더는 쓰지 않는 숨겨진 여분 칸(10~12행, 12행은 이어지는 미사용 여분 행)을
