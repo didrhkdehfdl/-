@@ -3084,29 +3084,26 @@ async function writeSalesCaseToLedger(masterArrayBuffer, salesCase){
       return { error: `"${SALES_LEDGER_SHEET}" 시트 구성이 예상과 달라 중단했습니다 (G1열: "${txt}").` };
     }
   }
-  // 데이터는 2행 1블록(데이터행 + 그 아래 수식행)으로 짝수 행(2,4,6,8,10...)에서 시작한다.
-  const dataBlockRows = sl.rowEls.filter(r => {
-    const n = Number(r.getAttribute('r'));
-    return n>=2 && n%2===0 && n < 12; // 합계 영역(13행~) 앞까지만
-  });
+  // 영업비 정산은 건마다 독립된 새 파일을 만드는 방식(누적 아님)인데, 기존
+  // 로직은 "같은 고객명을 찾거나, 없으면 비어있는 칸을 찾아서" 채우는 방식이라
+  // 템플릿에 예전 건 데이터가 남아있으면(2,4,6,8행이 이미 다른 고객명으로 차
+  // 있으면) 이 건의 새 데이터가 안 보이는 10행(숨김 칸)으로 밀려 들어가
+  // "아예 입력이 안 된 것"처럼 보이는 문제가 있었다. 이제는 매칭하지 않고,
+  // 이 건의 레코드를 순서대로 2,4,6,8행에 그대로 덮어써서 채우고, 레코드
+  // 수보다 남는 칸은 예전 데이터가 남지 않도록 비워둔다(최대 4건까지 지원).
+  const dataBlockRows = [2,4,6,8]
+    .map(n => sl.rowEls.find(r => r.getAttribute('r')===String(n)))
+    .filter(Boolean);
+  const writableTextCols = ['F','G','H','K','L','M','N','P','Y'];
+  const writableNumericCols = ['O','S','U','V'];
   const skipped = [];
-  for(const rec of salesCase.records){
-    if(!rec.customer) continue;
-    const matches = dataBlockRows.filter(r => ledgerCellText(r,'G',sharedStrings).trim() === String(rec.customer).trim());
-    if(matches.length > 1){
-      skipped.push(`${rec.customer}: 같은 이름이 여러 행에 있어 건너뜀`);
-      continue;
-    }
-    let dataRow = matches[0];
+  const records = salesCase.records.filter(rec => rec.customer);
+  records.forEach((rec, i) => {
+    const dataRow = dataBlockRows[i];
     if(!dataRow){
-      // 값이 비어있는 기존 블록(예: G열이 비어있는 슬롯)을 찾아서 채운다.
-      dataRow = dataBlockRows.find(r => !ledgerCellText(r,'G',sharedStrings).trim());
-      if(!dataRow){
-        skipped.push(`${rec.customer}: 채울 수 있는 빈 칸이 없어 건너뜀(엑셀에서 행을 직접 추가해주세요)`);
-        continue;
-      }
+      skipped.push(`${rec.customer}: 4건을 넘어 담을 칸이 없어 건너뜀(엑셀에서 행을 직접 추가해주세요)`);
+      return;
     }
-    const rowNum = dataRow.getAttribute('r');
     const noteText = stripBusinessSummaryLine(rec.note);
     ledgerSetCell(sl.sheetDoc, dataRow, 'B', rec.date, false, true);
     ledgerSetCell(sl.sheetDoc, dataRow, 'E', rec.contractDate, false, true);
@@ -3123,6 +3120,28 @@ async function writeSalesCaseToLedger(masterArrayBuffer, salesCase){
     ledgerSetCell(sl.sheetDoc, dataRow, 'U', -(Number(rec.companyPrice)||0), true, false);
     ledgerSetCell(sl.sheetDoc, dataRow, 'V', -(Number(rec.extra)||0), true, false);
     ledgerSetCell(sl.sheetDoc, dataRow, 'Y', noteText, false, false);
+  });
+  for(let i=records.length; i<dataBlockRows.length; i++){
+    const dataRow = dataBlockRows[i];
+    ledgerSetCell(sl.sheetDoc, dataRow, 'B', '', false, false);
+    ledgerSetCell(sl.sheetDoc, dataRow, 'E', '', false, false);
+    writableTextCols.forEach(col => ledgerSetCell(sl.sheetDoc, dataRow, col, '', false, false));
+    writableNumericCols.forEach(col => ledgerSetCell(sl.sheetDoc, dataRow, col, 0, true, false));
+  }
+
+  // 더는 쓰지 않는 숨겨진 여분 칸(10~12행, 12행은 이어지는 미사용 여분 행)을
+  // 시트에서 통째로 지운다 — 병합 정보에 남아있던 10~11행 참조도 같이 지운다.
+  [10,11,12].forEach(n => {
+    const rowEl = sl.rowEls.find(r => r.getAttribute('r')===String(n));
+    if(rowEl) sl.sheetDataEl.removeChild(rowEl);
+  });
+  const mergeCellsEl = sl.sheetDoc.getElementsByTagName('mergeCells')[0];
+  if(mergeCellsEl){
+    Array.from(mergeCellsEl.getElementsByTagName('mergeCell')).forEach(mc => {
+      const ref = mc.getAttribute('ref') || '';
+      if(/(?:^|[A-Z])(10|11|12)(?::|$)/.test(ref)) mergeCellsEl.removeChild(mc);
+    });
+    mergeCellsEl.setAttribute('count', String(mergeCellsEl.getElementsByTagName('mergeCell').length));
   }
 
   zip.file(sl.sheetPath, serializer.serializeToString(sl.sheetDoc));
