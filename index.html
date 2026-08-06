@@ -3018,6 +3018,12 @@ async function writeSalesCaseToLedger(masterArrayBuffer, salesCase){
   // bodyLines = [1.문구, 2.문구, 3.문구, ...moduleLines, 4.문구(자동 formula라 안씀), 지급문구(고정 텍스트라 안씀)]
   const moduleLines = bodyLines.slice(3, bodyLines.length-2);
 
+  // 문서번호(E5)는 템플릿에 LEFT(AB35,13) 같은 수식이 들어있어서 이 건의 실제
+  // 문서번호가 아니라 예전에 저장된 다른 파일명에서 따온 값을 보여주는 문제가
+  // 있었다 — 수식을 지우고 이 건의 문서번호를 직접 값으로 써넣는다. 제목(E9)도
+  // 마찬가지로 전에 처리한 다른 건의 제목이 그대로 남아있던 문제라 여기서 채운다.
+  if(gwRow(5)) ledgerSetCell(gw.sheetDoc, gwRow(5), 'E', salesCase.docNo, false, false);
+  if(gwRow(9)) ledgerSetCell(gw.sheetDoc, gwRow(9), 'E', salesCase.title||computeAutoTitle(salesCase), false, false);
   if(gwRow(7)) ledgerSetCell(gw.sheetDoc, gwRow(7), 'E', salesCase.department, false, false);
   if(gwRow(8)) ledgerSetCell(gw.sheetDoc, gwRow(8), 'E', salesCase.preparer, false, false);
   if(gwRow(10)){ ledgerSetCell(gw.sheetDoc, gwRow(10), 'E', salesCase.project, false, false); ledgerSetCell(gw.sheetDoc, gwRow(10), 'O', '영업비용 정산', false, false); }
