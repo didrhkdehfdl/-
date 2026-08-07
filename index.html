@@ -6464,6 +6464,7 @@ const debouncedSaveCompanyMaster = debounce(()=>{
   saveFileToStorage(COMPANY_MASTER_KEY, JSON.stringify(companyMaster));
 }, 500);
 
+const INVOICE_ITEM_NAME_OPTIONS = ['태양광 주자재 납품 및 설치', '인버터 교체AS', '모듈 교체AS', '커넥터 교체AS'];
 let invoicePrepState = { itemName:'태양광 주자재 납품 및 설치', results:[], checked:new Set(), error:'', message:'' };
 
 // 고객명으로 영업자용 업로드(사업자등록증/계약서) 중 매칭되는 걸 찾는다.
