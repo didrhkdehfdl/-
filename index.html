@@ -5312,7 +5312,7 @@ const ALL_TABS = [
   { key:'agentDocs', label:'영업자용' },
   { key:'moduleprices', label:'모듈 단가 관리' },
   { key:'cardrecon', label:'카드관리' },
-  { key:'invoiceprep', label:'세금계산서 준비' },
+  { key:'invoiceprep', label:'세금계산서/현금영수증' },
   { key:'history', label:'변경 이력' },
 ];
 
@@ -6619,7 +6619,9 @@ function renderInvoicePrepMain(){
     <button id="cmAddBtn" style="padding:8px 12px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12px; cursor:pointer; margin-bottom:20px;">+ 회사 추가</button>
 
     <h3 style="font-size:13.5px; margin:20px 0 8px;">품목명</h3>
-    <input id="invItemName" value="${escapeHtml(s.itemName)}" style="width:320px; padding:8px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; margin-bottom:16px;">
+    <select id="invItemName" style="width:320px; padding:8px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; margin-bottom:16px;">
+      ${INVOICE_ITEM_NAME_OPTIONS.map(opt=>`<option value="${escapeHtml(opt)}" ${s.itemName===opt?'selected':''}>${escapeHtml(opt)}</option>`).join('')}
+    </select>
 
     ${!importState.rows || !importState.rows.length ? `<div style="padding:12px 14px; border-radius:8px; background:rgba(255,180,60,0.12); border:1px solid rgba(255,180,60,0.4); color:#ffcf8a; font-size:12.5px;">"실적 리스트 가져오기" 화면에서 먼저 실적리스트를 올려주세요.</div>` : `
     <h3 style="font-size:13.5px; margin:20px 0 8px;">발행 대상 미리보기 — 세금계산서 ${taxItems.length}건 · 현금영수증 ${cashItems.length}건 · 건너뜀 ${skipItems.length}건</h3>
