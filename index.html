@@ -395,6 +395,9 @@
       <button class="tab-btn" data-tab="cardrecon" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">🔄</span> 카드관리
       </button>
+      <button class="tab-btn" data-tab="invoiceprep" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
+        <span style="width:18px; text-align:center;">🧾</span> 세금계산서 준비
+      </button>
       <button class="tab-btn" data-tab="history" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">🕒</span> 변경 이력
       </button>
@@ -2006,7 +2009,7 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'history' || state.activeTab === 'none'){
+  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'invoiceprep' || state.activeTab === 'history' || state.activeTab === 'none'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
@@ -2021,11 +2024,13 @@ function renderSidebar(){
               ? '<div class="empty-side">모듈 단가 마스터를 관리하는 화면입니다.<br>여기서 수정한 단가는 새로 만드는 정산 건부터 적용됩니다.</div>'
               : state.activeTab === 'cardrecon'
                 ? '<div class="empty-side">법인카드 관리대장·승인내역·통합본을 올리면<br>카드 대사와 통합본 자동 업데이트를 진행합니다.</div>'
-                : state.activeTab === 'history'
-                  ? '<div class="empty-side">모든 정산 건의 변경 이력을<br>한 곳에서 확인하고 복원할 수 있습니다.</div>'
-                  : state.activeTab === 'none'
-                    ? '<div class="empty-side">접근 가능한 메뉴가 없습니다.<br>관리자에게 문의해주세요.</div>'
-                    : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
+                : state.activeTab === 'invoiceprep'
+                  ? '<div class="empty-side">실적리스트에서 아직 발행 안 된 건을 찾아<br>세금계산서·현금영수증 업로드 파일을 만듭니다.</div>'
+                  : state.activeTab === 'history'
+                    ? '<div class="empty-side">모든 정산 건의 변경 이력을<br>한 곳에서 확인하고 복원할 수 있습니다.</div>'
+                    : state.activeTab === 'none'
+                      ? '<div class="empty-side">접근 가능한 메뉴가 없습니다.<br>관리자에게 문의해주세요.</div>'
+                      : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
     return;
   }
   if(newBtn) newBtn.style.display = '';
@@ -2767,6 +2772,10 @@ function renderMain(loading){
   }
   if(state.activeTab === 'cardrecon'){
     renderCardReconMain();
+    return;
+  }
+  if(state.activeTab === 'invoiceprep'){
+    renderInvoicePrepMain();
     return;
   }
   if(state.activeTab === 'history'){
@@ -5303,6 +5312,7 @@ const ALL_TABS = [
   { key:'agentDocs', label:'영업자용' },
   { key:'moduleprices', label:'모듈 단가 관리' },
   { key:'cardrecon', label:'카드관리' },
+  { key:'invoiceprep', label:'세금계산서 준비' },
   { key:'history', label:'변경 이력' },
 ];
 
@@ -6431,6 +6441,305 @@ function renderCardReconMain(){
     }
     s.busy = false;
     renderCardReconMain();
+  });
+}
+
+// ---------- 세금계산서·현금영수증 준비 ----------
+// 홈택스 일괄업로드용 엑셀(세금계산서/현금영수증)을 만든다. 실제 발행은 사람이
+// 홈택스에 로그인해서 이 파일을 업로드하는 걸로 마무리한다(API 자동발행 아님 —
+// API 키를 이 브라우저 앱에 넣는 건 안전하지 않아서 이 범위로 정함).
+let companyMaster = [];
+const COMPANY_MASTER_KEY = 'company-master';
+const COMPANY_COLORS = ['#e07a5f','#3d9970','#4a7fb5','#b58900','#8b5cf6','#e0607a','#5fa3e0','#c97a3d'];
+function newCompanyMasterRow(){
+  return { id: rid(), corpName:'', bizNumber:'', bizName:'', ownerName:'', address:'', bizType:'', bizItem:'', email:'', color: COMPANY_COLORS[companyMaster.length % COMPANY_COLORS.length] };
+}
+async function loadCompanyMaster(){
+  try{
+    const value = await loadFileFromStorage(COMPANY_MASTER_KEY);
+    return value ? JSON.parse(value) : null;
+  }catch(e){ return null; }
+}
+const debouncedSaveCompanyMaster = debounce(()=>{
+  saveFileToStorage(COMPANY_MASTER_KEY, JSON.stringify(companyMaster));
+}, 500);
+
+let invoicePrepState = { itemName:'태양광 주자재 납품 및 설치', results:[], checked:new Set(), error:'', message:'' };
+
+// 고객명으로 영업자용 업로드(사업자등록증/계약서) 중 매칭되는 걸 찾는다.
+function findAgentDoc(customerName, category){
+  const name = String(customerName||'').trim();
+  if(!name) return null;
+  return agentDocsState.items.find(it => it.category===category && String(it.customerName||'').trim()===name) || null;
+}
+// 계약법인 텍스트로 회사 정보(공급자)를 찾는다.
+function matchCompanyForRow(row){
+  const corp = String(row.corp||'').trim();
+  if(!corp) return null;
+  return companyMaster.find(c => String(c.corpName||'').trim() === corp) || null;
+}
+// 실적리스트 한 행에 대해 무엇을(세금계산서/현금영수증) 어떤 정보로 발행할지 정한다.
+// 우선순위: 사업자등록증 업로드됨 > 계약서만 업로드됨(주민번호로 현금영수증) >
+// 둘 다 없으면 실적리스트의 발행대상(개인/법인) 참고.
+function computeInvoicePlanForRow(row){
+  const bizDoc = findAgentDoc(row.customer, 'bizreg');
+  if(bizDoc && bizDoc.bizNumber){
+    return { type:'tax', source:'사업자등록증', buyer:{
+      bizNumber: bizDoc.bizNumber, bizName: bizDoc.bizName||'', ownerName: bizDoc.ownerName||row.customer,
+      bizType: bizDoc.bizType||'', bizItem: bizDoc.bizItem||'', email: bizDoc.email||''
+    }};
+  }
+  const contractDoc = findAgentDoc(row.customer, 'contract');
+  if(contractDoc){
+    if(!row.rrn) return { type:'skip', reason:'계약서는 있는데 주민번호가 없음' };
+    return { type:'cash', source:'계약서(주민번호)', buyerId: row.rrn };
+  }
+  if(row.taxTarget === '법인'){
+    return { type:'skip', reason:'법인인데 사업자등록증이 없음' };
+  }
+  if(row.rrn){
+    return { type:'cash', source:'실적리스트 주민번호', buyerId: row.rrn };
+  }
+  return { type:'skip', reason:'주민번호를 찾을 수 없음' };
+}
+function buildInvoicePrepResults(){
+  const rows = (importState.rows||[]).filter(r => r.customer && !r.taxDate);
+  return rows.map(row=>{
+    const plan = computeInvoicePlanForRow(row);
+    const company = matchCompanyForRow(row);
+    return { id: row.id, row, plan, companyId: company ? company.id : null };
+  });
+}
+function firstDateOf(multiline){
+  const s = String(multiline||'').split('\n')[0].trim();
+  return s || '';
+}
+function yyyymmdd(dateStr){
+  const d = new Date(dateStr);
+  if(isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+}
+// 홈택스 "전자(세금)계산서 일반" 일괄업로드 양식 그대로(6행: 열 제목, 7행부터 데이터).
+const TAX_INVOICE_HEADER = ['전자(세금)계산서 종류\n(01:일반, 02:영세율)','작성일자','공급자 등록번호\n("-" 없이 입력)','공급자\n 종사업장번호','공급자 상호','공급자 성명','공급자 사업장주소','공급자 업태','공급자 종목','공급자 이메일','공급받는자 등록번호\n("-" 없이 입력)','공급받는자 \n종사업장번호','공급받는자 상호 ','공급받는자 성명','공급받는자 사업장주소','공급받는자 업태','공급받는자 종목','공급받는자 이메일1','공급받는자 이메일2','공급가액\n합계','세액\n합계','비고','일자1\n(2자리, 작성년월 제외)','품목1','규격1','수량1','단가1','공급가액1','세액1','품목비고1','일자2\n(2자리, 작성년월 제외)','품목2','규격2','수량2','단가2','공급가액2','세액2','품목비고2','일자3\n(2자리, 작성년월 제외)','품목3','규격3','수량3','단가3','공급가액3','세액3','품목비고3','일자4\n(2자리, 작성년월 제외)','품목4','규격4','수량4','단가4','공급가액4','세액4','품목비고4','현금','수표','어음','외상미수금','영수(01),\n청구(02)'];
+const CASH_RECEIPT_HEADER = ['용도구분\n(0:소비자소득공제용, 1:사업자지출증빙용)','발급수단번호','총거래금액(합계)','공급가액','부가가치세','메모'];
+
+function buildTaxInvoiceWorkbook(items, supplier, itemName){
+  const rows = items.map(({row, plan})=>{
+    const supplyAmt = Math.round(Number(row.totalAmount)||0);
+    const vat = Math.round(supplyAmt*0.1);
+    const day = String(new Date(firstDateOf(row.certDate)).getDate()||'').padStart(2,'0');
+    return [
+      '01', yyyymmdd(firstDateOf(row.certDate)),
+      String(supplier.bizNumber||'').replace(/-/g,''), '', supplier.bizName||'', supplier.ownerName||'', supplier.address||'', supplier.bizType||'', supplier.bizItem||'', supplier.email||'',
+      String(plan.buyer.bizNumber||'').replace(/-/g,''), '', plan.buyer.bizName||'', plan.buyer.ownerName||row.customer||'', row.address||'', plan.buyer.bizType||'', plan.buyer.bizItem||'', plan.buyer.email||'', '',
+      supplyAmt, vat, '',
+      day, itemName, '', 1, supplyAmt, supplyAmt, vat, '',
+      '','','','','','','','', '','','','','','','','', '','','','','','','','',
+      '', '', '', '',
+      '02'
+    ];
+  });
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['엑셀 업로드 양식(전자세금계산서-일반(영세율)) - 100건 이하'],
+    [], [], [], [],
+    TAX_INVOICE_HEADER,
+    ...rows
+  ]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '엑셀업로드양식');
+  return wb;
+}
+function buildCashReceiptWorkbook(items){
+  const rows = items.map(({row, plan})=>{
+    const total = Math.round(Number(row.totalAmount)||0);
+    const supplyAmt = Math.round(total/1.1);
+    const vat = total - supplyAmt;
+    return ['0', String(plan.buyerId||'').replace(/[^0-9-]/g,''), total, supplyAmt, vat, `${row.customer||''} 현금영수증`];
+  });
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['엑셀 업로드 양식(현금영수증)'],
+    [], [], [], [],
+    CASH_RECEIPT_HEADER,
+    ...rows
+  ]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '엑셀업로드양식');
+  return wb;
+}
+
+function renderInvoicePrepMain(){
+  const main = document.getElementById('main');
+  const s = invoicePrepState;
+  if(!s.results.length && importState.rows && importState.rows.length) s.results = buildInvoicePrepResults();
+  const taxItems = s.results.filter(r=>r.plan.type==='tax');
+  const cashItems = s.results.filter(r=>r.plan.type==='cash');
+  const skipItems = s.results.filter(r=>r.plan.type==='skip');
+  const companyById = id => companyMaster.find(c=>c.id===id);
+
+  main.innerHTML = `
+    <h2 class="section-title">세금계산서·현금영수증 준비</h2>
+    <p style="font-size:12.5px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
+      "실적 리스트 가져오기"에 올려둔 실적리스트에서 아직 발행 안 된 건(발행일자가 비어있는 행)을 찾아,
+      사업자등록증이 있으면 세금계산서로, 계약서만 있으면(또는 개인이면) 현금영수증으로 나눠서
+      홈택스 일괄업로드용 엑셀을 만듭니다. <b>실제 발행은 이 파일을 홈택스에 업로드해서 사람이 마무리</b>합니다.
+    </p>
+
+    <h3 style="font-size:13.5px; margin:20px 0 8px;">회사 정보 (공급자)</h3>
+    <p style="font-size:11.5px; color:var(--muted); margin:0 0 8px;">계약법인이 여러 개면 여기에 각각 등록해두세요 — 실적리스트의 "계약법인" 열과 이름이 정확히 같아야 자동으로 매칭됩니다.</p>
+    <div class="table-wrap" style="margin-bottom:8px;">
+      <table style="border-collapse:collapse; min-width:1100px;">
+        <thead><tr>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">색</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">계약법인명(실적리스트와 동일하게)</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">사업자등록번호</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">상호</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">대표자명</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">사업장주소</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">업태</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">종목</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">이메일</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">삭제</th>
+        </tr></thead>
+        <tbody>
+          ${companyMaster.map(c=>`<tr data-cid="${c.id}">
+            <td style="padding:6px; text-align:center;"><input type="color" data-cf="color" data-id="${c.id}" value="${c.color}" style="width:28px; height:24px; border:none; background:none; cursor:pointer;"></td>
+            <td style="padding:6px;"><input data-cf="corpName" data-id="${c.id}" value="${escapeHtml(c.corpName)}" style="width:150px; padding:5px 6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;"></td>
+            <td style="padding:6px;"><input data-cf="bizNumber" data-id="${c.id}" value="${escapeHtml(c.bizNumber)}" placeholder="000-00-00000" style="width:110px; padding:5px 6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;"></td>
+            <td style="padding:6px;"><input data-cf="bizName" data-id="${c.id}" value="${escapeHtml(c.bizName)}" style="width:130px; padding:5px 6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;"></td>
+            <td style="padding:6px;"><input data-cf="ownerName" data-id="${c.id}" value="${escapeHtml(c.ownerName)}" style="width:90px; padding:5px 6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;"></td>
+            <td style="padding:6px;"><input data-cf="address" data-id="${c.id}" value="${escapeHtml(c.address)}" style="width:180px; padding:5px 6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;"></td>
+            <td style="padding:6px;"><input data-cf="bizType" data-id="${c.id}" value="${escapeHtml(c.bizType)}" style="width:90px; padding:5px 6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;"></td>
+            <td style="padding:6px;"><input data-cf="bizItem" data-id="${c.id}" value="${escapeHtml(c.bizItem)}" style="width:90px; padding:5px 6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;"></td>
+            <td style="padding:6px;"><input data-cf="email" data-id="${c.id}" value="${escapeHtml(c.email)}" style="width:150px; padding:5px 6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;"></td>
+            <td style="padding:6px; text-align:center;"><button class="cm-delete-btn" data-id="${c.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">삭제</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <button id="cmAddBtn" style="padding:8px 12px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12px; cursor:pointer; margin-bottom:20px;">+ 회사 추가</button>
+
+    <h3 style="font-size:13.5px; margin:20px 0 8px;">품목명</h3>
+    <input id="invItemName" value="${escapeHtml(s.itemName)}" style="width:320px; padding:8px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; margin-bottom:16px;">
+
+    ${!importState.rows || !importState.rows.length ? `<div style="padding:12px 14px; border-radius:8px; background:rgba(255,180,60,0.12); border:1px solid rgba(255,180,60,0.4); color:#ffcf8a; font-size:12.5px;">"실적 리스트 가져오기" 화면에서 먼저 실적리스트를 올려주세요.</div>` : `
+    <h3 style="font-size:13.5px; margin:20px 0 8px;">발행 대상 미리보기 — 세금계산서 ${taxItems.length}건 · 현금영수증 ${cashItems.length}건 · 건너뜀 ${skipItems.length}건</h3>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+      <select id="bulkCompanySelect" style="padding:7px 9px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;">
+        <option value="">회사 선택</option>
+        ${companyMaster.map(c=>`<option value="${c.id}">${escapeHtml(c.corpName)}</option>`).join('')}
+      </select>
+      <button id="bulkAssignBtn" style="padding:7px 12px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); font-size:12px; cursor:pointer;">선택 건에 일괄 지정</button>
+    </div>
+    <div class="table-wrap" style="margin-bottom:14px;">
+      <table style="border-collapse:collapse; min-width:900px; font-size:12px;">
+        <thead><tr>
+          <th style="padding:6px;"><input type="checkbox" id="checkAllBox"></th>
+          <th style="padding:6px; color:var(--muted);">고객명</th>
+          <th style="padding:6px; color:var(--muted);">계약법인</th>
+          <th style="padding:6px; color:var(--muted);">유형</th>
+          <th style="padding:6px; color:var(--muted);">근거</th>
+          <th style="padding:6px; color:var(--muted);">금액</th>
+        </tr></thead>
+        <tbody>
+          ${s.results.map(r=>{
+            const company = companyById(r.companyId);
+            const bg = company ? company.color+'22' : (r.plan.type==='skip' ? 'rgba(255,80,80,0.08)' : 'transparent');
+            const border = company ? `border-left:4px solid ${company.color};` : (r.plan.type==='skip' ? 'border-left:4px solid #e05f5f;' : '');
+            return `<tr style="background:${bg}; ${border}">
+              <td style="padding:6px; text-align:center;"><input type="checkbox" class="rowCheck" data-id="${r.id}" ${s.checked.has(r.id)?'checked':''}></td>
+              <td style="padding:6px;">${escapeHtml(r.row.customer||'')}</td>
+              <td style="padding:6px;">${escapeHtml(r.row.corp||'')}${!company && r.row.corp ? ' <span style="color:#ffcf8a;">(회사정보 없음)</span>' : ''}</td>
+              <td style="padding:6px;">${r.plan.type==='tax'?'세금계산서':r.plan.type==='cash'?'현금영수증':'건너뜀'}</td>
+              <td style="padding:6px; font-size:11px; color:var(--muted);">${r.plan.type==='skip' ? escapeHtml(r.plan.reason) : escapeHtml(r.plan.source)}</td>
+              <td style="padding:6px; text-align:right;">${fmtWon(Number(r.row.totalAmount)||0)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${s.error ? `<div style="padding:10px 12px; border-radius:6px; background:rgba(255,80,80,0.12); border:1px solid rgba(255,80,80,0.4); color:#ff9d9d; font-size:12px; margin-bottom:10px;">${escapeHtml(s.error)}</div>` : ''}
+    ${s.message ? `<div style="padding:10px 12px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px; margin-bottom:10px;">${escapeHtml(s.message)}</div>` : ''}
+    <button id="genInvoiceFilesBtn" style="padding:10px 18px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:13px; font-weight:600; cursor:pointer;">홈택스 업로드 파일 만들기</button>
+    `}
+  `;
+
+  document.getElementById('cmAddBtn').addEventListener('click', ()=>{
+    companyMaster.push(newCompanyMasterRow());
+    debouncedSaveCompanyMaster();
+    renderInvoicePrepMain();
+  });
+  main.querySelectorAll('.cm-delete-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(!confirm('이 회사 정보를 삭제할까요?')) return;
+      companyMaster = companyMaster.filter(c=>c.id!==btn.dataset.id);
+      debouncedSaveCompanyMaster();
+      renderInvoicePrepMain();
+    });
+  });
+  main.querySelectorAll('[data-cf]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const c = companyMaster.find(x=>x.id===inp.dataset.id);
+      if(!c) return;
+      c[inp.dataset.cf] = inp.value;
+      debouncedSaveCompanyMaster();
+      if(inp.dataset.cf === 'color' || inp.dataset.cf === 'corpName') renderInvoicePrepMain();
+    });
+  });
+  const itemNameInp = document.getElementById('invItemName');
+  if(itemNameInp) itemNameInp.addEventListener('change', (e)=>{ s.itemName = e.target.value; });
+
+  const checkAllBox = document.getElementById('checkAllBox');
+  if(checkAllBox) checkAllBox.addEventListener('change', (e)=>{
+    if(e.target.checked) s.results.forEach(r=>s.checked.add(r.id));
+    else s.checked.clear();
+    renderInvoicePrepMain();
+  });
+  main.querySelectorAll('.rowCheck').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      if(cb.checked) s.checked.add(cb.dataset.id); else s.checked.delete(cb.dataset.id);
+    });
+  });
+  const bulkBtn = document.getElementById('bulkAssignBtn');
+  if(bulkBtn) bulkBtn.addEventListener('click', ()=>{
+    const sel = document.getElementById('bulkCompanySelect');
+    const companyId = sel.value;
+    if(!companyId || s.checked.size===0) return;
+    s.results.forEach(r=>{ if(s.checked.has(r.id)) r.companyId = companyId; });
+    renderInvoicePrepMain();
+  });
+  const genBtn = document.getElementById('genInvoiceFilesBtn');
+  if(genBtn) genBtn.addEventListener('click', async ()=>{
+    s.error=''; s.message='';
+    try{
+      await loadXlsxLib();
+      const taxSet = s.results.filter(r=>r.plan.type==='tax');
+      const cashSet = s.results.filter(r=>r.plan.type==='cash');
+      const missingCompany = taxSet.filter(r=>!companyById(r.companyId));
+      if(missingCompany.length){
+        s.error = `회사 정보가 없어서 세금계산서를 만들 수 없는 건이 ${missingCompany.length}건 있습니다: ${missingCompany.map(r=>r.row.customer).join(', ')}\n위 표에서 계약법인을 확인해 회사 정보를 등록하거나, 체크박스로 골라 다른 회사를 지정해주세요.`;
+        renderInvoicePrepMain();
+        return;
+      }
+      if(taxSet.length){
+        // 회사(공급자)별로 나눠서 각각 파일을 만든다 — 공급자 정보가 파일 하나에
+        // 섞이면 안 되므로.
+        const byCompany = {};
+        taxSet.forEach(r=>{ (byCompany[r.companyId] = byCompany[r.companyId]||[]).push(r); });
+        for(const cid of Object.keys(byCompany)){
+          const company = companyById(cid);
+          const wb = buildTaxInvoiceWorkbook(byCompany[cid], company, s.itemName);
+          XLSX.writeFile(wb, `세금계산서_일괄발급_${escapeHtml(company.corpName)}_${isoDate(new Date())}.xlsx`);
+        }
+      }
+      if(cashSet.length){
+        const wb = buildCashReceiptWorkbook(cashSet);
+        XLSX.writeFile(wb, `현금영수증_일괄발급_${isoDate(new Date())}.xlsx`);
+      }
+      s.message = `세금계산서 ${taxSet.length}건, 현금영수증 ${cashSet.length}건 파일을 만들었습니다. 홈택스에 로그인해서 업로드해주세요.`;
+    }catch(err){
+      s.error = '파일 생성 중 오류: '+err.message;
+    }
+    renderInvoicePrepMain();
   });
 }
 
@@ -7615,6 +7924,8 @@ async function init(){
     moduleMaster = savedModuleMaster;
     rebuildModuleDerived();
   }
+  const savedCompanyMaster = await loadCompanyMaster();
+  if(Array.isArray(savedCompanyMaster)) companyMaster = savedCompanyMaster;
   await restoreCardReconFiles();
   await restoreSalesLedgerTemplate();
   await restoreProfitLedgerTemplate();
