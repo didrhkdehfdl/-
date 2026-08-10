@@ -6493,8 +6493,8 @@ function computeInvoicePlanForRow(row){
   }
   const contractDoc = findAgentDoc(row.customer, 'contract');
   if(contractDoc && contractDoc.cashReceiptChecked){
-    if(!row.rrn) return { type:'skip', reason:'현금영수증 체크는 되어있는데 주민번호가 없음' };
-    return { type:'cash', source:'계약서(현금영수증 체크)', buyerId: row.rrn };
+    if(!row.phone) return { type:'skip', reason:'현금영수증 체크는 되어있는데 전화번호가 없음' };
+    return { type:'cash', source:'계약서(현금영수증 체크)', buyerId: row.phone };
   }
   if(row.taxTarget === '법인'){
     return { type:'skip', reason:'법인인데 사업자등록증이 없음' };
