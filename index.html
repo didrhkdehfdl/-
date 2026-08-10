@@ -6780,11 +6780,11 @@ function renderImportMain(){
 
   if(importState.mode === 'manual'){
     renderManualEntry();
-    requestAnimationFrame(()=>window.scrollTo(0, scrollY));
+    restoreScroll();
     return;
   }
   renderUploadMode();
-  requestAnimationFrame(()=>window.scrollTo(0, scrollY));
+  restoreScroll();
 }
 
 function renderUploadMode(){
