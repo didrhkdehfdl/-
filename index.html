@@ -6750,9 +6750,17 @@ function renderInvoicePrepMain(){
 function renderImportMain(){
   const main = document.getElementById('main');
   // 체크박스 하나 누를 때마다 표 전체를 다시 그리는데, innerHTML을 통째로
-  // 바꾸면 브라우저가 스크롤 위치를 맨 위로 되돌려버린다 — 다시 그리기
-  // 전후로 스크롤 위치를 그대로 유지해서 체크할 때마다 화면이 안 튀게 한다.
-  const scrollY = window.scrollY;
+  // 바꾸면 브라우저가 스크롤 위치를 되돌려버린다. 실제로 스크롤되는 건
+  // window가 아니라 표를 감싼 .table-wrap-frozen(overflow-y:auto) 박스라서,
+  // 그 박스의 scrollTop을 기억했다가 다시 그린 뒤 그대로 복원한다.
+  const importScrollTop = document.getElementById('importTableWrap')?.scrollTop;
+  const perfScrollTop = document.getElementById('perfTableWrap')?.scrollTop;
+  const restoreScroll = () => {
+    const importWrap = document.getElementById('importTableWrap');
+    if(importWrap && importScrollTop !== undefined) importWrap.scrollTop = importScrollTop;
+    const perfWrap = document.getElementById('perfTableWrap');
+    if(perfWrap && perfScrollTop !== undefined) perfWrap.scrollTop = perfScrollTop;
+  };
 
   main.innerHTML = `
     <h2 class="section-title">실적 리스트 가져오기</h2>
