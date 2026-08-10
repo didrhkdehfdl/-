@@ -5505,11 +5505,20 @@ async function renderDepositConfirmTab(){
   main.querySelectorAll('.agentdoc-cat-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{ agentDocsState.category = btn.dataset.cat; renderAgentDocsMain(); });
   });
+  const depositAddrInp = document.getElementById('depositNewAddress');
+  const depositAmountInp = document.getElementById('depositNewAmount');
+  document.getElementById('depositNewCustomer').addEventListener('change', (e)=>{
+    const match = findPerfRowByCustomer(e.target.value.trim());
+    if(!match) return;
+    if(!depositAddrInp.value.trim() && match.address) depositAddrInp.value = match.address;
+    if(!depositAmountInp.value && Number(match.totalAmount)) depositAmountInp.value = Number(match.totalAmount);
+  });
   document.getElementById('depositAddBtn').addEventListener('click', async ()=>{
     const customerName = document.getElementById('depositNewCustomer').value.trim();
     if(!customerName){ alert('고객명을 입력해주세요.'); return; }
-    const address = document.getElementById('depositNewAddress').value.trim();
-    const contractAmount = Number(document.getElementById('depositNewAmount').value)||0;
+    const match = findPerfRowByCustomer(customerName);
+    const address = depositAddrInp.value.trim() || (match ? match.address||'' : '');
+    const contractAmount = Number(depositAmountInp.value) || (match ? Number(match.totalAmount)||0 : 0);
     const item = newDepositConfirmItem();
     Object.assign(item, { customerName, address, contractAmount });
     depositConfirmState.items.push(item);
