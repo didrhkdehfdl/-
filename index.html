@@ -1934,6 +1934,15 @@ function computeInspectionMatch(item){
 
 // 사용전점검 확인증의 파일명/인식된 이름과 고객명이 일치하는 실적리스트 행을
 // 찾는다 (업로드된 실적리스트 행과 직접입력 행 모두 대상).
+// 입금확인 탭에서 고객명 하나로 실적리스트(엑셀 업로드/직접입력 둘 다) 행을
+// 찾아 주소·계약금액을 자동으로 채워주기 위한 단순 매칭 — 공백만 무시하고 정확히
+// 일치하는 첫 번째 행을 쓴다 (여러 건이면 첫 건 기준, 필요하면 직접 고치면 됨).
+function findPerfRowByCustomer(name){
+  const target = String(name||'').replace(/\s/g,'');
+  if(!target) return null;
+  const all = [...(importState.rows||[]), ...(importState.manualRows||[])];
+  return all.find(row => String(row.customer||'').replace(/\s/g,'')===target) || null;
+}
 function findMatchingPerfRows(item){
   const tokens = extractNameTokensFromFilename(item.fileName);
   const nameCandidates = [item.extractedName, ...tokens].filter(Boolean).map(s=>s.replace(/\s/g,''));
