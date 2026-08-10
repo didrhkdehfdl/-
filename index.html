@@ -6749,6 +6749,10 @@ function renderInvoicePrepMain(){
 
 function renderImportMain(){
   const main = document.getElementById('main');
+  // 체크박스 하나 누를 때마다 표 전체를 다시 그리는데, innerHTML을 통째로
+  // 바꾸면 브라우저가 스크롤 위치를 맨 위로 되돌려버린다 — 다시 그리기
+  // 전후로 스크롤 위치를 그대로 유지해서 체크할 때마다 화면이 안 튀게 한다.
+  const scrollY = window.scrollY;
 
   main.innerHTML = `
     <h2 class="section-title">실적 리스트 가져오기</h2>
