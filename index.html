@@ -6480,8 +6480,9 @@ function matchCompanyForRow(row){
   return companyMaster.find(c => String(c.corpName||'').trim() === corp) || null;
 }
 // 실적리스트 한 행에 대해 무엇을(세금계산서/현금영수증) 어떤 정보로 발행할지 정한다.
-// 우선순위: 사업자등록증 업로드됨 > 계약서만 업로드됨(주민번호로 현금영수증) >
-// 둘 다 없으면 실적리스트의 발행대상(개인/법인) 참고.
+// 우선순위: 사업자등록증 업로드됨 > 영업자용 계약서에서 "현금영수증" 체크가 되어
+// 있음(주민번호로 현금영수증) > 그 외에는 전부 세금계산서(개인은 주민등록번호를
+// 사업자등록번호 자리에 넣어 발행) — 계약서가 있어도 체크가 안 돼있으면 세금계산서.
 function computeInvoicePlanForRow(row){
   const bizDoc = findAgentDoc(row.customer, 'bizreg');
   if(bizDoc && bizDoc.bizNumber){
@@ -6491,15 +6492,15 @@ function computeInvoicePlanForRow(row){
     }};
   }
   const contractDoc = findAgentDoc(row.customer, 'contract');
-  if(contractDoc){
-    if(!row.rrn) return { type:'skip', reason:'계약서는 있는데 주민번호가 없음' };
-    return { type:'cash', source:'계약서(주민번호)', buyerId: row.rrn };
+  if(contractDoc && contractDoc.cashReceiptChecked){
+    if(!row.rrn) return { type:'skip', reason:'현금영수증 체크는 되어있는데 주민번호가 없음' };
+    return { type:'cash', source:'계약서(현금영수증 체크)', buyerId: row.rrn };
   }
   if(row.taxTarget === '법인'){
     return { type:'skip', reason:'법인인데 사업자등록증이 없음' };
   }
   if(row.rrn){
-    return { type:'cash', source:'실적리스트 주민번호', buyerId: row.rrn };
+    return { type:'tax', source:'주민등록번호(개인)', buyer:{ bizNumber: row.rrn, ownerName: row.customer } };
   }
   return { type:'skip', reason:'주민번호를 찾을 수 없음' };
 }
