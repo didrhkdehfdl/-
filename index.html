@@ -5407,10 +5407,145 @@ async function renderAdminApprovalList(){
 // ---------- 영업자용 (agent documents) tab ----------
 
 const AGENT_DOC_CATEGORIES = [
+  { key:'deposit', label:'입금확인' },
   { key:'contract', label:'계약서' },
   { key:'bizreg', label:'사업자등록증' },
   { key:'other', label:'기타서류' },
 ];
+
+// ---- 입금확인 탭: 파일이 아니라 고객명/주소/계약금액/입금확인요청/입금날짜·입금액을
+// 직접 입력해서 관리하는 별도 목록. 서류 업로드와는 무관해서 agentDocsState.items가
+// 아니라 이 전용 상태에 따로 저장한다.
+const DEPOSIT_CONFIRM_KEY = 'agentdocs-deposit-confirm';
+let depositConfirmState = { items:[], loaded:false, loading:false };
+async function ensureDepositConfirmLoaded(){
+  if(depositConfirmState.loaded || depositConfirmState.loading) return;
+  depositConfirmState.loading = true;
+  try{
+    const raw = await loadFileFromStorage(DEPOSIT_CONFIRM_KEY);
+    depositConfirmState.items = raw ? JSON.parse(raw) : [];
+  }catch(e){ depositConfirmState.items = []; }
+  depositConfirmState.loading = false;
+  depositConfirmState.loaded = true;
+}
+async function saveDepositConfirmList(){
+  try{ await saveFileToStorage(DEPOSIT_CONFIRM_KEY, JSON.stringify(depositConfirmState.items)); }catch(e){ console.error(e); }
+}
+function newDepositConfirmItem(){
+  return { id: rid(), customerName:'', address:'', contractAmount:0, requested:false, requestedAt:'', depositDate:'', depositAmount:0 };
+}
+function agentDocCategoryButtonsHtml(){
+  return AGENT_DOC_CATEGORIES.map(c => `
+    <button class="agentdoc-cat-btn" data-cat="${c.key}" style="padding:9px 16px; font-size:12.5px; border:none; ${c.key!==AGENT_DOC_CATEGORIES[0].key?'border-left:1px solid var(--line);':''} cursor:pointer; background:${agentDocsState.category===c.key?'var(--panel-2)':'transparent'}; color:${agentDocsState.category===c.key?'var(--gold)':'var(--muted)'};">${c.label}</button>
+  `).join('');
+}
+async function renderDepositConfirmTab(){
+  const main = document.getElementById('main');
+  if(!depositConfirmState.loaded){
+    main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+    await ensureDepositConfirmLoaded();
+    if(state.activeTab !== 'agentDocs' || agentDocsState.category !== 'deposit') return;
+  }
+  const items = depositConfirmState.items;
+  const requestedCount = items.filter(it=>it.requested && !it.depositAmount).length;
+  const doneCount = items.filter(it=>Number(it.depositAmount)>0).length;
+
+  main.innerHTML = `
+    <h2 class="section-title">영업자용 서류 관리</h2>
+    <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
+      고객명·주소·계약금액을 입력해 입금확인 요청 대상을 관리합니다. "입금확인요청"을 누르면 목록 상단에 대기 건수로 표시됩니다.
+    </p>
+    <div style="display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; width:fit-content; margin-bottom:16px;">
+      ${agentDocCategoryButtonsHtml()}
+    </div>
+    <div style="display:flex; gap:10px; margin-bottom:16px; font-size:12.5px; font-weight:600;">
+      <span style="padding:6px 12px; border-radius:6px; background:${requestedCount>0?'rgba(178,59,46,.15)':'rgba(43,106,128,.12)'}; color:${requestedCount>0?'var(--neg)':'var(--sky)'};">입금확인 요청 대기 ${requestedCount}건</span>
+      <span style="padding:6px 12px; border-radius:6px; background:rgba(47,125,92,.15); color:var(--pos);">입금완료 ${doneCount}건</span>
+    </div>
+    <div style="margin-bottom:16px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+      <input type="text" id="depositNewCustomer" placeholder="고객명" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:140px;">
+      <input type="text" id="depositNewAddress" placeholder="주소" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:220px;">
+      <input type="number" id="depositNewAmount" placeholder="계약금액" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:140px;">
+      <button id="depositAddBtn" style="padding:8px 14px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:12.5px; font-weight:600; cursor:pointer;">+ 추가</button>
+    </div>
+    ${items.length===0 ? `<div class="empty-side">아직 등록된 입금확인 대상이 없습니다.</div>` : `
+    <div class="table-wrap">
+      <table class="agentdoc-table" style="width:100%; border-collapse:collapse;">
+        <thead><tr>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:150px;">고객명</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:220px;">주소</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:130px;">계약금액</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:150px;">입금확인요청</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:140px;">입금날짜</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:130px;">입금액</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:60px;">삭제</th>
+        </tr></thead>
+        <tbody>
+          ${items.map(item => `
+            <tr data-id="${item.id}">
+              <td data-label="고객명" style="padding:6px;"><input class="deposit-field" data-id="${item.id}" data-field="customerName" value="${escapeHtml(item.customerName||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+              <td data-label="주소" style="padding:6px;"><input class="deposit-field" data-id="${item.id}" data-field="address" value="${escapeHtml(item.address||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+              <td data-label="계약금액" style="padding:6px;"><input class="deposit-field" data-id="${item.id}" data-field="contractAmount" type="number" value="${item.contractAmount||0}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+              <td data-label="입금확인요청" style="padding:6px; text-align:center;">
+                ${item.requested
+                  ? `<div style="font-size:10.5px; color:var(--muted); line-height:1.5;">요청됨<br>${escapeHtml(item.requestedAt||'')}</div><button class="deposit-request-btn" data-id="${item.id}" style="margin-top:3px; font-size:10px; padding:3px 7px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">다시 요청</button>`
+                  : `<button class="deposit-request-btn" data-id="${item.id}" style="font-size:11px; padding:6px 10px; border-radius:5px; border:1px solid var(--gold); background:rgba(224,163,57,.12); color:var(--gold); cursor:pointer; font-weight:600;">입금확인요청</button>`}
+              </td>
+              <td data-label="입금날짜" style="padding:6px;"><input class="deposit-field" data-id="${item.id}" data-field="depositDate" type="date" value="${escapeHtml(item.depositDate||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+              <td data-label="입금액" style="padding:6px;"><input class="deposit-field" data-id="${item.id}" data-field="depositAmount" type="number" value="${item.depositAmount||0}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
+              <td data-label="삭제" style="padding:6px; text-align:center;"><button class="deposit-del-btn" data-id="${item.id}" style="font-size:10.5px; padding:4px 6px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    `}
+  `;
+
+  main.querySelectorAll('.agentdoc-cat-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ agentDocsState.category = btn.dataset.cat; renderAgentDocsMain(); });
+  });
+  document.getElementById('depositAddBtn').addEventListener('click', async ()=>{
+    const customerName = document.getElementById('depositNewCustomer').value.trim();
+    if(!customerName){ alert('고객명을 입력해주세요.'); return; }
+    const address = document.getElementById('depositNewAddress').value.trim();
+    const contractAmount = Number(document.getElementById('depositNewAmount').value)||0;
+    const item = newDepositConfirmItem();
+    Object.assign(item, { customerName, address, contractAmount });
+    depositConfirmState.items.push(item);
+    await saveDepositConfirmList();
+    renderDepositConfirmTab();
+  });
+  main.querySelectorAll('.deposit-field').forEach(el=>{
+    el.addEventListener('change', async ()=>{
+      const item = depositConfirmState.items.find(it=>it.id===el.dataset.id);
+      if(!item) return;
+      const field = el.dataset.field;
+      item[field] = el.type==='number' ? (Number(el.value)||0) : el.value.trim();
+      await saveDepositConfirmList();
+      if(field==='contractAmount' || field==='depositAmount') renderDepositConfirmTab();
+    });
+  });
+  main.querySelectorAll('.deposit-request-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const item = depositConfirmState.items.find(it=>it.id===btn.dataset.id);
+      if(!item) return;
+      if(!confirm(`${item.customerName||'해당 고객'}에게 입금확인요청을 보낼까요?`)) return;
+      item.requested = true;
+      item.requestedAt = new Date().toLocaleString('ko-KR');
+      await saveDepositConfirmList();
+      renderDepositConfirmTab();
+    });
+  });
+  main.querySelectorAll('.deposit-del-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 항목을 삭제할까요?')) return;
+      depositConfirmState.items = depositConfirmState.items.filter(it=>it.id!==btn.dataset.id);
+      await saveDepositConfirmList();
+      renderDepositConfirmTab();
+    });
+  });
+}
 
 async function ensureAgentDocsLoaded(){
   if(agentDocsState.loaded || agentDocsState.loading) return;
