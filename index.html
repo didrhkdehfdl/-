@@ -5787,7 +5787,7 @@ async function renderAgentDocsMain(){
           <tbody>
             ${items.map(item => `
               <tr data-id="${item.id}">
-                <td data-label="파일명" style="padding:6px; font-size:12.5px;">${escapeHtml(item.fileName)}<div style="font-size:10px; color:var(--muted);">${fmtFileSize(item.size||0)}</div></td>
+                <td data-label="파일명" style="padding:6px; font-size:12.5px;" title="${escapeHtml(item.fileName)}">${escapeHtml(bizregDisplayName(item))}<div style="font-size:10px; color:var(--muted);">${fmtFileSize(item.size||0)}</div></td>
                 <td data-label="고객명" style="padding:6px;"><input class="agentdoc-field" data-id="${item.id}" data-field="customerName" value="${escapeHtml(item.customerName||'')}" style="width:100%; font-size:12px; padding:5px 6px; background:var(--panel-2); border:1px solid var(--line); border-radius:5px;"></td>
                 <td data-label="구분" style="padding:6px; text-align:center;">
                   ${item.ocrStatus==='running' ? `<span style="font-size:11px; color:var(--muted);">인식중</span>` : `
