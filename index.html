@@ -7418,6 +7418,10 @@ function createSalesCaseFromRows(rows){
   const firstAgent = rows.find(r=>r.agent)?.agent;
   if(firstAgent) c.agentName = firstAgent;
   c.records = rows.map(row => buildSalesRecordFromRow(row, c.defaultCorp));
+  // newCase()는 새 건을 만들 때 0번 항목(현대 500-3kw(부착형))을 기본으로 체크해
+  // 두는데, 여기서는 실제로 쓰인 모듈만 체크해야 하므로 그 기본값을 먼저 지운다
+  // (안 지우면 실제로 안 쓴 0번이 관계없이 같이 체크된 채로 남는다).
+  c.moduleChecks = MODULE_NOTE_OPTIONS.map(()=>false);
   c.records.forEach(rec=>{
     if(typeof rec.usedModuleNoteIndex === 'number'){
       c.moduleChecks[rec.usedModuleNoteIndex] = true;
