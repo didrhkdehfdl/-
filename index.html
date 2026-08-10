@@ -5512,6 +5512,19 @@ async function handleAgentDocUpload(e){
       const id = rid();
       const saveResult = await saveAgentDocFileData(id, base64);
       if(!saveResult.ok){ skipped.push(`${file.name} (저장 실패: ${saveResult.reason})`); continue; }
+      // 저장 직후 바로 읽어서 실제로 서버(Storage)까지 온전히 올라갔는지 확인한다.
+      // loadAgentDocFileData는 방금 올린 값을 메모리 캐시에 미리 넣어두기 때문에
+      // 그걸로 확인하면 항상 성공한 것처럼 보인다 — 휴대폰 네트워크가 불안정해서
+      // 업로드가 실제로는 덜 끝났는데도 "성공"으로 표시되던 문제가 이래서 생겼다.
+      // 캐시를 거치지 않는 저수준 함수로 다시 읽어서 진짜 서버 왕복 확인을 한다.
+      delete agentDocFileCache[id];
+      const verify = await loadFileFromStorage('agentdoc-file:'+id, 20000);
+      if(!verify){
+        skipped.push(`${file.name} (업로드 후 확인 실패 — 네트워크 상태를 확인하고 다시 시도해주세요)`);
+        await deleteFromStorage('agentdoc-file:'+id);
+        continue;
+      }
+      agentDocFileCache[id] = verify;
       const item = { id, category, customerName, fileName: file.name, size: file.size, mime: file.type, uploadedAt: isoDate(new Date()) };
       if(category === 'bizreg'){
         Object.assign(item, { isCorporate:null, bizName:'', ownerName:'', bizNumber:'', bizType:'', bizItem:'', email:'', ocrStatus:'pending' });
