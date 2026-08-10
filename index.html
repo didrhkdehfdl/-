@@ -5718,6 +5718,10 @@ function renderAgentDocSubCell(item, sub, label){
 
 async function renderAgentDocsMain(){
   const main = document.getElementById('main');
+  if(agentDocsState.category === 'deposit'){
+    await renderDepositConfirmTab();
+    return;
+  }
   if(!agentDocsState.loaded){
     main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
     await ensureAgentDocsLoaded();
