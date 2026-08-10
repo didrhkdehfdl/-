@@ -5713,6 +5713,16 @@ function agentDocSubSummaryHtml(items, sub, label){
     </div>`;
 }
 
+// 사업자등록증 표의 파일명 칸은 실제 업로드 파일명(image.jpg 등) 대신
+// "고객명(사업자명) 사업자등록증" 형식으로 보여준다 — 사업자명이 아직
+// 인식/입력 전이면 고객명만, 고객명도 없으면 원래 파일명으로 대체한다.
+function bizregDisplayName(item){
+  const customer = String(item.customerName||'').trim();
+  const bizName = String(item.bizName||'').trim();
+  if(customer && bizName) return `${customer}(${bizName}) 사업자등록증`;
+  if(customer) return `${customer} 사업자등록증`;
+  return item.fileName;
+}
 function renderAgentDocSubCell(item, sub, label){
   const checked = !!item[sub+'Checked'];
   const file = item[sub+'File'];
