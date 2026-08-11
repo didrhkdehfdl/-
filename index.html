@@ -2883,6 +2883,33 @@ function renderMain(loading){
     return;
   }
   if(!activeCase){
+    // 모바일 등 화면이 좁으면 사이드바 목록이 다른 버튼들에 밀려 잘 안 보여서,
+    // 영업비 정산/사업 이윤정산 탭은 목록을 여기(본문, 더 넓은 영역)에도 같이
+    // 보여준다 — 사이드바 목록은 그대로 두고, 여기서도 눌러서 바로 열 수 있다.
+    if((state.activeTab === 'sales' || state.activeTab === 'profit')){
+      const filtered = state.cases.filter(c => (c.caseType||'sales') === state.activeTab);
+      if(filtered.length === 0){
+        main.innerHTML = `<div class="no-case"><div class="big">정산 건을 선택하거나 새로 추가하세요</div>왼쪽에서 건을 선택하면 상세 내역이 여기 표시됩니다.</div>`;
+      } else {
+        const sorted = [...filtered].sort((a,b)=>b.updated-a.updated);
+        main.innerHTML = `
+          <h2 class="section-title">${state.activeTab==='profit' ? '사업 이윤정산' : '영업비 정산'} 목록 (${sorted.length}건)</h2>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:10px;">
+            ${sorted.map(c=>`
+              <div class="case-item" data-id="${c.id}" style="border:1px solid var(--line); background:var(--panel-2);">
+                <div class="doc-no">${escapeHtml(c.docNo||'문서번호 미입력')}</div>
+                <div class="title">${escapeHtml(c.title||'제목 없음')}</div>
+                <div class="amount">${c.caseType==='profit' ? '도소매반영 영업이익 ' : '실지급 '}${fmtWon(c.net)}</div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+        main.querySelectorAll('.case-item').forEach(el=>{
+          el.addEventListener('click', ()=> openCase(el.dataset.id));
+        });
+      }
+      return;
+    }
     main.innerHTML = `<div class="no-case"><div class="big">정산 건을 선택하거나 새로 추가하세요</div>왼쪽에서 건을 선택하면 상세 내역이 여기 표시됩니다.</div>`;
     return;
   }
