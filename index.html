@@ -2823,6 +2823,10 @@ function renderMain(loading){
     renderAgentDocsMain();
     return;
   }
+  if(state.activeTab === 'omList'){
+    renderOMListMain();
+    return;
+  }
   if(state.activeTab === 'moduleprices'){
     renderModulePricesMain();
     return;
