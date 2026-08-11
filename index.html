@@ -5646,6 +5646,20 @@ async function ensureAgentDocsLoaded(){
   agentDocsState.loading = false;
   agentDocsState.loaded = true;
 }
+// 세금계산서 준비 화면처럼, 지금 활성 탭이 영업자용/O&M팀이 아니어도 특정
+// 네임스페이스의 서류 목록을 미리 불러와야 할 때 쓴다(현재 activeTab에
+// 의존하는 ensureAgentDocsLoaded/currentAgentDocsIndexKey와 달리, 대상을
+// 직접 지정해서 다른 탭에 있어도 정확한 목록을 가져올 수 있다).
+async function ensureAgentDocsLoadedForState(targetState, isOM){
+  if(targetState.loaded || targetState.loading) return;
+  targetState.loading = true;
+  try{
+    const value = await loadFileFromStorage(isOM ? OM_DOCS_INDEX_KEY : AGENT_DOCS_INDEX_KEY);
+    targetState.items = value ? JSON.parse(value) : [];
+  }catch(e){ targetState.items = []; }
+  targetState.loading = false;
+  targetState.loaded = true;
+}
 
 // Runs OCR on a 사업자등록증 upload and fills in the parsed business-info
 // fields. Mirrors runOcrForItem's structure (PDF vs image handling, timeout
