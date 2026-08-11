@@ -6927,6 +6927,67 @@ function renderCardReconMain(){
     s.busy = false;
     renderCardReconMain();
   });
+
+  const batchBtn = document.getElementById('crBatchRunBtn');
+  if(batchBtn) batchBtn.addEventListener('click', async ()=>{
+    s.error=''; s.batchResult=null;
+    if(!s.ledgerWbs.length){ s.error='① 관리대장 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
+    if(!s.approvalWb){ s.error='② 승인내역 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
+    if(!s.masterBuffer){ s.error='③ 통합본 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
+    s.busy = true; renderCardReconMain();
+    try{
+      const approvalAoa = XLSX.utils.sheet_to_json(s.approvalWb.Sheets[s.approvalSheetName], { header:1, raw:true, defval:'' });
+      const skipped = [];
+      const patches = [];
+      for(const w of s.ledgerWbs){
+        const aoa = XLSX.utils.sheet_to_json(w.wb.Sheets[w.selectedSheet], { header:1, raw:true, defval:'' });
+        const cardFull = findCardNumberInAoa(aoa);
+        if(!cardFull){ skipped.push(`${w.fileName}: 관리대장에서 카드번호를 찾지 못함`); continue; }
+        const parts = cardParts(cardFull);
+        if(!parts){ skipped.push(`${w.fileName} (${cardFull}): 카드번호 형식이 올바르지 않음`); continue; }
+        const parsed = ledgerParseAoa(aoa);
+        if(parsed.error){ skipped.push(`${cardFull}: ${parsed.error}`); continue; }
+        const ledgerEntries = parsed.dataRows.map(ledgerRowToEntry);
+        const approvalEntries = [];
+        for(let i=1;i<approvalAoa.length;i++){
+          const row = approvalAoa[i];
+          if(!row || !row[0]) continue;
+          if(!approvalRowMatchesCard(row[0], parts)) continue;
+          approvalEntries.push({ isoDate: normalizeDotDate(row[1]), amount: Math.round(Number(row[4])||0), place: row[3] });
+        }
+        const result = reconcileCardEntries(ledgerEntries, approvalEntries);
+        const mismatch = result.rows.filter(r=>r.status==='ledger_only').length + result.extra.length;
+        if(mismatch > 0){
+          skipped.push(`${cardFull}: 불일치 ${mismatch}건(관리대장-승인내역 서로 안 맞음)`);
+          continue;
+        }
+        patches.push({ cardFull, cardLast4: parts.p4, entryBlocks: ledgerEntries.map(le=>le.block) });
+      }
+      if(!patches.length){
+        s.error = '완전히 일치하는 카드가 하나도 없어 통합본을 갱신하지 못했습니다.';
+        s.batchResult = { summary:'', skipped };
+      } else {
+        const result = await patchFile3MultipleCardBlocks(s.masterBuffer, s.masterSheetName, patches);
+        if(result.error){
+          s.error = result.error;
+        } else {
+          (result.failed||[]).forEach(f=>skipped.push(f));
+          const url = URL.createObjectURL(result.blob);
+          const a = document.createElement('a');
+          a.href = url;
+          const base = (s.masterFileName||'통합본.xlsx').replace(/\.xlsx$/i,'');
+          a.download = `${base}_${result.applied.length}개카드업데이트_${isoDate(new Date())}.xlsx`;
+          document.body.appendChild(a); a.click(); a.remove();
+          URL.revokeObjectURL(url);
+          s.batchResult = { summary: `${result.applied.length}개 카드를 통합본에 반영했습니다 (${result.applied.join(', ')}).`, skipped };
+        }
+      }
+    }catch(err){
+      s.error = '일괄 처리 중 오류가 발생했습니다: '+err.message;
+    }
+    s.busy = false;
+    renderCardReconMain();
+  });
 }
 
 // ---------- 세금계산서·현금영수증 준비 ----------
