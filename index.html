@@ -2045,7 +2045,7 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'invoiceprep' || state.activeTab === 'history' || state.activeTab === 'none'){
+  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'invoiceprep' || state.activeTab === 'history' || state.activeTab === 'none'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
@@ -2056,7 +2056,9 @@ function renderSidebar(){
           ? '<div class="empty-side">사용전점검 확인증 파일을 업로드하면<br>여기에 목록이 아닌 검사 확인 화면이 표시됩니다.</div>'
           : state.activeTab === 'agentDocs'
             ? '<div class="empty-side">계약서·사업자등록증·기타서류를<br>여기가 아닌 영업자용 화면에서 관리할 수 있습니다.</div>'
-            : state.activeTab === 'moduleprices'
+            : state.activeTab === 'omTeam'
+              ? '<div class="empty-side">계약서·사업자등록증·기타서류를<br>여기가 아닌 O&M팀 화면에서 관리할 수 있습니다.</div>'
+              : state.activeTab === 'moduleprices'
               ? '<div class="empty-side">모듈 단가 마스터를 관리하는 화면입니다.<br>여기서 수정한 단가는 새로 만드는 정산 건부터 적용됩니다.</div>'
               : state.activeTab === 'cardrecon'
                 ? '<div class="empty-side">법인카드 관리대장·승인내역·통합본을 올리면<br>카드 대사와 통합본 자동 업데이트를 진행합니다.</div>'
