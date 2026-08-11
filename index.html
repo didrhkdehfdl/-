@@ -135,6 +135,10 @@
     word-break:keep-all; position:sticky; top:0;
   }
   .record-table thead th:nth-child(n+4):nth-child(-n+8){ text-align:right; padding-right:8px; }
+  /* 엑셀처럼 표 헤더를 드래그해서 열 너비를 조절하는 손잡이 */
+  .col-resize-handle{ position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:6; }
+  .col-resize-handle:hover{ background:rgba(212,175,85,.35); }
+  .col-resize-handle.resizing{ background:rgba(212,175,85,.6); }
   td{ padding:4px 3px; border-bottom:1px solid var(--line); vertical-align:top; overflow:hidden; }
   tr:last-child td{ border-bottom:none; }
   td input, td textarea{
