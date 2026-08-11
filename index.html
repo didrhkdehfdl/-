@@ -6930,7 +6930,14 @@ function renderInvoicePrepMain(){
               <td style="padding:6px;">${escapeHtml(r.row.customer||'')}</td>
               <td style="padding:6px;">${escapeHtml(r.row.corp||'')}${!company && r.row.corp ? ' <span style="color:#ffcf8a;">(회사정보 없음)</span>' : ''}</td>
               <td style="padding:6px;">${r.plan.type==='tax'?'세금계산서':r.plan.type==='cash'?'현금영수증':'건너뜀'}</td>
-              <td style="padding:6px; font-size:11px; color:var(--muted);">${r.plan.type==='skip' ? escapeHtml(r.plan.reason) : escapeHtml(r.plan.source)}</td>
+              <td style="padding:6px; font-size:11px; color:var(--muted);">
+                ${r.plan.type==='skip' ? escapeHtml(r.plan.reason) : escapeHtml(r.plan.source)}
+                ${r.plan.type==='cash' && r.plan.phoneOptions && r.plan.phoneOptions.length>1 ? `
+                  <select class="cash-phone-select" data-id="${r.id}" style="margin-top:4px; font-size:11px; padding:3px 4px; width:100%;">
+                    ${r.plan.phoneOptions.map(p=>`<option value="${escapeHtml(p)}" ${r.plan.buyerId===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
+                  </select>
+                ` : ''}
+              </td>
               <td style="padding:6px; text-align:right;">${fmtWon(Number(r.row.totalAmount)||0)}</td>
             </tr>`;
           }).join('')}
@@ -6967,6 +6974,30 @@ function renderInvoicePrepMain(){
   });
   const itemNameInp = document.getElementById('invItemName');
   if(itemNameInp) itemNameInp.addEventListener('change', (e)=>{ s.itemName = e.target.value; });
+  main.querySelectorAll('.invoiceprep-source-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const newSource = btn.dataset.source;
+      if(newSource === s.source) return;
+      s.source = newSource;
+      s.results = [];
+      s.checked.clear();
+      s.error = ''; s.message = '';
+      if(newSource === 'om'){
+        // O&M 리스트/서류가 이번 세션에서 아직 안 열렸을 수 있어 여기서도 불러온다.
+        await ensureOMListLoaded();
+        await ensureAgentDocsLoadedForState(agentDocsStateOM, true);
+      } else {
+        await ensureAgentDocsLoadedForState(agentDocsStateDefault, false);
+      }
+      renderInvoicePrepMain();
+    });
+  });
+  main.querySelectorAll('.cash-phone-select').forEach(sel=>{
+    sel.addEventListener('change', ()=>{
+      const r = s.results.find(x=>x.id===sel.dataset.id);
+      if(r) r.plan.buyerId = sel.value;
+    });
+  });
 
   const checkAllBox = document.getElementById('checkAllBox');
   if(checkAllBox) checkAllBox.addEventListener('change', (e)=>{
