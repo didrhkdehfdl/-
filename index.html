@@ -602,14 +602,25 @@ async function restoreCardReconFiles(){
   s.cardFull = meta.cardFull || '';
   s.masterSheetName = meta.masterSheetName || '';
   try{
-    const ledgerB64 = await loadFileFromStorage(CARDRECON_LEDGER_KEY, 30000);
-    if(ledgerB64){
+    const ledgerRaw = await loadFileFromStorage(CARDRECON_LEDGER_KEY, 30000);
+    if(ledgerRaw){
       await loadXlsxLib();
-      const buf = base64ToArrayBuffer(ledgerB64);
-      s.ledgerWb = XLSX.read(buf, { type:'array', cellDates:true });
-      s.ledgerSheetNames = s.ledgerWb.SheetNames;
-      s.ledgerSheetName = meta.ledgerSheetName && s.ledgerSheetNames.includes(meta.ledgerSheetName) ? meta.ledgerSheetName : s.ledgerSheetNames[0];
-      s.ledgerFileName = meta.ledgerFileName || '';
+      // 예전 버전에서는 파일 하나(base64 문자열)만 저장했었다 — 그 형식이면
+      // 파일 1개짜리 배열로 취급해서 그대로 이어서 쓸 수 있게 한다.
+      let entries;
+      try{
+        const parsedJson = JSON.parse(ledgerRaw);
+        entries = Array.isArray(parsedJson) ? parsedJson : [{ fileName: meta.ledgerFileName||'', base64: ledgerRaw }];
+      }catch(e){
+        entries = [{ fileName: meta.ledgerFileName||'', base64: ledgerRaw }];
+      }
+      s.ledgerWbs = entries.map(en => ({
+        fileName: en.fileName,
+        wb: XLSX.read(base64ToArrayBuffer(en.base64), { type:'array', cellDates:true })
+      }));
+      s.ledgerFileNames = s.ledgerWbs.map(w=>w.fileName);
+      s.ledgerSheetName = meta.ledgerSheetName || '';
+      rebuildLedgerSheetNames();
     }
   }catch(e){ console.error('관리대장 복원 실패', e); }
   try{
