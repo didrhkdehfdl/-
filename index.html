@@ -5540,18 +5540,23 @@ async function renderDepositConfirmTab(){
   });
   const depositAddrInp = document.getElementById('depositNewAddress');
   const depositAmountInp = document.getElementById('depositNewAmount');
+  const parseMoneyInput = (v) => Number(String(v||'').replace(/[^0-9]/g,'')) || 0;
   document.getElementById('depositNewCustomer').addEventListener('change', (e)=>{
     const match = findPerfRowByCustomer(e.target.value.trim());
     if(!match) return;
     if(!depositAddrInp.value.trim() && match.address) depositAddrInp.value = match.address;
-    if(!depositAmountInp.value && Number(match.totalAmount)) depositAmountInp.value = Number(match.totalAmount);
+    if(!depositAmountInp.value && Number(match.totalAmount)) depositAmountInp.value = Number(match.totalAmount).toLocaleString('ko-KR');
+  });
+  depositAmountInp.addEventListener('change', ()=>{
+    const n = parseMoneyInput(depositAmountInp.value);
+    depositAmountInp.value = n ? n.toLocaleString('ko-KR') : '';
   });
   document.getElementById('depositAddBtn').addEventListener('click', async ()=>{
     const customerName = document.getElementById('depositNewCustomer').value.trim();
     if(!customerName){ alert('고객명을 입력해주세요.'); return; }
     const match = findPerfRowByCustomer(customerName);
     const address = depositAddrInp.value.trim() || (match ? match.address||'' : '');
-    const contractAmount = Number(depositAmountInp.value) || (match ? Number(match.totalAmount)||0 : 0);
+    const contractAmount = parseMoneyInput(depositAmountInp.value) || (match ? Number(match.totalAmount)||0 : 0);
     const item = newDepositConfirmItem();
     Object.assign(item, { customerName, address, contractAmount });
     depositConfirmState.items.push(item);
@@ -5563,7 +5568,13 @@ async function renderDepositConfirmTab(){
       const item = depositConfirmState.items.find(it=>it.id===el.dataset.id);
       if(!item) return;
       const field = el.dataset.field;
-      item[field] = el.type==='number' ? (Number(el.value)||0) : el.value.trim();
+      if(el.classList.contains('deposit-money')){
+        const n = parseMoneyInput(el.value);
+        item[field] = n;
+        el.value = n ? n.toLocaleString('ko-KR') : '';
+      } else {
+        item[field] = el.value.trim();
+      }
       await saveDepositConfirmList();
       if(field==='contractAmount' || field==='depositAmount') renderDepositConfirmTab();
     });
