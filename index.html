@@ -6811,8 +6811,23 @@ function renderCardReconMain(){
     e.target.value = '';
     renderCardReconMain();
   });
-  const ledgerSheetSel = document.getElementById('crLedgerSheet');
-  if(ledgerSheetSel) ledgerSheetSel.addEventListener('change', (e)=>{ s.ledgerSheetName = e.target.value; debouncedSaveCardReconMeta(); renderCardReconMain(); });
+  main.querySelectorAll('.cr-ledger-sheet-sel').forEach(sel=>{
+    sel.addEventListener('change', async (e)=>{
+      const idx = Number(sel.dataset.idx);
+      if(!s.ledgerWbs[idx]) return;
+      s.ledgerWbs[idx].selectedSheet = e.target.value;
+      await saveFileToStorage(CARDRECON_LEDGER_KEY, JSON.stringify(s.ledgerWbs.map(w=>({ fileName:w.fileName, base64:w.base64, selectedSheet:w.selectedSheet }))), 30000);
+    });
+  });
+  main.querySelectorAll('.cr-ledger-remove-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const idx = Number(btn.dataset.idx);
+      s.ledgerWbs.splice(idx, 1);
+      s.ledgerFileNames = s.ledgerWbs.map(w=>w.fileName);
+      await saveFileToStorage(CARDRECON_LEDGER_KEY, JSON.stringify(s.ledgerWbs.map(w=>({ fileName:w.fileName, base64:w.base64, selectedSheet:w.selectedSheet }))), 30000);
+      renderCardReconMain();
+    });
+  });
 
   document.getElementById('crApprovalFile').addEventListener('change', async (e)=>{
     const file = e.target.files[0];
