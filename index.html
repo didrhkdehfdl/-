@@ -4054,6 +4054,246 @@ async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch
   return { blob, wasNewRow, rowNum: targetRow.getAttribute('r') };
 }
 
+// writeProfitCaseToLedger와 같은 방식이지만 여러 건을 한 번에 기록한다 — zip과
+// 시트를 한 번만 열어서 건마다 순서대로 행을 채우거나 새로 만든 뒤, 마지막에
+// 딱 한 번만 파일을 생성한다(건마다 새로 열었다 닫으면 앞서 쓴 내용이 사라진다).
+// 새 행을 追加할 때 "마지막으로 값이 채워진 행"이 매번 바뀌므로, 매 건마다
+// rowEls/dataRows를 다시 읽어서(getElementsByTagName은 라이브 목록이라 앞서
+// 끼워넣은 행이 자동으로 반영된다) 최신 상태를 기준으로 판단한다. 건 하나가
+// 실패해도(이름 중복 등) 그 건만 건너뛰고 나머지는 계속 진행한다.
+async function writeProfitCasesToLedger(masterArrayBuffer, items){
+  await loadJSZipLib();
+  const zip = await window.JSZip.loadAsync(masterArrayBuffer);
+  const parser = new DOMParser();
+  const serializer = new XMLSerializer();
+  const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const SS_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+
+  const wbFile = zip.file('xl/workbook.xml');
+  if(!wbFile) return { error: '엑셀 구조를 인식할 수 없습니다(workbook.xml 없음).' };
+  const wbXmlText = await wbFile.async('string');
+  const wbDoc = parser.parseFromString(wbXmlText, 'application/xml');
+  const sheetEl = Array.from(wbDoc.getElementsByTagName('sheet')).find(el => el.getAttribute('name') === PROFIT_LEDGER_SHEET);
+  if(!sheetEl) return { error: `"${PROFIT_LEDGER_SHEET}" 시트를 찾을 수 없습니다.` };
+  const rId = sheetEl.getAttributeNS(REL_NS, 'id');
+
+  const relsFile = zip.file('xl/_rels/workbook.xml.rels');
+  if(!relsFile) return { error: '워크북 관계 정보를 찾을 수 없습니다.' };
+  const relsText = await relsFile.async('string');
+  const relsDoc = parser.parseFromString(relsText, 'application/xml');
+  const relEl = Array.from(relsDoc.getElementsByTagName('Relationship')).find(el => el.getAttribute('Id') === rId);
+  if(!relEl) return { error: '시트 경로 정보를 찾을 수 없습니다.' };
+  let target = (relEl.getAttribute('Target')||'').replace(/^\.?\//,'');
+  const sheetPath = target.startsWith('xl/') ? target : ('xl/' + target);
+  const sheetFile = zip.file(sheetPath);
+  if(!sheetFile) return { error: `시트 파일(${sheetPath})을 찾을 수 없습니다.` };
+
+  let sharedStrings = [];
+  const ssFile = zip.file('xl/sharedStrings.xml');
+  if(ssFile){
+    const ssText = await ssFile.async('string');
+    const ssDoc = parser.parseFromString(ssText, 'application/xml');
+    sharedStrings = Array.from(ssDoc.getElementsByTagName('si')).map(si =>
+      Array.from(si.getElementsByTagName('t')).map(t=>t.textContent).join('')
+    );
+  }
+
+  const sheetXmlText = await sheetFile.async('string');
+  const sheetDoc = parser.parseFromString(sheetXmlText, 'application/xml');
+  const sheetDataEl = sheetDoc.getElementsByTagName('sheetData')[0];
+  if(!sheetDataEl) return { error: '시트 데이터 영역을 찾을 수 없습니다.' };
+
+  function findCell(rowEl, colLetter){
+    const rowNum = rowEl.getAttribute('r');
+    return Array.from(rowEl.getElementsByTagName('c')).find(el => el.getAttribute('r') === colLetter+rowNum) || null;
+  }
+  function cellText(rowEl, colLetter){
+    const c = findCell(rowEl, colLetter);
+    if(!c) return '';
+    const t = c.getAttribute('t');
+    if(t === 's'){
+      const vEl = c.getElementsByTagName('v')[0];
+      const idx = vEl ? parseInt(vEl.textContent,10) : -1;
+      return sharedStrings[idx] || '';
+    }
+    if(t === 'inlineStr'){
+      const isEl = c.getElementsByTagName('is')[0];
+      return isEl ? Array.from(isEl.getElementsByTagName('t')).map(t=>t.textContent).join('') : '';
+    }
+    const vEl = c.getElementsByTagName('v')[0];
+    return vEl ? vEl.textContent : '';
+  }
+
+  const headerRow = Array.from(sheetDataEl.getElementsByTagName('row')).find(r => r.getAttribute('r') === '4');
+  if(headerRow){
+    const expected = { C:'고객명', L:'총사업비', AP:'회사입금가' };
+    for(const [col,label] of Object.entries(expected)){
+      const txt = cellText(headerRow, col).replace(/\s/g,'');
+      if(txt && !txt.includes(label)){
+        return { error: `"${PROFIT_LEDGER_SHEET}" 시트의 열 구성이 예상과 달라 안전하게 처리할 수 없습니다 (${col}열: "${txt}"). 수동 확인이 필요합니다.` };
+      }
+    }
+  }
+
+  const dateCols = new Set(['E']);
+  const numericCols = new Set(['K','L','Q','R','S','V','W','X','AA','AB','AC','AE','AG','AH','AI','AJ','AK','AP','AQ','AU']);
+  const results = [];
+
+  for(const { profitCase, salesMatch } of items){
+    const customerName = String(profitCase.customer||'').trim();
+    if(!customerName){ results.push({ customer:'(고객명 없음)', error:'고객명이 없어 건너뜀' }); continue; }
+    const rowEls = Array.from(sheetDataEl.getElementsByTagName('row'));
+    const dataRows = rowEls.filter(r => Number(r.getAttribute('r')) >= 6);
+    const matchingRows = dataRows.filter(r => cellText(r,'C').trim() === customerName);
+    if(matchingRows.length > 1){
+      const rowNums = matchingRows.map(r=>r.getAttribute('r')).join(', ');
+      results.push({ customer:customerName, error:`이미 ${matchingRows.length}개 행(${rowNums}행)에 있어 자동으로 정할 수 없어 건너뜀` });
+      continue;
+    }
+    let targetRow = matchingRows[0] || null;
+    let wasNewRow = false;
+
+    if(!targetRow){
+      let lastFilled = null;
+      for(const r of dataRows){ if(cellText(r,'C').trim()) lastFilled = r; }
+      if(!lastFilled){ results.push({ customer:customerName, error:'기존 데이터 행을 찾지 못해 새 행의 서식을 복제할 수 없어 건너뜀' }); continue; }
+      const oldRowNum = lastFilled.getAttribute('r');
+      const newRowNum = String(Number(oldRowNum)+1);
+      const cloned = lastFilled.cloneNode(true);
+      cloned.setAttribute('r', newRowNum);
+      Array.from(cloned.getElementsByTagName('c')).forEach(c=>{
+        const ref = c.getAttribute('r')||'';
+        const col = ref.replace(/\d+$/,'');
+        c.setAttribute('r', col+newRowNum);
+        const template = LEDGER_FORMULA_TEMPLATES[col];
+        const fEls = Array.from(c.getElementsByTagName('f'));
+        if(template){
+          while(c.firstChild) c.removeChild(c.firstChild);
+          c.removeAttribute('t');
+          const fEl = sheetDoc.createElementNS(SS_NS, 'f');
+          fEl.textContent = template(newRowNum);
+          c.appendChild(fEl);
+        }else if(fEls.length){
+          fEls.forEach(fEl=>{
+            fEl.removeAttribute('t');
+            fEl.removeAttribute('ref');
+            fEl.removeAttribute('si');
+            const re = new RegExp('([A-Z]{1,3})' + oldRowNum + '(?!\\d)', 'g');
+            fEl.textContent = fEl.textContent.replace(re, '$1'+newRowNum);
+          });
+        }
+      });
+      const existingStub = rowEls.find(r => r.getAttribute('r') === newRowNum);
+      if(existingStub){
+        const stubB = findCell(existingStub, 'B');
+        if(stubB && stubB.textContent.trim()){
+          let clonedB = findCell(cloned, 'B');
+          if(!clonedB){
+            clonedB = sheetDoc.createElementNS(SS_NS,'c');
+            clonedB.setAttribute('r', 'B'+newRowNum);
+            cloned.insertBefore(clonedB, cloned.firstChild);
+          }
+          while(clonedB.firstChild) clonedB.removeChild(clonedB.firstChild);
+          Array.from(stubB.attributes).forEach(a=>{ if(a.name!=='r') clonedB.setAttribute(a.name, a.value); });
+          Array.from(stubB.childNodes).forEach(ch=>clonedB.appendChild(ch.cloneNode(true)));
+        }
+        existingStub.parentNode.replaceChild(cloned, existingStub);
+      }else{
+        lastFilled.parentNode.insertBefore(cloned, lastFilled.nextSibling);
+      }
+      targetRow = cloned;
+      wasNewRow = true;
+    }
+
+    const r = computeProfitCase(profitCase);
+    const rec = salesMatch ? salesMatch.record : null;
+    const salesCase = salesMatch ? salesMatch.salesCase : null;
+    const structureSell = computeLedgerStructureSell(profitCase, rec);
+
+    const plainValues = {
+      C: profitCase.customer || '',
+      D: profitCase.branch || '',
+      E: profitCase.constructionDate ? isoDate(new Date(profitCase.constructionDate)) : '',
+      F: '#N/A',
+      G: rec ? (rec.corp||'') : '',
+      H: salesCase ? (salesCase.agentName||'') : '',
+      I: 'X',
+      J: profitCase.teamName || '',
+      K: Number(profitCase.capacityKw)||0,
+      L: Number(profitCase.totalBusinessCost)||0,
+      O: '사무실',
+      P: profitCase.moduleModel || '',
+      Q: Number(profitCase.moduleQty)||0,
+      R: Number(profitCase.moduleBuy)||0,
+      S: Number(profitCase.moduleSell)||0,
+      U: profitCase.inverterModel || '',
+      V: Number(profitCase.inverterQty)||0,
+      W: Number(profitCase.inverterBuy)||0,
+      X: Number(profitCase.inverterSell)||0,
+      Z: profitCase.structureNote || '',
+      AA: Number(profitCase.structureQty)||0,
+      AB: Number(profitCase.structureBuy)||0,
+      AC: structureSell,
+      AE: Number(profitCase.etcMaterial)||0,
+      AG: Number(profitCase.structureReviewCost)||0,
+      AH: Number(profitCase.designSupervisionCost)||0,
+      AI: Number(profitCase.inspectionFeeCost)||0,
+      AJ: Number(profitCase.constructionCost)||0,
+      AK: Number(profitCase.etcAgencyCost)||0,
+      AP: rec ? (Number(rec.companyPrice)||0) : '',
+      AQ: Number(profitCase.salesDeduction)||0,
+      AS: profitCase.salesDeductionNote || '',
+      AU: Number(profitCase.maintenanceCost)||0,
+    };
+
+    Object.entries(plainValues).forEach(([col, raw])=>{
+      let cEl = findCell(targetRow, col);
+      if(!cEl){
+        cEl = sheetDoc.createElementNS(SS_NS,'c');
+        cEl.setAttribute('r', col+targetRow.getAttribute('r'));
+        targetRow.appendChild(cEl);
+      }
+      while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
+      if(dateCols.has(col) && raw){
+        const d = new Date(raw);
+        const epoch = new Date(Date.UTC(1899,11,30));
+        const days = Math.round((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()) - epoch.getTime())/86400000);
+        cEl.removeAttribute('t');
+        const vEl = sheetDoc.createElementNS(SS_NS,'v');
+        vEl.textContent = String(days);
+        cEl.appendChild(vEl);
+      }else if(numericCols.has(col)){
+        cEl.removeAttribute('t');
+        const vEl = sheetDoc.createElementNS(SS_NS,'v');
+        vEl.textContent = String(Number(raw)||0);
+        cEl.appendChild(vEl);
+      }else{
+        cEl.setAttribute('t','inlineStr');
+        const isEl = sheetDoc.createElementNS(SS_NS,'is');
+        const tEl = sheetDoc.createElementNS(SS_NS,'t');
+        tEl.textContent = String(raw||'');
+        isEl.appendChild(tEl);
+        cEl.appendChild(isEl);
+      }
+    });
+
+    results.push({ customer:customerName, wasNewRow, rowNum: targetRow.getAttribute('r') });
+  }
+
+  zip.file(sheetPath, serializer.serializeToString(sheetDoc));
+
+  let calcPr = wbDoc.getElementsByTagName('calcPr')[0];
+  if(!calcPr){
+    calcPr = wbDoc.createElementNS(SS_NS, 'calcPr');
+    wbDoc.documentElement.appendChild(calcPr);
+  }
+  calcPr.setAttribute('fullCalcOnLoad','1');
+  zip.file('xl/workbook.xml', serializer.serializeToString(wbDoc));
+
+  const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
+  return { blob, results };
+}
+
 function renderProfitMain(){
   const main = document.getElementById('main');
   const p = activeCase;
