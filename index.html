@@ -6697,12 +6697,14 @@ function renderCardReconMain(){
 
   document.getElementById('crRunBtn').addEventListener('click', ()=>{
     s.error=''; s.matchResult=null; s.ackMismatch=false;
-    if(!s.ledgerWb) { s.error='① 관리대장 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
+    if(!s.ledgerWbs.length) { s.error='① 관리대장 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
     if(!s.approvalWb) { s.error='② 승인내역 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
     const parts = cardParts(s.cardFull);
     if(!parts){ s.error = '카드 전체번호를 "0000-0000-0000-0000" 형식으로 입력해주세요.'; renderCardReconMain(); return; }
+    const ledgerWb = findLedgerWbForSheet(s.ledgerSheetName);
+    if(!ledgerWb){ s.error = `선택한 시트("${s.ledgerSheetName}")를 가진 관리대장 파일을 찾을 수 없습니다.`; renderCardReconMain(); return; }
 
-    const ledgerAoa = XLSX.utils.sheet_to_json(s.ledgerWb.Sheets[s.ledgerSheetName], { header:1, raw:true, defval:'' });
+    const ledgerAoa = XLSX.utils.sheet_to_json(ledgerWb.Sheets[s.ledgerSheetName], { header:1, raw:true, defval:'' });
     const parsed = ledgerParseAoa(ledgerAoa);
     if(parsed.error){ s.error = parsed.error; renderCardReconMain(); return; }
     const ledgerEntries = parsed.dataRows.map(ledgerRowToEntry);
