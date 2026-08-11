@@ -6841,7 +6841,8 @@ function buildCashReceiptWorkbook(items){
 function renderInvoicePrepMain(){
   const main = document.getElementById('main');
   const s = invoicePrepState;
-  if(!s.results.length && importState.rows && importState.rows.length) s.results = buildInvoicePrepResults();
+  const sourceHasRows = s.source==='om' ? !!(omListState.rows && omListState.rows.length) : !!(importState.rows && importState.rows.length);
+  if(!s.results.length && sourceHasRows) s.results = buildInvoicePrepResults();
   const taxItems = s.results.filter(r=>r.plan.type==='tax');
   const cashItems = s.results.filter(r=>r.plan.type==='cash');
   const skipItems = s.results.filter(r=>r.plan.type==='skip');
