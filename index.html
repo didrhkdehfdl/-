@@ -7033,6 +7033,15 @@ function colLetterToIndex(letter){
   return n-1;
 }
 let omListState = { rows:[], loaded:false, loading:false, fileName:'', search:'' };
+// "010-9897-8659010-4592-3277(배우자)"처럼 줄바꿈 없이 번호 두 개가 그대로
+// 붙어버린 값을, 다음 "010"이 다시 시작하는 지점에서 잘라 줄바꿈으로 되돌린다
+// (연락처 칸이 한 줄 입력칸이던 시절에 저장된 데이터를 되살리기 위함).
+function normalizeConcatenatedPhones(str){
+  const s = String(str||'');
+  if(!s || s.includes('\n')) return s;
+  const parts = s.split(/(?=010-?\d{3,4}-?\d{4})/g).map(p=>p.trim()).filter(Boolean);
+  return parts.length > 1 ? parts.join('\n') : s;
+}
 async function ensureOMListLoaded(){
   if(omListState.loaded || omListState.loading) return;
   omListState.loading = true;
@@ -7040,6 +7049,12 @@ async function ensureOMListLoaded(){
     const raw = await loadFileFromStorage(OM_LIST_KEY);
     omListState.rows = raw ? JSON.parse(raw) : [];
   }catch(e){ omListState.rows = []; }
+  let fixedAny = false;
+  omListState.rows.forEach(row=>{
+    const fixed = normalizeConcatenatedPhones(row.phone);
+    if(fixed !== row.phone){ row.phone = fixed; fixedAny = true; }
+  });
+  if(fixedAny) await saveOMListRows();
   omListState.loading = false;
   omListState.loaded = true;
 }
