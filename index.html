@@ -7123,12 +7123,20 @@ function exportOMListToExcel(){
   XLSX.utils.book_append_sheet(wb, ws, '2026년도 데이터');
   XLSX.writeFile(wb, `OM_리스트_${isoDate(new Date())}.xlsx`);
 }
+// 연락처(배우자 번호 등 두 줄)·접수내역·조치내역·비고는 줄바꿈이 있는 값이
+// 흔해서, 입력칸이 내용 줄 수에 맞춰 자동으로 늘어나는 여러 줄 입력칸으로 둔다.
+const OM_LIST_MULTITEXT_FIELDS = ['phone','receivedDetail','actionDetail','note'];
 function omListCellHtml(row, field){
   const isNumber = OM_LIST_NUMBER_FIELDS.includes(field);
   const isDate = field==='receivedDate' || field==='processedDate' || field==='invoiceDate';
+  const isMultitext = OM_LIST_MULTITEXT_FIELDS.includes(field);
   const v = row[field];
   if(isDate) return `<input type="date" class="om-field" data-id="${row.id}" data-field="${field}" value="${escapeHtml(v)}" style="width:100%;">`;
   if(isNumber) return `<input type="text" inputmode="numeric" class="om-field om-money" data-id="${row.id}" data-field="${field}" value="${v?Number(v).toLocaleString('ko-KR'):''}" style="width:100%;">`;
+  if(isMultitext){
+    const lineCount = v ? String(v).split('\n').length : 1;
+    return `<textarea class="om-field" data-id="${row.id}" data-field="${field}" rows="${Math.max(1, Math.min(lineCount, 5))}" style="width:100%; resize:vertical; font-size:12px; line-height:1.4; padding:4px 5px;">${escapeHtml(v)}</textarea>`;
+  }
   return `<input type="text" class="om-field" data-id="${row.id}" data-field="${field}" value="${escapeHtml(v)}" style="width:100%;">`;
 }
 async function renderOMListMain(){
