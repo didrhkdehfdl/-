@@ -5803,6 +5803,9 @@ function renderAgentDocSubCell(item, sub, label){
 
 async function renderAgentDocsMain(){
   const main = document.getElementById('main');
+  // 영업자용/O&M팀은 같은 화면·기능을 쓰되 데이터만 분리되어 있어서, 지금
+  // 활성 탭에 맞는 상태 객체로 agentDocsState를 바꿔 끼운다.
+  agentDocsState = state.activeTab === 'omTeam' ? agentDocsStateOM : agentDocsStateDefault;
   if(agentDocsState.category === 'deposit'){
     await renderDepositConfirmTab();
     return;
@@ -5810,7 +5813,7 @@ async function renderAgentDocsMain(){
   if(!agentDocsState.loaded){
     main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
     await ensureAgentDocsLoaded();
-    if(state.activeTab !== 'agentDocs') return;
+    if(state.activeTab !== 'agentDocs' && state.activeTab !== 'omTeam') return;
   }
   const items = agentDocsState.items.filter(it => it.category === agentDocsState.category);
   const isBizreg = agentDocsState.category === 'bizreg';
