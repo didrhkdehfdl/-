@@ -5817,9 +5817,10 @@ async function renderAgentDocsMain(){
   }
   const items = agentDocsState.items.filter(it => it.category === agentDocsState.category);
   const isBizreg = agentDocsState.category === 'bizreg';
+  const sectionTitle = state.activeTab === 'omTeam' ? 'O&M팀 서류 관리' : '영업자용 서류 관리';
 
   main.innerHTML = `
-    <h2 class="section-title">영업자용 서류 관리</h2>
+    <h2 class="section-title">${sectionTitle}</h2>
     <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
       계약서, 사업자등록증, 기타서류를 종류별로 나눠서 올려둘 수 있습니다. 사업자등록증은 업로드하면
       개인/법인 여부와 사업자명·대표자명·사업자번호·업태·종목·이메일을 자동으로 인식해서 채워둡니다
