@@ -7360,12 +7360,14 @@ function renderCardReconMain(){
     const ledgerEntries = parsed.dataRows.map(ledgerRowToEntry);
 
     const approvalAoa = XLSX.utils.sheet_to_json(s.approvalWb.Sheets[s.approvalSheetName], { header:1, raw:true, defval:'' });
+    const approvalCols = approvalParseAoa(approvalAoa);
+    if(approvalCols.error){ s.error = approvalCols.error; renderCardReconMain(); return; }
     const approvalEntries = [];
-    for(let i=1;i<approvalAoa.length;i++){
+    for(let i=approvalCols.headerIdx+1;i<approvalAoa.length;i++){
       const row = approvalAoa[i];
-      if(!row || !row[0]) continue;
-      if(!approvalRowMatchesCard(row[0], parts)) continue;
-      approvalEntries.push({ isoDate: normalizeDotDate(row[1]), amount: Math.round(Number(row[4])||0), place: row[3] });
+      if(!row || !row[approvalCols.colCard]) continue;
+      if(!approvalRowMatchesCard(row[approvalCols.colCard], parts)) continue;
+      approvalEntries.push({ isoDate: normalizeDotDate(row[approvalCols.colDate]), amount: Math.round(Number(row[approvalCols.colAmount])||0), place: row[approvalCols.colPlace] });
     }
 
     s.matchResult = reconcileCardEntries(ledgerEntries, approvalEntries);
