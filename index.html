@@ -5474,6 +5474,7 @@ const AGENT_DOC_CATEGORIES = [
 const DEPOSIT_CONFIRM_KEY = 'agentdocs-deposit-confirm';
 const OM_DEPOSIT_CONFIRM_KEY = 'omdocs-deposit-confirm';
 let depositConfirmState = { items:[], loaded:false, loading:false };
+const depositConfirmStateDefault = depositConfirmState;
 let depositConfirmStateOM = { items:[], loaded:false, loading:false };
 async function ensureDepositConfirmLoaded(){
   if(depositConfirmState.loaded || depositConfirmState.loading) return;
