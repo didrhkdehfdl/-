@@ -537,11 +537,25 @@ const agentDocFileCache = {}; // id -> base64 file content, loaded lazily from s
 // 덮어쓰고, 그 외 시트·카드·외부링크는 손대지 않는다(ZIP 내부 XML을 직접 수정).
 let cardReconState = {
   cardFull:'', // 예: 5585-0321-1065-0905
-  ledgerFile:null, ledgerWb:null, ledgerSheetNames:[], ledgerSheetName:'', ledgerFileName:'',
+  // 관리대장은 "월 시트가 있는 파일" 하나가 기본이지만, 카드에 따라 그 파일이
+  // 여러 개로 나뉘어 있는 경우가 있어 한 번에 여러 개를 올릴 수 있게 배열로
+  // 관리한다 — ledgerSheetNames는 올려둔 모든 파일의 시트 이름을 합친 목록이고,
+  // 대사 실행 시에는 선택된 시트 이름을 실제로 갖고 있는 파일을 찾아서 쓴다.
+  ledgerWbs:[], ledgerSheetNames:[], ledgerSheetName:'', ledgerFileNames:[],
   approvalFile:null, approvalWb:null, approvalSheetNames:[], approvalSheetName:'', approvalFileName:'',
   masterFile:null, masterBuffer:null, masterSheetNames:[], masterSheetName:'', masterFileName:'',
   ledgerEntries:[], matchResult:null, ackMismatch:false, error:'', busy:false, restored:false
 };
+function findLedgerWbForSheet(sheetName){
+  return (cardReconState.ledgerWbs.find(w => w.wb.SheetNames.includes(sheetName)) || {}).wb || null;
+}
+function rebuildLedgerSheetNames(){
+  const s = cardReconState;
+  const names = [];
+  s.ledgerWbs.forEach(w => w.wb.SheetNames.forEach(n => { if(!names.includes(n)) names.push(n); }));
+  s.ledgerSheetNames = names;
+  if(!names.includes(s.ledgerSheetName)) s.ledgerSheetName = names.find(n=>/월/.test(n)) || names[0] || '';
+}
 // 관리대장·승인내역 파일은 재사용 가치가 있어 저장해두고 다음 접속 때도 이어서
 // 쓸 수 있게 한다. 통합본(3번 파일)은 일부러 저장하지 않는다 — 이 파일은 여러
 // 사람이 같이 쓰는 "지금 이 순간의 최신본"이어야 하는데, 캐시된 옛날 버전을
