@@ -7057,7 +7057,11 @@ function omMaterialTotal(row){
 // 업로드한 엑셀에서 "데이터"가 붙은 시트(없으면 첫 시트)를 찾아, 4행부터
 // B~AI열(자재비합계 제외)을 원본과 같은 순서로 그대로 읽어온다.
 function parseOMListWorkbook(wb){
-  const sheetName = wb.SheetNames.find(n=>n.includes('데이터')) || wb.SheetNames[0];
+  // "2025년도 데이터"가 "2026년도 데이터"보다 시트 순서상 앞에 있어서, 그냥
+  // "데이터"만으로 찾으면 2025년 시트가 먼저 걸려버린다 — 연도까지 맞춰서 찾는다.
+  const sheetName = wb.SheetNames.find(n=>n.includes('2026') && n.includes('데이터'))
+    || wb.SheetNames.find(n=>n.includes('데이터'))
+    || wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   const aoa = XLSX.utils.sheet_to_json(ws, { header:1, range:3, raw:true, defval:'' });
   const idxs = OM_LIST_COL_LETTERS.map(colLetterToIndex);
