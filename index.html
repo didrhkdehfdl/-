@@ -1775,7 +1775,7 @@ function firstListedValue(raw){
 // OCR이 자주 틀리는 업종 관련 용어를 실제로 존재하는 표기로 보정한다
 // (예: "정기공사"의 받침 ㄴ/ㅁ을 헷갈려 "점기공사"로 잘못 읽는 경우).
 function fixCommonBizTypeTypos(s){
-  return String(s||'').replace(/점기공사/g, '정기공사');
+  return String(s||'').replace(/점기공사/g, '전기공사');
 }
 // [업태] 라벨이 없어 "사업의 종류 : 건설업 정기공사"처럼 상위 항목만 읽힌
 // 경우, 보통 "건설업"처럼 "업"으로 끝나는 단어가 업태고 그 뒤가 종목이므로
