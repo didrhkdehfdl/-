@@ -548,8 +548,42 @@ let cardReconState = {
   ledgerWbs:[], ledgerSheetNames:[], ledgerSheetName:'', ledgerFileNames:[],
   approvalFile:null, approvalWb:null, approvalSheetNames:[], approvalSheetName:'', approvalFileName:'',
   masterFile:null, masterBuffer:null, masterSheetNames:[], masterSheetName:'', masterFileName:'',
-  ledgerEntries:[], matchResult:null, batchResult:null, ackMismatch:false, error:'', busy:false, restored:false
+  ledgerEntries:[], matchResult:null, batchResult:null, batchPreview:null, ackMismatch:false, error:'', busy:false, restored:false
 };
+// 올려둔 관리대장(①) 전체를 승인내역(②)과 대사한다 — 통합본(③)은 전혀
+// 필요 없다. 통합본 갱신(patchFile3MultipleCardBlocks)에 실제로 쓸 수 있는
+// "완전일치" 카드만 patches에 담고, perCard에는 카드별 결과를 전부 남겨서
+// 통합본 없이도 카드별 일치/불일치 현황을 미리 볼 수 있게 한다.
+function reconcileAllLedgerCards(s){
+  const approvalAoa = XLSX.utils.sheet_to_json(s.approvalWb.Sheets[s.approvalSheetName], { header:1, raw:true, defval:'' });
+  const perCard = [];
+  const patches = [];
+  for(const w of s.ledgerWbs){
+    const aoa = XLSX.utils.sheet_to_json(w.wb.Sheets[w.selectedSheet], { header:1, raw:true, defval:'' });
+    const cardFull = findCardNumberInAoa(aoa);
+    if(!cardFull){ perCard.push({ fileName:w.fileName, cardFull:'', error:'관리대장에서 카드번호를 찾지 못함' }); continue; }
+    const parts = cardParts(cardFull);
+    if(!parts){ perCard.push({ fileName:w.fileName, cardFull, error:'카드번호 형식이 올바르지 않음' }); continue; }
+    const parsed = ledgerParseAoa(aoa);
+    if(parsed.error){ perCard.push({ fileName:w.fileName, cardFull, error:parsed.error }); continue; }
+    const ledgerEntries = parsed.dataRows.map(ledgerRowToEntry);
+    const approvalEntries = [];
+    for(let i=1;i<approvalAoa.length;i++){
+      const row = approvalAoa[i];
+      if(!row || !row[0]) continue;
+      if(!approvalRowMatchesCard(row[0], parts)) continue;
+      approvalEntries.push({ isoDate: normalizeDotDate(row[1]), amount: Math.round(Number(row[4])||0), place: row[3] });
+    }
+    const result = reconcileCardEntries(ledgerEntries, approvalEntries);
+    const matchCount = result.rows.filter(r=>r.status==='match').length;
+    const mismatchCount = result.rows.filter(r=>r.status==='ledger_only').length + result.extra.length;
+    perCard.push({ fileName:w.fileName, cardFull, cardLast4:parts.p4, totalCount:ledgerEntries.length, matchCount, mismatchCount });
+    if(mismatchCount === 0){
+      patches.push({ cardFull, cardLast4: parts.p4, entryBlocks: ledgerEntries.map(le=>le.block) });
+    }
+  }
+  return { perCard, patches };
+}
 function findLedgerWbForSheet(sheetName){
   return (cardReconState.ledgerWbs.find(w => w.wb.SheetNames.includes(sheetName)) || {}).wb || null;
 }
