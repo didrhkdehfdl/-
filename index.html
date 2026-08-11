@@ -5472,19 +5472,23 @@ const AGENT_DOC_CATEGORIES = [
 // 직접 입력해서 관리하는 별도 목록. 서류 업로드와는 무관해서 agentDocsState.items가
 // 아니라 이 전용 상태에 따로 저장한다.
 const DEPOSIT_CONFIRM_KEY = 'agentdocs-deposit-confirm';
+const OM_DEPOSIT_CONFIRM_KEY = 'omdocs-deposit-confirm';
 let depositConfirmState = { items:[], loaded:false, loading:false };
+let depositConfirmStateOM = { items:[], loaded:false, loading:false };
 async function ensureDepositConfirmLoaded(){
   if(depositConfirmState.loaded || depositConfirmState.loading) return;
   depositConfirmState.loading = true;
+  const key = depositConfirmState===depositConfirmStateOM ? OM_DEPOSIT_CONFIRM_KEY : DEPOSIT_CONFIRM_KEY;
   try{
-    const raw = await loadFileFromStorage(DEPOSIT_CONFIRM_KEY);
+    const raw = await loadFileFromStorage(key);
     depositConfirmState.items = raw ? JSON.parse(raw) : [];
   }catch(e){ depositConfirmState.items = []; }
   depositConfirmState.loading = false;
   depositConfirmState.loaded = true;
 }
 async function saveDepositConfirmList(){
-  try{ await saveFileToStorage(DEPOSIT_CONFIRM_KEY, JSON.stringify(depositConfirmState.items)); }catch(e){ console.error(e); }
+  const key = depositConfirmState===depositConfirmStateOM ? OM_DEPOSIT_CONFIRM_KEY : DEPOSIT_CONFIRM_KEY;
+  try{ await saveFileToStorage(key, JSON.stringify(depositConfirmState.items)); }catch(e){ console.error(e); }
 }
 function newDepositConfirmItem(){
   return { id: rid(), customerName:'', address:'', contractAmount:0, requested:false, requestedAt:'', depositDate:'', depositAmount:0 };
