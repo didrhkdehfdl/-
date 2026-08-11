@@ -544,7 +544,7 @@ let cardReconState = {
   ledgerWbs:[], ledgerSheetNames:[], ledgerSheetName:'', ledgerFileNames:[],
   approvalFile:null, approvalWb:null, approvalSheetNames:[], approvalSheetName:'', approvalFileName:'',
   masterFile:null, masterBuffer:null, masterSheetNames:[], masterSheetName:'', masterFileName:'',
-  ledgerEntries:[], matchResult:null, ackMismatch:false, error:'', busy:false, restored:false
+  ledgerEntries:[], matchResult:null, batchResult:null, ackMismatch:false, error:'', busy:false, restored:false
 };
 function findLedgerWbForSheet(sheetName){
   return (cardReconState.ledgerWbs.find(w => w.wb.SheetNames.includes(sheetName)) || {}).wb || null;
