@@ -614,10 +614,10 @@ async function restoreCardReconFiles(){
       }catch(e){
         entries = [{ fileName: meta.ledgerFileName||'', base64: ledgerRaw }];
       }
-      s.ledgerWbs = entries.map(en => ({
-        fileName: en.fileName,
-        wb: XLSX.read(base64ToArrayBuffer(en.base64), { type:'array', cellDates:true })
-      }));
+      s.ledgerWbs = entries.map(en => {
+        const wb = XLSX.read(base64ToArrayBuffer(en.base64), { type:'array', cellDates:true });
+        return { fileName: en.fileName, base64: en.base64, wb, selectedSheet: en.selectedSheet && wb.SheetNames.includes(en.selectedSheet) ? en.selectedSheet : (wb.SheetNames.find(n=>/월/.test(n)) || wb.SheetNames[0]) };
+      });
       s.ledgerFileNames = s.ledgerWbs.map(w=>w.fileName);
       s.ledgerSheetName = meta.ledgerSheetName || '';
       rebuildLedgerSheetNames();
