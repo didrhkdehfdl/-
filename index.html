@@ -6723,13 +6723,16 @@ const debouncedSaveCompanyMaster = debounce(()=>{
 }, 500);
 
 const INVOICE_ITEM_NAME_OPTIONS = ['태양광 주자재 납품 및 설치', '인버터 교체AS', '모듈 교체AS', '커넥터 교체AS'];
-let invoicePrepState = { itemName:'태양광 주자재 납품 및 설치', results:[], checked:new Set(), error:'', message:'' };
+let invoicePrepState = { itemName:'태양광 주자재 납품 및 설치', source:'sagup', results:[], checked:new Set(), error:'', message:'' };
 
 // 고객명으로 영업자용 업로드(사업자등록증/계약서) 중 매칭되는 걸 찾는다.
-function findAgentDoc(customerName, category){
+// items를 안 넘기면 지금 활성 탭의 agentDocsState를 쓰지만, "세금계산서 준비"
+// 화면은 영업자용 탭이 아니어도 O&M 쪽 서류를 찾아야 할 수 있어서, 호출하는
+// 쪽(computeInvoicePlanForRow)에서 어느 목록을 볼지 명시적으로 넘겨준다.
+function findAgentDoc(customerName, category, items){
   const name = String(customerName||'').trim();
   if(!name) return null;
-  return agentDocsState.items.find(it => it.category===category && String(it.customerName||'').trim()===name) || null;
+  return (items||agentDocsState.items).find(it => it.category===category && String(it.customerName||'').trim()===name) || null;
 }
 // 계약법인 텍스트로 회사 정보(공급자)를 찾는다.
 function matchCompanyForRow(row){
@@ -6741,18 +6744,22 @@ function matchCompanyForRow(row){
 // 우선순위: 사업자등록증 업로드됨 > 영업자용 계약서에서 "현금영수증" 체크가 되어
 // 있음(주민번호로 현금영수증) > 그 외에는 전부 세금계산서(개인은 주민등록번호를
 // 사업자등록번호 자리에 넣어 발행) — 계약서가 있어도 체크가 안 돼있으면 세금계산서.
-function computeInvoicePlanForRow(row){
-  const bizDoc = findAgentDoc(row.customer, 'bizreg');
+// agentDocsItems: 어느 탭(영업자용/O&M팀)의 서류 목록에서 매칭할지.
+function computeInvoicePlanForRow(row, agentDocsItems){
+  const bizDoc = findAgentDoc(row.customer, 'bizreg', agentDocsItems);
   if(bizDoc && bizDoc.bizNumber){
     return { type:'tax', source:'사업자등록증', buyer:{
       bizNumber: bizDoc.bizNumber, bizName: bizDoc.bizName||'', ownerName: bizDoc.ownerName||row.customer,
       bizType: bizDoc.bizType||'', bizItem: bizDoc.bizItem||'', email: bizDoc.email||''
     }};
   }
-  const contractDoc = findAgentDoc(row.customer, 'contract');
+  const contractDoc = findAgentDoc(row.customer, 'contract', agentDocsItems);
   if(contractDoc && contractDoc.cashReceiptChecked){
-    if(!row.phone) return { type:'skip', reason:'현금영수증 체크는 되어있는데 전화번호가 없음' };
-    return { type:'cash', source:'계약서(현금영수증 체크)', buyerId: row.phone };
+    // 연락처 칸에 줄바꿈으로 번호가 여러 개 적혀 있을 수 있어(O&M 리스트가 특히
+    // 그렇다), 후보를 다 모아두고 화면에서 고를 수 있게 한다 — 기본값은 첫 번째.
+    const phoneOptions = String(row.phone||'').split('\n').map(s=>s.trim()).filter(Boolean);
+    if(!phoneOptions.length) return { type:'skip', reason:'현금영수증 체크는 되어있는데 전화번호가 없음' };
+    return { type:'cash', source:'계약서(현금영수증 체크)', buyerId: phoneOptions[0], phoneOptions };
   }
   if(row.taxTarget === '법인'){
     return { type:'skip', reason:'법인인데 사업자등록증이 없음' };
@@ -6763,9 +6770,13 @@ function computeInvoicePlanForRow(row){
   return { type:'skip', reason:'주민번호를 찾을 수 없음' };
 }
 function buildInvoicePrepResults(){
-  const rows = (importState.rows||[]).filter(r => r.customer && !r.taxDate);
+  const isOM = invoicePrepState.source === 'om';
+  const rows = isOM
+    ? (omListState.rows||[]).filter(r => r.customer && !r.invoiceDate)
+    : (importState.rows||[]).filter(r => r.customer && !r.taxDate);
+  const agentDocsItems = isOM ? agentDocsStateOM.items : agentDocsStateDefault.items;
   return rows.map(row=>{
-    const plan = computeInvoicePlanForRow(row);
+    const plan = computeInvoicePlanForRow(row, agentDocsItems);
     const company = matchCompanyForRow(row);
     return { id: row.id, row, plan, companyId: company ? company.id : null };
   });
