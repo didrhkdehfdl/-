@@ -1653,15 +1653,21 @@ async function deleteInspectionFileData(id){
 }
 
 const AGENT_DOCS_INDEX_KEY = 'agentdocs-index';
+const OM_DOCS_INDEX_KEY = 'omdocs-index';
+// agentDocsState가 지금 어느 객체를 가리키는지로 현재 어느 탭(영업자용/O&M팀)인지
+// 판단해서, 그 탭의 저장 위치를 고른다.
+function currentAgentDocsIndexKey(){
+  return agentDocsState === agentDocsStateOM ? OM_DOCS_INDEX_KEY : AGENT_DOCS_INDEX_KEY;
+}
 async function loadAgentDocsIndex(){
   try{
-    const value = await loadFileFromStorage(AGENT_DOCS_INDEX_KEY);
+    const value = await loadFileFromStorage(currentAgentDocsIndexKey());
     return value ? JSON.parse(value) : [];
   }catch(e){ return []; }
 }
 async function saveAgentDocsIndex(list){
   try{
-    await saveFileToStorage(AGENT_DOCS_INDEX_KEY, JSON.stringify(list));
+    await saveFileToStorage(currentAgentDocsIndexKey(), JSON.stringify(list));
   }catch(e){ console.error(e); }
 }
 async function loadAgentDocFileData(id){
