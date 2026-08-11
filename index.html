@@ -5498,7 +5498,7 @@ async function renderDepositConfirmTab(){
     <div style="margin-bottom:16px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
       <input type="text" id="depositNewCustomer" placeholder="고객명" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:140px;">
       <input type="text" id="depositNewAddress" placeholder="주소" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:220px;">
-      <input type="number" id="depositNewAmount" placeholder="계약금액" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:140px;">
+      <input type="text" inputmode="numeric" id="depositNewAmount" placeholder="계약금액" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:140px;">
       <button id="depositAddBtn" style="padding:8px 14px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:12.5px; font-weight:600; cursor:pointer;">+ 추가</button>
     </div>
     ${items.length===0 ? `<div class="empty-side">아직 등록된 입금확인 대상이 없습니다.</div>` : `
