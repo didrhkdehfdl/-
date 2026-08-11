@@ -6995,6 +6995,211 @@ function renderInvoicePrepMain(){
   });
 }
 
+// ---------- O&M 리스트 ----------
+// "독립채산제(AS,타부서지원).xlsx"의 "2026년도 데이터" 시트 그대로를 가져와
+// 표로 관리하고, 같은 구성(3줄 머리글 + B~AI열)으로 다시 엑셀로 내보낸다.
+// 자재비합계(Z열)는 원본에서도 제품단가*제품수량 수식이라 저장하지 않고
+// 표시/내보내기 시점에 그때그때 계산한다.
+const OM_LIST_KEY = 'om-list-rows';
+const OM_LIST_COLUMNS = [
+  ['no','No.',60], ['as','A/S',50], ['receivedDate','접수일자',100], ['processedDate','처리일자',100],
+  ['deptRequest','요청부서',90], ['requester','요청자',80], ['bizYear','사업년도',70], ['bizCategory','사업분류',90],
+  ['plantName','발전소명',120], ['customer','고객명',90], ['phone','연락처',110], ['address','주소',180],
+  ['receivedDetail','접수 내역',160], ['actionDetail','조치 내역',160], ['freePaid','유/무상',70],
+  ['amount','매출액(VAT포함)',110], ['invoiceType','세금계산서/현금영수증',130], ['invoiceNo','발행번호',110],
+  ['invoiceDate','발행일자',100], ['depositAmount','입금액',100], ['corp','법인',90],
+  ['productName','제품명',110], ['productPrice','제품단가',90], ['productQty','제품수량',80],
+  ['handler1','처리자1',80], ['handler2','처리자2',80], ['workHours','처리시간(h)',80],
+  ['roundTripKm','왕복거리(km)',90], ['outsourceCompany','외주업체',100], ['outsourceCost','외주비용',100],
+  ['note','비고',140],
+];
+// 원본 시트의 B~AI 열 중 자재비합계(Z, 계산값이라 제외)를 뺀 실제 데이터 열
+// 순서 — OM_LIST_COLUMNS와 자리 순서가 1:1로 대응한다.
+const OM_LIST_COL_LETTERS = ['B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','AA','AB','AE','AF','AG','AH','AI'];
+const OM_LIST_NUMBER_FIELDS = ['amount','depositAmount','productPrice','productQty','workHours','roundTripKm','outsourceCost'];
+function colLetterToIndex(letter){
+  let n = 0;
+  for(const ch of letter) n = n*26 + (ch.charCodeAt(0)-64);
+  return n-1;
+}
+let omListState = { rows:[], loaded:false, loading:false, fileName:'', search:'' };
+async function ensureOMListLoaded(){
+  if(omListState.loaded || omListState.loading) return;
+  omListState.loading = true;
+  try{
+    const raw = await loadFileFromStorage(OM_LIST_KEY);
+    omListState.rows = raw ? JSON.parse(raw) : [];
+  }catch(e){ omListState.rows = []; }
+  omListState.loading = false;
+  omListState.loaded = true;
+}
+async function saveOMListRows(){
+  try{ await saveFileToStorage(OM_LIST_KEY, JSON.stringify(omListState.rows)); }catch(e){ console.error(e); }
+}
+function newOMListRow(){
+  const row = { id: rid() };
+  OM_LIST_COLUMNS.forEach(([f])=>{ row[f] = ''; });
+  return row;
+}
+function omMaterialTotal(row){
+  return (Number(row.productPrice)||0) * (Number(row.productQty)||0);
+}
+// 업로드한 엑셀에서 "데이터"가 붙은 시트(없으면 첫 시트)를 찾아, 4행부터
+// B~AI열(자재비합계 제외)을 원본과 같은 순서로 그대로 읽어온다.
+function parseOMListWorkbook(wb){
+  const sheetName = wb.SheetNames.find(n=>n.includes('데이터')) || wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const aoa = XLSX.utils.sheet_to_json(ws, { header:1, range:3, raw:true, defval:'' });
+  const idxs = OM_LIST_COL_LETTERS.map(colLetterToIndex);
+  const rows = [];
+  aoa.forEach(arr=>{
+    const hasData = idxs.some(i => String(arr[i]||'').trim());
+    if(!hasData) return;
+    const row = { id: rid() };
+    OM_LIST_COLUMNS.forEach(([f], i)=>{
+      const raw = arr[idxs[i]];
+      if(OM_LIST_NUMBER_FIELDS.includes(f)) row[f] = parseExcelNumber(raw);
+      else if(f==='receivedDate' || f==='processedDate' || f==='invoiceDate') row[f] = excelDateToIso(raw);
+      else row[f] = raw!==undefined && raw!==null ? String(raw).trim() : '';
+    });
+    rows.push(row);
+  });
+  return { sheetName, rows };
+}
+async function handleOMListFile(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  omListState.error = '';
+  try{
+    await loadXlsxLib();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:'array', cellDates:true });
+    const { sheetName, rows } = parseOMListWorkbook(wb);
+    if(!rows.length){
+      omListState.error = `"${sheetName}" 시트에서 데이터를 찾지 못했습니다.`;
+    } else {
+      omListState.rows = rows;
+      omListState.fileName = file.name;
+      await saveOMListRows();
+    }
+  }catch(err){
+    console.error(err);
+    omListState.error = '파일을 읽지 못했습니다. 형식을 확인해주세요.';
+  }
+  renderOMListMain();
+}
+// 원본과 같은 3줄 머리글(빈 줄/그룹명/실제 항목명) + B~AI열 구성으로 다시
+// 엑셀을 만든다 — 자재비합계(Z열)는 원본처럼 수식 대신, 값을 그대로 계산해 넣는다.
+function exportOMListToExcel(){
+  const header1 = new Array(35).fill('');
+  header1[1] = '사업정보'; header1[15] = '매출정보'; header1[22] = '비용정보';
+  const header2 = new Array(35).fill('');
+  const labelByLetter = {};
+  OM_LIST_COLUMNS.forEach(([f,label], i)=>{ labelByLetter[OM_LIST_COL_LETTERS[i]] = label; });
+  OM_LIST_COL_LETTERS.forEach((letter,i)=>{ header2[colLetterToIndex(letter)] = OM_LIST_COLUMNS[i][1]; });
+  header2[colLetterToIndex('Z')] = '자재비합계';
+  const dataRows = omListState.rows.map(row=>{
+    const arr = new Array(35).fill('');
+    OM_LIST_COLUMNS.forEach(([f], i)=>{ arr[colLetterToIndex(OM_LIST_COL_LETTERS[i])] = row[f]||''; });
+    arr[colLetterToIndex('Z')] = omMaterialTotal(row);
+    return arr;
+  });
+  const ws = XLSX.utils.aoa_to_sheet([header1, header2, [], ...dataRows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '2026년도 데이터');
+  XLSX.writeFile(wb, `OM_리스트_${isoDate(new Date())}.xlsx`);
+}
+function omListCellHtml(row, field){
+  const isNumber = OM_LIST_NUMBER_FIELDS.includes(field);
+  const isDate = field==='receivedDate' || field==='processedDate' || field==='invoiceDate';
+  const v = row[field];
+  if(isDate) return `<input type="date" class="om-field" data-id="${row.id}" data-field="${field}" value="${escapeHtml(v)}" style="width:100%;">`;
+  if(isNumber) return `<input type="text" inputmode="numeric" class="om-field om-money" data-id="${row.id}" data-field="${field}" value="${v?Number(v).toLocaleString('ko-KR'):''}" style="width:100%;">`;
+  return `<input type="text" class="om-field" data-id="${row.id}" data-field="${field}" value="${escapeHtml(v)}" style="width:100%;">`;
+}
+async function renderOMListMain(){
+  const main = document.getElementById('main');
+  if(!omListState.loaded){
+    main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+    await ensureOMListLoaded();
+    if(state.activeTab !== 'omList') return;
+  }
+  const s = omListState;
+  const filtered = s.search
+    ? s.rows.filter(r => (r.customer||'').includes(s.search) || (r.plantName||'').includes(s.search) || (r.requester||'').includes(s.search))
+    : s.rows;
+
+  main.innerHTML = `
+    <h2 class="section-title">O&M 리스트</h2>
+    <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
+      "독립채산제(AS,타부서지원)" 엑셀의 "2026년도 데이터" 시트를 그대로 올려서 표로 관리하고, 같은 구성으로 다시 엑셀로 내보낼 수 있습니다.
+    </p>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      <input type="file" id="omListFile" accept=".xlsx,.xls" style="font-size:13px; color:var(--muted);">
+      <input id="omListSearch" placeholder="고객명/발전소명/요청자 검색" value="${escapeHtml(s.search)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; min-width:200px;">
+      <button id="omListAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
+      <button id="omListExportBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
+    </div>
+    ${s.error ? `<div style="color:var(--neg); font-size:13px; margin-bottom:10px;">${escapeHtml(s.error)}</div>` : ''}
+    ${s.rows.length===0 ? `<div class="empty-side">아직 등록된 O&M 리스트가 없습니다. 엑셀을 올리거나 "+ 행 추가"로 직접 입력해주세요.</div>` : `
+    <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">총 ${filtered.length}건 · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다</div>
+    <div class="table-wrap table-wrap-frozen" id="omListTableWrap">
+      <table style="border-collapse:collapse; min-width:2400px; font-size:12px;">
+        <thead><tr>
+          <th style="padding:6px 4px; color:var(--muted); position:sticky; left:0; background:var(--panel-2);">순번</th>
+          ${OM_LIST_COLUMNS.map(([f,label,w])=>`<th style="padding:6px 4px; color:var(--muted); width:${w}px; min-width:${w}px;">${escapeHtml(label)}</th>`).join('')}
+          <th style="padding:6px 4px; color:var(--muted);">삭제</th>
+        </tr></thead>
+        <tbody>
+          ${filtered.map((row,i)=>`
+            <tr data-id="${row.id}">
+              <td style="padding:5px 4px; text-align:center; position:sticky; left:0; background:var(--panel-2);">${i+1}</td>
+              ${OM_LIST_COLUMNS.map(([f])=>`<td style="padding:3px 4px;">${omListCellHtml(row,f)}</td>`).join('')}
+              <td style="padding:5px 4px; text-align:center;"><button class="om-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    `}
+  `;
+
+  document.getElementById('omListFile').addEventListener('change', handleOMListFile);
+  document.getElementById('omListSearch').addEventListener('input', (e)=>{ omListState.search = e.target.value; renderOMListMain(); });
+  document.getElementById('omListAddRowBtn').addEventListener('click', async ()=>{
+    omListState.rows.push(newOMListRow());
+    await saveOMListRows();
+    renderOMListMain();
+  });
+  document.getElementById('omListExportBtn').addEventListener('click', async ()=>{
+    await loadXlsxLib();
+    exportOMListToExcel();
+  });
+  main.querySelectorAll('.om-field').forEach(el=>{
+    el.addEventListener('change', async ()=>{
+      const row = omListState.rows.find(r=>r.id===el.dataset.id);
+      if(!row) return;
+      const field = el.dataset.field;
+      if(el.classList.contains('om-money')){
+        const n = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
+        row[field] = n;
+        el.value = n ? n.toLocaleString('ko-KR') : '';
+      } else {
+        row[field] = el.value.trim();
+      }
+      await saveOMListRows();
+    });
+  });
+  main.querySelectorAll('.om-del-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 행을 삭제할까요?')) return;
+      omListState.rows = omListState.rows.filter(r=>r.id!==btn.dataset.id);
+      await saveOMListRows();
+      renderOMListMain();
+    });
+  });
+}
+
 function renderImportMain(){
   const main = document.getElementById('main');
   // 체크박스 하나 누를 때마다 표 전체를 다시 그리는데, innerHTML을 통째로
