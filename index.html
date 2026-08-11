@@ -1772,16 +1772,37 @@ function parseBizNumber(text){
 function firstListedValue(raw){
   return raw.split(/[,\/·、]/)[0].trim();
 }
+// OCR이 자주 틀리는 업종 관련 용어를 실제로 존재하는 표기로 보정한다
+// (예: "정기공사"의 받침 ㄴ/ㅁ을 헷갈려 "점기공사"로 잘못 읽는 경우).
+function fixCommonBizTypeTypos(s){
+  return String(s||'').replace(/점기공사/g, '정기공사');
+}
+// [업태] 라벨이 없어 "사업의 종류 : 건설업 정기공사"처럼 상위 항목만 읽힌
+// 경우, 보통 "건설업"처럼 "업"으로 끝나는 단어가 업태고 그 뒤가 종목이므로
+// 그 지점에서 나눠본다 (못 나누면 전부 업태로 둔다).
+function splitTypeAndItemFromClassification(raw){
+  const m = raw.match(/^(\S*업)\s+(.+)$/);
+  if(m) return { bizType: m[1], bizItem: firstListedValue(m[2]) };
+  return { bizType: firstListedValue(raw), bizItem: '' };
+}
 function parseBizTypeItem(text){
   let bizType = '', bizItem = '';
-  let m = text.match(/업태\]?\s*[:：]?\s*([^\[\n]{1,30})/);
-  // OCR이 스캔 상태에 따라 "[업태]" 라벨 자체를 놓치고 그 상위 항목인
-  // "사업의 종류 : ..."만 읽어오는 경우가 있어, 업태를 못 찾으면 이걸로 대신한다.
-  if(!m) m = text.match(/사업\s*의?\s*종류\s*[:：]?\s*([^\[\n]{1,30})/);
-  if(m) bizType = firstListedValue(m[1]);
-  m = text.match(/종목\]?\s*[:：]?\s*([^\[\n]{1,30})/);
-  if(m) bizItem = firstListedValue(m[1]);
-  return { bizType, bizItem };
+  const labeled = text.match(/업태\]?\s*[:：]?\s*([^\[\n]{1,30})/);
+  if(labeled){
+    bizType = firstListedValue(labeled[1]);
+  } else {
+    // OCR이 스캔 상태에 따라 "[업태]" 라벨 자체를 놓치고 그 상위 항목인
+    // "사업의 종류 : ..."만 읽어오는 경우가 있어, 업태를 못 찾으면 이걸로 대신한다.
+    const classified = text.match(/사업\s*의?\s*종류\s*[:：]?\s*([^\[\n]{1,30})/);
+    if(classified){
+      const split = splitTypeAndItemFromClassification(classified[1].trim());
+      bizType = split.bizType;
+      bizItem = split.bizItem;
+    }
+  }
+  const itemMatch = text.match(/종목\]?\s*[:：]?\s*([^\[\n]{1,30})/);
+  if(itemMatch) bizItem = firstListedValue(itemMatch[1]); // [종목] 라벨이 따로 있으면 그걸 우선한다
+  return { bizType: fixCommonBizTypeTypos(bizType), bizItem: fixCommonBizTypeTypos(bizItem) };
 }
 // 대표자명은 라벨 뒤에 "(대표유형) : :"처럼 서식/콜론이 그대로 OCR되어 붙는
 // 경우가 많아, 라벨 뒤 텍스트를 그대로 쓰지 않고 그 안에서 실제 이름으로 보이는
