@@ -3665,6 +3665,10 @@ function applyAttachedStructurePricing(p){
 // 확인을 받아야만 기록을 진행한다. 이번 세션에서 직접 새로 올렸다면 그 자체가
 // 최신이라는 뜻이라 별도 확인 없이 바로 진행된다.
 let profitLedgerState = { open:false, buffer:null, fileName:'', savedAt:'', freshThisSession:false, ackFresh:false, busy:false, error:'', message:'' };
+// 가로 목록 화면에서 여러 건을 체크해 "정산데이터"에 한꺼번에 기록할 때 쓰는
+// 선택 상태 — 파일 업로드/최신확인은 profitLedgerState를 그대로 같이 쓴다
+// (건마다 다른 게 아니라 하나의 공유 엑셀 파일이라서).
+let profitListSelectState = { selected: new Set(), busy:false, error:'', message:'' };
 const PROFIT_LEDGER_TEMPLATE_KEY = 'profit-ledger-template-b64';
 const PROFIT_LEDGER_META_KEY = 'profit-ledger-template-meta';
 async function saveProfitLedgerTemplate(buffer, fileName){
