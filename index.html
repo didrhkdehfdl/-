@@ -8918,6 +8918,124 @@ function setupStickyHScroll(wrapId, stickyId){
   });
 }
 
+// ---------- 표 열 너비 드래그 조절 (엑셀처럼) ----------
+// .table-wrap 안의 모든 표(No./A/S 등 모든 탭의 목록 표 포함)에 공통 적용된다.
+// main.innerHTML로 다시 그릴 때마다 <table>이 통째로 새로 생기므로, #main을
+// 지켜보다가 아직 초기화 안 된 표를 찾아 매번 다시 손잡이를 붙여준다.
+function computeTableColumnLayout(table){
+  const headRows = table.tHead ? Array.from(table.tHead.rows) : [];
+  if(!headRows.length) return null;
+  const grid = [];
+  let colCount = 0;
+  const leafCells = [];
+  headRows.forEach((row, rIdx) => {
+    if(!grid[rIdx]) grid[rIdx] = [];
+    let colIdx = 0;
+    Array.from(row.cells).forEach(cell => {
+      while(grid[rIdx][colIdx]) colIdx++;
+      const colSpan = cell.colSpan || 1;
+      const rowSpan = cell.rowSpan || 1;
+      for(let r=0; r<rowSpan; r++){
+        if(!grid[rIdx+r]) grid[rIdx+r] = [];
+        for(let c=0; c<colSpan; c++) grid[rIdx+r][colIdx+c] = true;
+      }
+      leafCells.push({ el:cell, colStart:colIdx, colSpan });
+      colIdx += colSpan;
+      if(colIdx > colCount) colCount = colIdx;
+    });
+  });
+  return { colCount, leafCells };
+}
+function tableResizeKey(leafCells){
+  const text = leafCells.map(c=>c.el.textContent.trim()).join('>');
+  let hash = 0;
+  for(let i=0;i<text.length;i++){ hash = ((hash<<5)-hash + text.charCodeAt(i))|0; }
+  return 'colw-' + Math.abs(hash);
+}
+function initResizableTable(table){
+  if(table.dataset.resizeInit) return;
+  const layout = computeTableColumnLayout(table);
+  if(!layout || layout.colCount < 2){ table.dataset.resizeInit = '1'; return; }
+  const { colCount, leafCells } = layout;
+  table.dataset.resizeInit = '1';
+
+  const oldColgroup = table.querySelector('colgroup');
+  if(oldColgroup) oldColgroup.remove();
+  const colgroup = document.createElement('colgroup');
+  const cols = [];
+  for(let i=0;i<colCount;i++){
+    const col = document.createElement('col');
+    cols.push(col);
+    colgroup.appendChild(col);
+  }
+  table.insertBefore(colgroup, table.firstChild);
+
+  const key = tableResizeKey(leafCells);
+  let saved = null;
+  try{ saved = JSON.parse(localStorage.getItem(key)||'null'); }catch(e){}
+
+  // 처음엔 지금 화면에 실제로 그려진 너비를 그대로 넣어서(colgroup을 붙여도
+  // 화면이 안 튀게) 시작하고, 저장된 너비가 있으면 그걸로 덮어쓴다.
+  leafCells.forEach(({el, colStart, colSpan}) => {
+    if(colSpan !== 1) return;
+    const w = (saved && saved[colStart]) ? saved[colStart] : Math.max(30, Math.round(el.getBoundingClientRect().width));
+    cols[colStart].style.width = w + 'px';
+  });
+  table.style.tableLayout = 'fixed';
+
+  function saveWidths(){
+    const widths = cols.map(c => parseInt(c.style.width,10) || 0);
+    try{ localStorage.setItem(key, JSON.stringify(widths)); }catch(e){}
+  }
+
+  leafCells.forEach(({el, colStart, colSpan}) => {
+    const targetCol = cols[colStart + colSpan - 1];
+    if(getComputedStyle(el).position === 'static') el.style.position = 'relative';
+    const handle = document.createElement('div');
+    handle.className = 'col-resize-handle';
+    handle.addEventListener('mousedown', (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = targetCol.getBoundingClientRect().width || parseInt(targetCol.style.width,10) || 60;
+      handle.classList.add('resizing');
+      document.body.style.cursor = 'col-resize';
+      function onMove(ev){
+        const newWidth = Math.max(30, Math.round(startWidth + (ev.clientX - startX)));
+        targetCol.style.width = newWidth + 'px';
+      }
+      function onUp(){
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        handle.classList.remove('resizing');
+        document.body.style.cursor = '';
+        saveWidths();
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    el.appendChild(handle);
+  });
+}
+function scanForResizableTables(){
+  document.querySelectorAll('#main .table-wrap table').forEach(t => {
+    if(!t.dataset.resizeInit) initResizableTable(t);
+  });
+}
+let resizeTablesRAF = null;
+const resizableTablesObserver = new MutationObserver(()=>{
+  if(resizeTablesRAF) return;
+  resizeTablesRAF = requestAnimationFrame(()=>{
+    resizeTablesRAF = null;
+    scanForResizableTables();
+  });
+});
+const resizableTablesRoot = document.getElementById('main');
+if(resizableTablesRoot){
+  resizableTablesObserver.observe(resizableTablesRoot, { childList:true, subtree:true });
+  scanForResizableTables();
+}
+
 function loadScript(src){
   return new Promise((resolve, reject) => {
     const s = document.createElement('script');
