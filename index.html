@@ -5500,17 +5500,19 @@ function agentDocCategoryButtonsHtml(){
 }
 async function renderDepositConfirmTab(){
   const main = document.getElementById('main');
+  depositConfirmState = state.activeTab === 'omTeam' ? depositConfirmStateOM : depositConfirmState===depositConfirmStateOM ? {items:[],loaded:false,loading:false} : depositConfirmState;
   if(!depositConfirmState.loaded){
     main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
     await ensureDepositConfirmLoaded();
-    if(state.activeTab !== 'agentDocs' || agentDocsState.category !== 'deposit') return;
+    if((state.activeTab !== 'agentDocs' && state.activeTab !== 'omTeam') || agentDocsState.category !== 'deposit') return;
   }
   const items = depositConfirmState.items;
   const requestedCount = items.filter(it=>it.requested && !it.depositAmount).length;
   const doneCount = items.filter(it=>Number(it.depositAmount)>0).length;
+  const sectionTitle = state.activeTab === 'omTeam' ? 'O&M팀 서류 관리' : '영업자용 서류 관리';
 
   main.innerHTML = `
-    <h2 class="section-title">영업자용 서류 관리</h2>
+    <h2 class="section-title">${sectionTitle}</h2>
     <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
       고객명·주소·계약금액을 입력해 입금확인 요청 대상을 관리합니다. "입금확인요청"을 누르면 목록 상단에 대기 건수로 표시됩니다.
     </p>
