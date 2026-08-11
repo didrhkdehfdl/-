@@ -577,7 +577,13 @@ function reconcileAllLedgerCards(s){
     const result = reconcileCardEntries(ledgerEntries, approvalEntries);
     const matchCount = result.rows.filter(r=>r.status==='match').length;
     const mismatchCount = result.rows.filter(r=>r.status==='ledger_only').length + result.extra.length;
-    perCard.push({ fileName:w.fileName, cardFull, cardLast4:parts.p4, totalCount:ledgerEntries.length, matchCount, mismatchCount });
+    // 불일치 내역: 관리대장에만 있는 건과 승인내역에만 있는 건을 각각 표시해서
+    // 어느 쪽에 뭐가 남는지(날짜·금액) 바로 보이게 한다.
+    const mismatchDetails = [
+      ...result.rows.filter(r=>r.status==='ledger_only').map(r=>({ source:'ledger', isoDate:r.isoDate, amount:r.amount, place:r.display.place })),
+      ...result.extra.map(r=>({ source:'approval', isoDate:r.isoDate, amount:r.amount, place:r.place })),
+    ].sort((a,b)=> String(a.isoDate).localeCompare(String(b.isoDate)));
+    perCard.push({ fileName:w.fileName, cardFull, cardLast4:parts.p4, totalCount:ledgerEntries.length, matchCount, mismatchCount, mismatchDetails });
     if(mismatchCount === 0){
       patches.push({ cardFull, cardLast4: parts.p4, entryBlocks: ledgerEntries.map(le=>le.block) });
     }
