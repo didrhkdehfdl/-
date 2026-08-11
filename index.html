@@ -5501,7 +5501,7 @@ function agentDocCategoryButtonsHtml(){
 }
 async function renderDepositConfirmTab(){
   const main = document.getElementById('main');
-  depositConfirmState = state.activeTab === 'omTeam' ? depositConfirmStateOM : depositConfirmState===depositConfirmStateOM ? {items:[],loaded:false,loading:false} : depositConfirmState;
+  depositConfirmState = state.activeTab === 'omTeam' ? depositConfirmStateOM : depositConfirmStateDefault;
   if(!depositConfirmState.loaded){
     main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
     await ensureDepositConfirmLoaded();
