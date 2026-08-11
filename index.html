@@ -6765,7 +6765,7 @@ function cardParts(full){
 function approvalRowMatchesCard(cardNoStr, parts){
   const m = String(cardNoStr||'').trim().match(/^(\d{4})-(\d{4})-(\S{4})-(\d{4})$/);
   if(!m) return false;
-  return m[1]===parts.p1 && m[4]===parts.p4;
+  return m[4]===parts.p4;
 }
 function reconcileCardEntries(ledgerEntries, approvalEntries){
   const used = new Array(approvalEntries.length).fill(false);
