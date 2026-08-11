@@ -6672,7 +6672,7 @@ function renderCardReconMain(){
   const mismatchCount = mr ? (mr.rows.filter(r=>r.status==='ledger_only').length + mr.extra.length) : 0;
 
   main.innerHTML = `
-    <h2 class="section-title">카드관리 — 카드 대사·자동갱신 (MVP: 카드 1개)</h2>
+    <h2 class="section-title">카드관리 — 카드 대사·자동갱신</h2>
     <p style="font-size:12.5px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
       ① 카드별 관리대장(월 시트가 있는 파일) → ② 카드사 승인내역 → ③ 기존 통합본(여러 카드가 들어있는 파일) 순서로 올리면,
       같은 카드의 관리대장과 승인내역을 대사한 뒤, 통합본의 <b>해당 카드 블록의 B~Q열만</b> 최신 값으로 채워 넣습니다.
