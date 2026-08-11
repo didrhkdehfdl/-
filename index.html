@@ -522,6 +522,12 @@ const contractFileCache = {}; // id -> base64 PDF content, loaded lazily from st
 let inspectionState = { items:[], loaded:false, loading:false };
 const inspectionFileCache = {}; // id -> base64 file content, loaded lazily from storage
 let agentDocsState = { category:'contract', items:[], loaded:false, loading:false };
+// O&M팀 탭은 영업자용과 화면/기능은 완전히 같지만 데이터는 별도로 관리한다.
+// agentDocsState는 "현재 활성 탭의" 상태를 가리키는 포인터로 쓰고, 실제
+// 렌더링 시작 시(renderAgentDocsMain 맨 위) 활성 탭에 맞는 객체로 바꿔 끼운다
+// — 이렇게 하면 기존 렌더링 함수·이벤트 핸들러 코드는 전혀 안 건드려도 된다.
+const agentDocsStateDefault = agentDocsState;
+let agentDocsStateOM = { category:'contract', items:[], loaded:false, loading:false };
 const agentDocFileCache = {}; // id -> base64 file content, loaded lazily from storage
 // 카드 대사·자동갱신(법인카드 관리대장 ↔ 승인내역 ↔ 통합본) 화면 상태.
 // MVP 범위: 카드 1개씩 처리. file3(통합본)는 대상 카드 블록의 B~Q열만 값으로
