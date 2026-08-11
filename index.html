@@ -2804,6 +2804,10 @@ function renderMain(loading){
     renderAgentDocsMain();
     return;
   }
+  if(state.activeTab === 'omTeam'){
+    renderAgentDocsMain();
+    return;
+  }
   if(state.activeTab === 'moduleprices'){
     renderModulePricesMain();
     return;
