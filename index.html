@@ -6641,19 +6641,18 @@ function renderCardReconMain(){
       for(const file of files){
         const { wb, buf } = await readWorkbookFromFile(file);
         const b64 = arrayBufferToBase64(buf);
+        const selectedSheet = wb.SheetNames.find(n=>/월/.test(n)) || wb.SheetNames[0];
         const existingIdx = s.ledgerWbs.findIndex(w=>w.fileName===file.name);
-        const entry = { fileName: file.name, wb, base64: b64 };
+        const entry = { fileName: file.name, wb, base64: b64, selectedSheet };
         if(existingIdx>=0) s.ledgerWbs[existingIdx] = entry; else s.ledgerWbs.push(entry);
       }
       s.ledgerFileNames = s.ledgerWbs.map(w=>w.fileName);
       rebuildLedgerSheetNames();
-      if(!s.cardFull){
-        for(const w of s.ledgerWbs){
-          const sheetName = w.wb.SheetNames.find(n=>/월/.test(n)) || w.wb.SheetNames[0];
-          const aoa = XLSX.utils.sheet_to_json(w.wb.Sheets[sheetName], { header:1, raw:true, defval:'' });
-          const detected = findCardNumberInAoa(aoa);
-          if(detected){ s.cardFull = detected; break; }
-        }
+      if(!s.cardFull && s.ledgerWbs.length){
+        const w0 = s.ledgerWbs[0];
+        const aoa = XLSX.utils.sheet_to_json(w0.wb.Sheets[w0.selectedSheet], { header:1, raw:true, defval:'' });
+        const detected = findCardNumberInAoa(aoa);
+        if(detected) s.cardFull = detected;
       }
       await saveFileToStorage(CARDRECON_LEDGER_KEY, JSON.stringify(s.ledgerWbs.map(w=>({ fileName:w.fileName, base64:w.base64 }))), 30000);
       saveCardReconMeta();
