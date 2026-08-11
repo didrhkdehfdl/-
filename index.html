@@ -6654,7 +6654,7 @@ function renderCardReconMain(){
         const detected = findCardNumberInAoa(aoa);
         if(detected) s.cardFull = detected;
       }
-      await saveFileToStorage(CARDRECON_LEDGER_KEY, JSON.stringify(s.ledgerWbs.map(w=>({ fileName:w.fileName, base64:w.base64 }))), 30000);
+      await saveFileToStorage(CARDRECON_LEDGER_KEY, JSON.stringify(s.ledgerWbs.map(w=>({ fileName:w.fileName, base64:w.base64, selectedSheet:w.selectedSheet }))), 30000);
       saveCardReconMeta();
     }catch(err){ s.error = '관리대장 파일을 읽지 못했습니다: '+err.message; }
     e.target.value = '';
