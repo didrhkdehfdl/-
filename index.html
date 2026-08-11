@@ -6748,6 +6748,28 @@ function ledgerRowToEntry(row){
 function isoDateUTC(d){
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
 }
+// 카드사 승인내역 시트에서 "승인일자"/"승인금액" 헤더가 있는 열을 찾는다(고정
+// 열 위치를 가정하지 않고 헤더 이름으로 찾아야, 카드사마다 열 순서가 달라도
+// 관리대장의 날짜·금액과 정확히 같은 값끼리 비교할 수 있다).
+function approvalParseAoa(aoa){
+  const norm = v => String(v||'').replace(/\s/g,'');
+  let headerIdx=-1, colCard=-1, colDate=-1, colAmount=-1, colPlace=-1;
+  for(let i=0;i<aoa.length;i++){
+    const row = aoa[i]||[];
+    const idxDate = row.findIndex(c=>norm(c)==='승인일자');
+    const idxAmount = row.findIndex(c=>norm(c)==='승인금액');
+    if(idxDate>=0 && idxAmount>=0){
+      headerIdx = i; colDate = idxDate; colAmount = idxAmount;
+      colCard = row.findIndex(c=>norm(c)==='카드번호');
+      colPlace = row.findIndex(c=>/가맹점|사용처/.test(norm(c)));
+      break;
+    }
+  }
+  if(headerIdx<0) return { error: '승인내역 시트에서 헤더 행("승인일자"/"승인금액")을 찾지 못했습니다. 시트를 다시 확인해주세요.' };
+  if(colCard<0) colCard = 0; // 카드번호 열을 못 찾으면 기존 위치(첫 열)를 그대로 사용
+  if(colPlace<0) colPlace = 3; // 가맹점명/사용처 열을 못 찾으면 기존 위치를 그대로 사용
+  return { headerIdx, colCard, colDate, colAmount, colPlace };
+}
 function normalizeDotDate(s){
   const m = String(s||'').trim().match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
   if(!m) return String(s||'');
