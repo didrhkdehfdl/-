@@ -9291,7 +9291,7 @@ async function exportPerfListToExcel(){
         // 안 그러면 셀을 직접 안 건드린 행은 엑셀에 0으로 빠진다.
         if(field==='companyPrice' && !v){
           const auto = computePerfCompanyPrice(r);
-          if(auto!==null) v = auto;
+          if(auto) v = auto;
         }
         line.push(type==='number' ? (Number(v)||0) : (v||''));
       });
