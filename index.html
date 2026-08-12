@@ -5932,7 +5932,7 @@ const depositConfirmStateDefault = depositConfirmState;
 let depositConfirmStateOM = { items:[], loaded:false, loading:false };
 async function ensureDepositConfirmLoaded(){
   // 로딩 중(await) 다른 탭으로 전환되면 depositConfirmState 포인터 자체가
-  // bakit바뀌므로, 지금 가리키는 대상을 미리 붙잡아두고 끝까지 그 객체에만
+  // 바뀌므로, 지금 가리키는 대상을 미리 붙잡아두고 끝까지 그 객체에만
   // 써야 한다 — 안 그러면 응답이 늦게 온 팀의 데이터가 그 사이 전환된
   // 다른 팀의 상태에 덮어써진다.
   const targetState = depositConfirmState;
@@ -6089,11 +6089,14 @@ async function renderDepositConfirmTab(){
 }
 
 async function ensureAgentDocsLoaded(){
-  if(agentDocsState.loaded || agentDocsState.loading) return;
-  agentDocsState.loading = true;
-  agentDocsState.items = await loadAgentDocsIndex();
-  agentDocsState.loading = false;
-  agentDocsState.loaded = true;
+  // 로딩 중(await) 다른 탭으로 전환되면 agentDocsState 포인터가 바뀌므로,
+  // 지금 가리키는 대상을 미리 붙잡아두고 끝까지 그 객체에만 써야 한다.
+  const targetState = agentDocsState;
+  if(targetState.loaded || targetState.loading) return;
+  targetState.loading = true;
+  targetState.items = await loadAgentDocsIndex(); // 키는 호출 시점에 즉시(동기) 계산되므로 안전
+  targetState.loading = false;
+  targetState.loaded = true;
 }
 // 세금계산서 준비 화면처럼, 지금 활성 탭이 영업자용/O&M팀이 아니어도 특정
 // 네임스페이스의 서류 목록을 미리 불러와야 할 때 쓴다(현재 activeTab에
