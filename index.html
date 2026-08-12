@@ -6463,7 +6463,7 @@ async function renderAgentDocsMain(){
   main.querySelectorAll('.agentdoc-reocr-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const item = agentDocsState.items.find(it=>it.id===btn.dataset.id);
-      if(item) runBizRegOcrForItem(item);
+      if(item) runBizRegOcrForItem(item, agentDocsState);
     });
   });
   main.querySelectorAll('.agentdoc-view-btn').forEach(btn=>{
