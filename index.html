@@ -7980,8 +7980,14 @@ function omMaterialTotal(row){
 // B~AI열(자재비합계 제외)을 원본과 같은 순서로 그대로 읽어온다.
 function parseOMListWorkbook(wb){
   // "2025년도 데이터"가 "2026년도 데이터"보다 시트 순서상 앞에 있어서, 그냥
-  // "데이터"만으로 찾으면 2025년 시트가 먼저 걸려버린다 — 연도까지 맞춰서 찾는다.
-  const sheetName = wb.SheetNames.find(n=>n.includes('2026') && n.includes('데이터'))
+  // "데이터"만으로 찾으면 옛날 연도 시트가 먼저 걸려버린다 — "연도+데이터"
+  // 시트 중 연도가 가장 큰(최신) 것을 고른다. 연도를 딱히 못 찾은 해(예:
+  // 다음 해로 넘어가서 아직 이 코드를 안 고친 경우)에도 하드코딩된 연도에
+  // 의존하지 않도록, 연도 숫자를 직접 비교한다.
+  const yearDataSheets = wb.SheetNames
+    .map(n => ({ n, year: parseInt((n.match(/(\d{4}).*데이터/)||[])[1], 10) }))
+    .filter(x => !isNaN(x.year));
+  const sheetName = (yearDataSheets.length ? yearDataSheets.sort((a,b)=>b.year-a.year)[0].n : null)
     || wb.SheetNames.find(n=>n.includes('데이터'))
     || wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
