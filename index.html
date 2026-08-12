@@ -7783,8 +7783,11 @@ function renderInvoicePrepMain(){
     s.error=''; s.message='';
     try{
       await loadXlsxLib();
-      const taxSet = s.results.filter(r=>r.plan.type==='tax');
-      const cashSet = s.results.filter(r=>r.plan.type==='cash');
+      // 체크박스로 몇 건만 골라뒀으면 그 건만, 아무것도 안 골랐으면(기존 동작)
+      // 전체 대상으로 파일을 만든다.
+      const targetResults = s.checked.size>0 ? s.results.filter(r=>s.checked.has(r.id)) : s.results;
+      const taxSet = targetResults.filter(r=>r.plan.type==='tax');
+      const cashSet = targetResults.filter(r=>r.plan.type==='cash');
       const missingCompany = taxSet.filter(r=>!companyById(r.companyId));
       if(missingCompany.length){
         s.error = `회사 정보가 없어서 세금계산서를 만들 수 없는 건이 ${missingCompany.length}건 있습니다: ${missingCompany.map(r=>r.row.customer).join(', ')}\n위 표에서 계약법인을 확인해 회사 정보를 등록하거나, 체크박스로 골라 다른 회사를 지정해주세요.`;
