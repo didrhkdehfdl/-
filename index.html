@@ -6196,8 +6196,13 @@ async function handleAgentDocUpload(e){
     e.target.value = '';
     return;
   }
-  agentDocsState.pendingCustomer = customerName; // remember for the next upload in this session
-  const category = agentDocsState.category;
+  // 업로드는 파일마다 여러 번 await를 거치는데, 그 사이 사용자가 다른 탭(영업자용
+  // ↔ O&M팀)으로 넘어가면 agentDocsState 포인터가 바뀐다 — 시작 시점의 대상을
+  // 미리 붙잡아두고 끝까지 그 객체에만 읽고 써야, 파일이 엉뚱한 팀에 저장되거나
+  // 원래 팀의 저장이 누락되는 일이 없다.
+  const targetState = agentDocsState;
+  targetState.pendingCustomer = customerName; // remember for the next upload in this session
+  const category = targetState.category;
   const MAX_BYTES = 3.5*1024*1024; // see contracts upload for why (base64 inflates ~33%, storage cap is 5MB)
   const skipped = [];
   const newBizregItems = [];
@@ -6233,20 +6238,20 @@ async function handleAgentDocUpload(e){
       if(category === 'bizreg'){
         Object.assign(item, { isCorporate:null, bizName:'', ownerName:'', bizNumber:'', bizType:'', bizItem:'', email:'', ocrStatus:'pending' });
       }
-      agentDocsState.items.push(item);
+      targetState.items.push(item);
       if(category === 'bizreg') newBizregItems.push(item);
     }catch(err){
       console.error(err);
       skipped.push(file.name);
     }
   }
-  await saveAgentDocsIndex(agentDocsState.items);
+  await saveAgentDocsIndex(targetState.items, targetState);
   renderAgentDocsMain();
   if(skipped.length){
     alert(`다음 파일은 저장하지 못했습니다:\n${skipped.join('\n')}`);
   }
   for(const item of newBizregItems){
-    await runBizRegOcrForItem(item);
+    await runBizRegOcrForItem(item, targetState);
   }
 }
 
