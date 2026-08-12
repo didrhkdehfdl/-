@@ -5156,7 +5156,7 @@ async function handleContractUpload(e){
         skipped.push(`${file.name} (저장 실패: ${saveResult.reason})`);
         continue;
       }
-      const item = { id, fileName: file.name, date: parseDateFromFilename(file.name), size: file.size, mime: file.type || 'application/pdf' };
+      const item = { id, fileName: file.name, date: parseDateFromFilename(file.name), size: file.size, mime: guessMimeFromFile(file) };
       contractsState.items.push(item);
     }catch(err){
       console.error(err);
