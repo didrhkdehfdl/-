@@ -6124,7 +6124,11 @@ async function ensureAgentDocsLoadedForState(targetState, isOM){
 // fields. Mirrors runOcrForItem's structure (PDF vs image handling, timeout
 // safety) — always leaves the item usable even if OCR fails, since every
 // field stays manually editable regardless.
-async function runBizRegOcrForItem(item){
+// targetState: item이 속한 네임스페이스(agentDocsStateDefault/agentDocsStateOM).
+// OCR은 수십 초씩 걸려서 그 사이 탭이 바뀔 수 있으므로, 저장은 호출 시점에
+// 넘겨받은(또는 미리 붙잡아둔) targetState 기준으로 해야 한다.
+async function runBizRegOcrForItem(item, targetState){
+  targetState = targetState || agentDocsState;
   item.ocrStatus = 'running';
   renderAgentDocsMain();
   try{
@@ -6177,7 +6181,7 @@ async function runBizRegOcrForItem(item){
     console.error(err);
     item.ocrStatus = 'error';
   }
-  await saveAgentDocsIndex(agentDocsState.items);
+  await saveAgentDocsIndex(targetState.items, targetState);
   renderAgentDocsMain();
 }
 
