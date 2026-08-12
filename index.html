@@ -1398,6 +1398,11 @@ async function restoreCaseHistoryEntry(caseId, idx){
   if(!entry) return;
   let restored;
   try{ restored = JSON.parse(entry.data); }catch(e){ alert('이 버전을 복원하지 못했습니다.'); return; }
+  // 오래된 스냅샷엔 그 뒤로 앱에 새로 추가된 필드가 아예 없을 수 있다 — 지금
+  // 기준 기본 틀 위에 스냅샷 값을 덮어써서, 스냅샷에 없는 필드는 기본값으로
+  // 채워지게 한다(빈 화면/오류 방지). 스냅샷에 있는 값은 전부 그대로 이긴다.
+  const base = restored.caseType === 'profit' ? newProfitCase() : newCase();
+  restored = Object.assign(base, restored);
   restored.id = caseId; // 안전하게 원래 id 유지
   activeCase = restored;
   state.activeId = caseId;
