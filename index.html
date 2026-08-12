@@ -5931,15 +5931,20 @@ let depositConfirmState = { items:[], loaded:false, loading:false };
 const depositConfirmStateDefault = depositConfirmState;
 let depositConfirmStateOM = { items:[], loaded:false, loading:false };
 async function ensureDepositConfirmLoaded(){
-  if(depositConfirmState.loaded || depositConfirmState.loading) return;
-  depositConfirmState.loading = true;
-  const key = depositConfirmState===depositConfirmStateOM ? OM_DEPOSIT_CONFIRM_KEY : DEPOSIT_CONFIRM_KEY;
+  // 로딩 중(await) 다른 탭으로 전환되면 depositConfirmState 포인터 자체가
+  // bakit바뀌므로, 지금 가리키는 대상을 미리 붙잡아두고 끝까지 그 객체에만
+  // 써야 한다 — 안 그러면 응답이 늦게 온 팀의 데이터가 그 사이 전환된
+  // 다른 팀의 상태에 덮어써진다.
+  const targetState = depositConfirmState;
+  if(targetState.loaded || targetState.loading) return;
+  targetState.loading = true;
+  const key = targetState===depositConfirmStateOM ? OM_DEPOSIT_CONFIRM_KEY : DEPOSIT_CONFIRM_KEY;
   try{
     const raw = await loadFileFromStorage(key);
-    depositConfirmState.items = raw ? JSON.parse(raw) : [];
-  }catch(e){ depositConfirmState.items = []; }
-  depositConfirmState.loading = false;
-  depositConfirmState.loaded = true;
+    targetState.items = raw ? JSON.parse(raw) : [];
+  }catch(e){ targetState.items = []; }
+  targetState.loading = false;
+  targetState.loaded = true;
 }
 async function saveDepositConfirmList(){
   const key = depositConfirmState===depositConfirmStateOM ? OM_DEPOSIT_CONFIRM_KEY : DEPOSIT_CONFIRM_KEY;
