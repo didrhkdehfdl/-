@@ -3858,7 +3858,12 @@ function findMatchingSalesRecord(customerName){
 // 구매단가×1.2 하되 3kW당 50만원을 넘지 않도록 — 용량에 비례해서 커진다.
 function computeLedgerStructureSell(profitCase, salesRecord){
   const kwFactor = (Number(profitCase.capacityKw)||0) / 3;
-  const isAttached = /부착형/.test((salesRecord && salesRecord.structureType) || '');
+  // 부착형 여부는 이 이윤정산 건 자체의 구조물 분류(structureNote)로 판단한다
+  // — 화면 표시(applyAttachedStructurePricing 등)와 똑같은 기준이어야, 화면에
+  // 보이는 구조물 단가와 정산데이터에 찍히는 단가가 어긋나지 않는다. 예전엔
+  // 연결된 영업비 건의 별도 필드(salesRecord.structureType)를 봐서, 그 값이
+  // 비어있거나 표현이 다르면 서로 다른 단가가 나갈 수 있었다.
+  const isAttached = /부착형/.test(profitCase.structureNote || '');
   if(isAttached) return Math.round(220000 * kwFactor);
   const capped = Math.round(500000 * kwFactor);
   const scaled = Math.round((Number(profitCase.structureBuy)||0) * 1.2);
