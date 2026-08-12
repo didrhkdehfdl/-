@@ -7556,8 +7556,12 @@ const CASH_RECEIPT_HEADER = ['용도구분\n(0:소비자소득공제용, 1:사�
 
 function buildTaxInvoiceWorkbook(items, supplier, itemName){
   const rows = items.map(({row, plan})=>{
-    const supplyAmt = Math.round(Number(row.totalAmount)||0);
-    const vat = Math.round(supplyAmt*0.1);
+    // row.totalAmount("계약금액")는 부가세 포함 금액이라 그대로 공급가액에 넣으면
+    // 안 된다 — 공급가액 열이 따로 있으면 그 값을, 없으면 계약금액/1.1로 구한다
+    // (현금영수증 쪽 buildCashReceiptWorkbook과 같은 계산 방식으로 맞춘 것).
+    const totalAmt = Math.round(Number(row.totalAmount)||0);
+    const supplyAmt = Math.round(Number(row.supplyAmount) || (totalAmt/1.1) || 0);
+    const vat = totalAmt - supplyAmt;
     const day = String(new Date(firstDateOf(row.certDate)).getDate()||'').padStart(2,'0');
     return [
       '01', yyyymmdd(firstDateOf(row.certDate)),
