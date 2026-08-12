@@ -3888,7 +3888,11 @@ function renderProfitLedgerPanel(p){
         이 파일은 계속 누적되는 공유 파일이라 한 번 올려두면 기억은 하지만, 그 사이 다른 건이 추가됐을 수 있어서
         매번 "최신이 맞다" 확인을 받은 뒤에만 기록을 진행합니다.
       </div>
-      ${match
+      ${match && match.multiple
+        ? `<div style="padding:8px 10px; border-radius:6px; background:rgba(255,80,80,0.12); border:1px solid rgba(255,80,80,0.4); color:#ff9d9d; font-size:12px; margin-bottom:10px;">
+             고객명 "${escapeHtml(p.customer||'')}"과(와) 일치하는 영업비 정산 건이 ${match.matchCount}건 있어 어느 건인지 자동으로 정할 수 없습니다. 영업비 쪽 열(회사입금가·영업비공제금 등)은 비워둔 채로 기록되니, 기록 후 수동으로 채워주세요.
+           </div>`
+      : match
         ? `<div style="padding:8px 10px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px; margin-bottom:10px;">
              연결된 영업비 정산 건 찾음: "${escapeHtml(match.salesCase.title||'')}" 안의 ${escapeHtml(match.record.customer)} (담당 ${escapeHtml(match.salesCase.agentName||'')}, 회사입금가 ${fmtWon(Number(match.record.companyPrice)||0)})
            </div>`
