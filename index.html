@@ -2066,10 +2066,15 @@ function findPerfRowByCustomer(name){
 function findMatchingPerfRows(item){
   const tokens = extractNameTokensFromFilename(item.fileName);
   const nameCandidates = [item.extractedName, ...tokens].filter(Boolean).map(s=>s.replace(/\s/g,''));
+  // 부분일치(includes)로 하면 "이슬"/"이슬기"처럼 실제로는 다른 사람인데
+  // 이름이 겹칠 때, 한 사람 확인증의 점검일자가 다른 사람 행에도 잘못
+  // 채워질 수 있어 완전일치만 허용한다 — OCR이 부정확해 완전일치가 안
+  // 잡히면(예: 파일명에 괄호/숫자가 섞인 경우) 화면에서 "일치로 표시"를
+  // 수동으로 눌러 확정하면 된다.
   const matchesRow = (row) => {
     const rowCustomer = String(row.customer||'').replace(/\s/g,'');
     if(!rowCustomer) return false;
-    return nameCandidates.some(name => rowCustomer===name || rowCustomer.includes(name) || name.includes(rowCustomer));
+    return nameCandidates.some(name => rowCustomer===name);
   };
   return {
     importRows: importState.rows.filter(matchesRow),
