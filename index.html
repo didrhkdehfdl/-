@@ -6972,6 +6972,19 @@ async function patchFile3CardBlock(masterArrayBuffer, sheetLabel, cardLast4, ent
     });
   }
 
+  // 이번에 반영하는 건수가 이 카드의 원래 블록 칸 수보다 적으면(예: 중복/취소
+  // 건을 지워서 관리대장이 줄어든 경우), 안 채워진 나머지 행에 예전 값이 그대로
+  // 남아 카드 합계에 섞이게 된다 — 남는 행은 비워야 한다.
+  for(let i=entryBlocks.length;i<blockRows.length;i++){
+    const rowEl = blockRows[i];
+    CARD_BLOCK_COLS.forEach(col => {
+      const cEl = findCell(rowEl, col);
+      if(!cEl) return;
+      while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
+      cEl.removeAttribute('t');
+    });
+  }
+
   zip.file(sheetPath, serializer.serializeToString(sheetDoc));
 
   // 열어볼 때 SUMIF 등 수식이 자동으로 다시 계산되도록 강제.
