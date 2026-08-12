@@ -5127,6 +5127,15 @@ async function handleContractsImportFile(e){
   e.target.value = '';
 }
 
+// 일부 모바일 브라우저는 카메라로 바로 찍어 올린 사진의 file.type을 빈
+// 문자열로 준다 — 이걸 무조건 PDF로 취급하면(예전 동작) 실제로는 사진인
+// 파일을 PDF 파서로 열려다 실패한다. 확장자로 한 번 더 추정해본다.
+function guessMimeFromFile(file){
+  if(file.type) return file.type;
+  const ext = (file.name.split('.').pop()||'').toLowerCase();
+  if(['jpg','jpeg','png','gif','webp','heic','heif','bmp'].includes(ext)) return 'image/'+(ext==='jpg'?'jpeg':ext);
+  return 'application/pdf'; // 확장자로도 못 정하면 기존 동작대로 PDF로 취급
+}
 async function handleContractUpload(e){
   const files = [...(e.target.files||[])];
   if(files.length===0) return;
