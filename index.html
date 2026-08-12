@@ -7125,6 +7125,17 @@ async function patchFile3MultipleCardBlocks(masterArrayBuffer, sheetLabel, cardP
         }
       });
     }
+    // 이번 건수가 이 카드의 원래 블록 칸 수보다 적으면, 남는 아래쪽 행에 예전
+    // 값이 그대로 남아 카드 합계에 섞이게 된다 — 남는 행은 비워야 한다.
+    for(let i=patch.entryBlocks.length;i<blockRows.length;i++){
+      const rowEl = blockRows[i];
+      CARD_BLOCK_COLS.forEach(col => {
+        const cEl = findCell(rowEl, col);
+        if(!cEl) return;
+        while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
+        cEl.removeAttribute('t');
+      });
+    }
     applied.push(patch.cardFull);
   }
 
