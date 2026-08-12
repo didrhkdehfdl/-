@@ -4888,9 +4888,15 @@ function excelDateToIso(v){
 function parseExcelNumber(v){
   if(typeof v === 'number') return v;
   if(v===null || v===undefined || v==='') return 0;
-  const cleaned = String(v).replace(/[₩$,\s]/g,'');
+  // 회계 서식으로 음수를 괄호로 표기한 셀(예: "(500,000)")도 처리한다 —
+  // 괄호를 그냥 지우면 Number()가 NaN이 돼서 조용히 0으로 사라진다.
+  let s = String(v).trim();
+  const isParenNegative = /^\(.*\)$/.test(s);
+  if(isParenNegative) s = s.slice(1,-1);
+  const cleaned = s.replace(/[₩$,\s]/g,'');
   const n = Number(cleaned);
-  return isNaN(n) ? 0 : n;
+  if(isNaN(n)) return 0;
+  return isParenNegative ? -Math.abs(n) : n;
 }
 
 // ---------- 계약서 (contracts) tab ----------
