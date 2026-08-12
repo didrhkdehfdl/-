@@ -9285,7 +9285,14 @@ async function exportPerfListToExcel(){
     rows.forEach((r,i)=>{
       const line = [i+1];
       PERF_COLUMNS.forEach(([field,,type])=>{
-        const v = r[field];
+        let v = r[field];
+        // 화면에서는 회사입금가가 비어있으면 자동계산값을 초록색으로 보여주는데,
+        // 여기서도 같은 값을 넣어야 화면에서 본 것과 엑셀 내용이 일치한다 —
+        // 안 그러면 셀을 직접 안 건드린 행은 엑셀에 0으로 빠진다.
+        if(field==='companyPrice' && !v){
+          const auto = computePerfCompanyPrice(r);
+          if(auto!==null) v = auto;
+        }
         line.push(type==='number' ? (Number(v)||0) : (v||''));
       });
       aoa.push(line);
