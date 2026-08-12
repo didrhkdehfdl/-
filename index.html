@@ -3678,6 +3678,10 @@ async function renderProfitListMain(){
         a.download = `${base}_일괄기록_${isoDate(new Date())}.xlsx`;
         document.body.appendChild(a); a.click(); a.remove();
         URL.revokeObjectURL(url);
+        // 단건 기록과 마찬가지로, 방금 만든 결과를 캐시된 버퍼에도 반영해서
+        // 파일을 다시 안 올리고 이어서 단건 기록을 해도 이번 결과가 안 사라지게 한다.
+        profitLedgerState.buffer = await result.blob.arrayBuffer();
+        profitLedgerState.savedAt = await saveProfitLedgerTemplate(profitLedgerState.buffer, profitLedgerState.fileName);
         const ok = result.results.filter(r=>!r.error);
         const fail = result.results.filter(r=>r.error);
         const newCount = ok.filter(r=>r.wasNewRow).length;
