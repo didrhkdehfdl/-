@@ -7536,9 +7536,14 @@ function buildInvoicePrepResults(){
     : (importState.rows||[]).filter(r => r.customer && !r.taxDate);
   const agentDocsItems = isOM ? agentDocsStateOM.items : agentDocsStateDefault.items;
   return rows.map(row=>{
-    const plan = computeInvoicePlanForRow(row, agentDocsItems);
-    const company = matchCompanyForRow(row);
-    return { id: row.id, row, plan, companyId: company ? company.id : null };
+    // O&M 리스트는 필드 이름이 사급 실적리스트와 달라(매출액이 totalAmount가
+    // 아니라 amount), 세금계산서/현금영수증 생성 함수가 기대하는 이름으로
+    // 맞춰준다. O&M엔 "발행 기준일"에 해당하는 필드가 따로 없어 작성일자는
+    // 발행 처리하는 오늘 날짜를 쓴다.
+    const normRow = isOM ? { ...row, totalAmount: row.amount, certDate: isoDate(new Date()) } : row;
+    const plan = computeInvoicePlanForRow(normRow, agentDocsItems);
+    const company = matchCompanyForRow(normRow);
+    return { id: row.id, row: normRow, plan, companyId: company ? company.id : null };
   });
 }
 function firstDateOf(multiline){
