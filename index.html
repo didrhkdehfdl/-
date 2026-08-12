@@ -1739,9 +1739,16 @@ async function loadAgentDocsIndex(){
     return value ? JSON.parse(value) : [];
   }catch(e){ return []; }
 }
-async function saveAgentDocsIndex(list){
+// targetState를 넘기면 그 네임스페이스(영업자용/O&M팀)의 저장 위치로 확정해서
+// 저장한다 — 안 넘기면(기존 동작) 호출 시점의 현재 탭 기준으로 저장한다.
+// await를 거치는 흐름(업로드/OCR)에서는 반드시 targetState를 넘겨야, 저장
+// 직전에 사용자가 다른 탭으로 넘어가도 엉뚱한 팀에 저장되지 않는다.
+async function saveAgentDocsIndex(list, targetState){
+  const key = targetState
+    ? (targetState===agentDocsStateOM ? OM_DOCS_INDEX_KEY : AGENT_DOCS_INDEX_KEY)
+    : currentAgentDocsIndexKey();
   try{
-    await saveFileToStorage(currentAgentDocsIndexKey(), JSON.stringify(list));
+    await saveFileToStorage(key, JSON.stringify(list));
   }catch(e){ console.error(e); }
 }
 async function loadAgentDocFileData(id){
