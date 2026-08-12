@@ -6811,6 +6811,12 @@ function approvalParseAoa(aoa){
   return { headerIdx, colCard, colDate, colAmount, colPlace };
 }
 function normalizeDotDate(s){
+  // 승인내역 파일의 날짜 열이 텍스트가 아니라 진짜 엑셀 날짜 서식이면 SheetJS가
+  // Date 객체로 넘겨준다 — 이걸 String()으로 바꾸면 정규식이 못 잡아서(예:
+  // "Thu Aug 13 2026…") 관리대장과 절대 안 맞는 문자열이 되고, 그 카드의 모든
+  // 건이 조용히 전부 불일치로 뜬다. isoDateUTC와 같은 방식(UTC getter)으로 먼저
+  // 처리해야 시간대 때문에 하루 밀리는 것도 방지된다.
+  if(s instanceof Date) return isoDateUTC(s);
   const m = String(s||'').trim().match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
   if(!m) return String(s||'');
   return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
