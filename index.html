@@ -7813,13 +7813,27 @@ function renderInvoicePrepMain(){
               <td style="padding:6px; text-align:center;"><input type="checkbox" class="rowCheck" data-id="${r.id}" ${s.checked.has(r.id)?'checked':''}></td>
               <td style="padding:6px;">${escapeHtml(r.row.customer||'')}</td>
               <td style="padding:6px;">${escapeHtml(r.row.corp||'')}${!company && r.row.corp ? ' <span style="color:#ffcf8a;">(회사정보 없음)</span>' : ''}</td>
-              <td style="padding:6px;">${r.plan.type==='tax'?'세금계산서':r.plan.type==='cash'?'현금영수증':'건너뜀'}</td>
+              <td style="padding:6px;">
+                ${r.plan.type==='skip' ? '건너뜀' : `
+                  <select class="invoice-type-select" data-id="${r.id}" style="font-size:12px; padding:3px 4px;">
+                    <option value="cash" ${r.plan.type==='cash'?'selected':''}>현금영수증</option>
+                    <option value="tax" ${r.plan.type==='tax'?'selected':''}>세금계산서</option>
+                  </select>
+                `}
+              </td>
               <td style="padding:6px; font-size:11px; color:var(--muted);">
                 ${r.plan.type==='skip' ? escapeHtml(r.plan.reason) : escapeHtml(r.plan.source)}
                 ${r.plan.type==='cash' && r.plan.phoneOptions && r.plan.phoneOptions.length>1 ? `
                   <select class="cash-phone-select" data-id="${r.id}" style="margin-top:4px; font-size:11px; padding:3px 4px; width:100%;">
                     ${r.plan.phoneOptions.map(p=>`<option value="${escapeHtml(p)}" ${r.plan.buyerId===p?'selected':''}>${escapeHtml(p)}</option>`).join('')}
                   </select>
+                ` : ''}
+                ${r.plan.type==='tax' && !r.plan.buyer.bizNumber ? `
+                  <div style="margin-top:4px; display:flex; flex-direction:column; gap:3px;">
+                    <input class="invoice-manual-biznum" data-id="${r.id}" value="${escapeHtml(r.plan.buyer.bizNumber||'')}" placeholder="사업자등록번호(직접 입력)" style="font-size:11px; padding:3px 4px; width:100%;">
+                    <input class="invoice-manual-bizname" data-id="${r.id}" value="${escapeHtml(r.plan.buyer.bizName||'')}" placeholder="상호(직접 입력, 개인이면 비워둠)" style="font-size:11px; padding:3px 4px; width:100%;">
+                    <input class="invoice-manual-ownername" data-id="${r.id}" value="${escapeHtml(r.plan.buyer.ownerName||'')}" placeholder="대표자명" style="font-size:11px; padding:3px 4px; width:100%;">
+                  </div>
                 ` : ''}
               </td>
               <td style="padding:6px; text-align:right;">${fmtWon(Number(r.row.totalAmount)||0)}</td>
