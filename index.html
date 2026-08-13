@@ -7896,6 +7896,34 @@ function renderInvoicePrepMain(){
       if(r) r.plan.buyerId = sel.value;
     });
   });
+  main.querySelectorAll('.invoice-type-select').forEach(sel=>{
+    sel.addEventListener('change', ()=>{
+      const r = s.results.find(x=>x.id===sel.dataset.id);
+      if(!r) return;
+      const newType = sel.value;
+      if(newType === r.plan.type) return;
+      if(newType === 'cash'){
+        // 세금계산서 쪽에는 전화번호 후보가 없을 수 있어(사업자등록증/주민번호로
+        // 잡힌 건), 필요하면 연락처에서 새로 뽑아온다.
+        const phoneOptions = r.plan.phoneOptions && r.plan.phoneOptions.length
+          ? r.plan.phoneOptions
+          : String(r.row.phone||'').split('\n').map(x=>x.trim()).filter(Boolean);
+        r.plan = { type:'cash', source:'현금영수증(수동 변경)', buyerId: phoneOptions[0]||'', phoneOptions };
+      }else{
+        r.plan = { type:'tax', source:'세금계산서(수동 변경, 직접 입력 필요)', buyer:{ bizNumber:'', bizName:'', ownerName:r.row.customer||'', bizType:'', bizItem:'', email:'' } };
+      }
+      renderInvoicePrepMain();
+    });
+  });
+  main.querySelectorAll('.invoice-manual-biznum, .invoice-manual-bizname, .invoice-manual-ownername').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      const r = s.results.find(x=>x.id===inp.dataset.id);
+      if(!r || r.plan.type!=='tax') return;
+      if(inp.classList.contains('invoice-manual-biznum')) r.plan.buyer.bizNumber = inp.value.trim();
+      else if(inp.classList.contains('invoice-manual-bizname')) r.plan.buyer.bizName = inp.value.trim();
+      else r.plan.buyer.ownerName = inp.value.trim();
+    });
+  });
 
   const checkAllBox = document.getElementById('checkAllBox');
   if(checkAllBox) checkAllBox.addEventListener('change', (e)=>{
