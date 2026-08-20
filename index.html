@@ -1583,8 +1583,14 @@ function subscribeListToStorage(key, targetState, opts){
         }
       }
       const items = raw ? JSON.parse(raw) : [];
-      if(opts.migrate) opts.migrate(items);
       const wasFirst = !!resolveFirst;
+      if(!wasFirst && opts.skipApply && opts.skipApply()){
+        // 일괄 작업(예: 전체 다시 인식) 도중엔 들어오는 변경분을 무시한다 —
+        // 그 사이에 온 echo를 그대로 반영해버리면, 아직 로컬에만 있고 저장은
+        // 안 된 다른 항목들의 최신 상태가 통째로 옛날 값으로 덮일 수 있다.
+        return;
+      }
+      if(opts.migrate) opts.migrate(items);
       targetState[opts.field || 'items'] = items;
       settleFirst();
       if(!wasFirst){
