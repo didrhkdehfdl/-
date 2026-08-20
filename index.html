@@ -7660,8 +7660,18 @@ function buildInvoicePrepResults(){
     // O&M 리스트엔 "발행번호" 칸이 따로 있어서, 채워져 있으면 연락처보다 그걸
     // 우선 쓴다 — 현금영수증은 발급수단번호 자리에, 세금계산서는 비고 자리에
     // 참고용으로 들어간다(유형 판단 자체는 그대로 두고 식별 정보만 바꾼다).
+    // 다만 발행번호 안에 사업자등록번호 형식(000-00-00000)이 적혀있으면, 그건
+    // 사업자를 이미 확인해뒀다는 뜻이라 현금영수증이 아니라 세금계산서로 분류하고
+    // 그 번호를 공급받는자 사업자등록번호로 그대로 쓴다.
     if(isOM && row.invoiceNo && plan.type !== 'skip'){
-      if(plan.type === 'cash'){
+      const bizNumMatch = String(row.invoiceNo).match(/\d{3}-\d{2}-\d{5}/);
+      if(bizNumMatch && plan.type !== 'tax'){
+        plan.type = 'tax';
+        plan.buyer = { bizNumber: bizNumMatch[0], bizName:'', ownerName: row.customer||'', bizType:'', bizItem:'', email:'' };
+        plan.source = `발행번호(${row.invoiceNo}) 내 사업자번호 인식`;
+        delete plan.buyerId;
+        delete plan.phoneOptions;
+      }else if(plan.type === 'cash'){
         plan.buyerId = row.invoiceNo;
         plan.phoneOptions = [];
         plan.source = `발행번호(${row.invoiceNo})`;
