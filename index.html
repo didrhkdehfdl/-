@@ -5659,7 +5659,10 @@ function estimateSkewAngle(canvas){
 // item's extracted 대표자 성명 / 점검년월일 fields. Always leaves the item
 // in a usable state — on any failure it just marks the fields unrecognized
 // so the person can type them in by hand instead.
-async function runOcrForItem(item){
+// skipSave: 일괄 재인식처럼 아주 여러 번 연달아 부를 때, 매번 저장하면 그
+// 사이사이 실시간 동기화 echo와 충돌해 다른 항목이 사라질 위험이 커진다 —
+// 그럴 땐 true를 넘겨서 저장은 호출하는 쪽이 몇 건 단위로 몰아서 하게 한다.
+async function runOcrForItem(item, skipSave){
   item.ocrStatus = 'running';
   renderInspectionMain();
   try{
