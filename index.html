@@ -7918,14 +7918,19 @@ function renderInvoicePrepMain(){
       const newType = sel.value;
       if(newType === r.plan.type) return;
       if(newType === 'cash'){
-        // 세금계산서 쪽에는 전화번호 후보가 없을 수 있어(사업자등록증/주민번호로
-        // 잡힌 건), 필요하면 연락처에서 새로 뽑아온다.
-        const phoneOptions = r.plan.phoneOptions && r.plan.phoneOptions.length
-          ? r.plan.phoneOptions
-          : String(r.row.phone||'').split('\n').map(x=>x.trim()).filter(Boolean);
-        r.plan = { type:'cash', source:'현금영수증(수동 변경)', buyerId: phoneOptions[0]||'', phoneOptions };
+        if(r.row.invoiceNo){
+          // O&M 발행번호가 있으면 연락처보다 그걸 발급수단번호로 우선 쓴다.
+          r.plan = { type:'cash', source:`발행번호(${r.row.invoiceNo})`, buyerId: r.row.invoiceNo, phoneOptions: [] };
+        }else{
+          // 세금계산서 쪽에는 전화번호 후보가 없을 수 있어(사업자등록증/주민번호로
+          // 잡힌 건), 필요하면 연락처에서 새로 뽑아온다.
+          const phoneOptions = r.plan.phoneOptions && r.plan.phoneOptions.length
+            ? r.plan.phoneOptions
+            : String(r.row.phone||'').split('\n').map(x=>x.trim()).filter(Boolean);
+          r.plan = { type:'cash', source:'현금영수증(수동 변경)', buyerId: phoneOptions[0]||'', phoneOptions };
+        }
       }else{
-        r.plan = { type:'tax', source:'세금계산서(수동 변경, 직접 입력 필요)', buyer:{ bizNumber:'', bizName:'', ownerName:r.row.customer||'', bizType:'', bizItem:'', email:'' } };
+        r.plan = { type:'tax', source:'세금계산서(수동 변경, 직접 입력 필요)', buyer:{ bizNumber:'', bizName:'', ownerName:r.row.customer||'', bizType:'', bizItem:'', email:'' }, note: r.row.invoiceNo||'' };
       }
       renderInvoicePrepMain();
     });
