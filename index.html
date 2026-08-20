@@ -5818,7 +5818,10 @@ async function reocrAllInspectionItems(){
   // id만 미리 뽑아두고, 실제 항목 객체는 처리 직전에 매번 다시 찾는다 —
   // 실시간 동기화로 inspectionState.items가 도중에 통째로 새 배열로 바뀔 수
   // 있어서, 미리 복사해둔 객체를 계속 쓰면 이미 낡은 참조가 될 수 있다.
-  const ids = inspectionState.items.map(it => it.id);
+  // 지금 선택된 탭(카테고리)의 파일만 대상으로 한다 — 다른 탭의 파일까지
+  // 같이 돌리면 시간도 오래 걸리고, 지금 보고 있는 목록과 진행 상황이 안 맞아
+  // 헷갈린다.
+  const ids = inspectionState.items.filter(it => it.category===inspectionState.category).map(it => it.id);
   // 매 건마다 저장하면 실시간 동기화 echo와 겹쳐서(구독은 위에서 이 동안
   // skipApply로 막아뒀지만) 저장 자체가 너무 잦아지는 것도 부담이라, 5건마다
   // 한 번씩만 모아서 저장하고 마지막에 한 번 더 저장해 남은 건을 반영한다.
