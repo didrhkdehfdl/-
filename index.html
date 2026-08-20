@@ -5649,7 +5649,12 @@ async function reocrAllInspectionItems(){
 async function ensureInspectionLoaded(){
   if(inspectionState.loaded || inspectionState.loading) return;
   inspectionState.loading = true;
-  inspectionState.items = await loadInspectionIndex();
+  const items = await loadInspectionIndex();
+  // 카테고리 구분 이전에 저장된 항목은 전부 "사급"으로 옮긴다.
+  let migratedAny = false;
+  items.forEach(it=>{ if(!it.category){ it.category = 'sagup'; migratedAny = true; } });
+  inspectionState.items = items;
+  if(migratedAny) await saveInspectionIndex(items);
   inspectionState.loading = false;
   inspectionState.loaded = true;
 }
