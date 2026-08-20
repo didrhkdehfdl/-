@@ -5804,6 +5804,7 @@ async function renderInspectionMain(){
       const item = inspectionState.items.find(it=>it.id===inp.dataset.id);
       if(!item) return;
       item.extractedName = inp.value.trim();
+      item.nameManuallyEdited = true; // 나중에 "전체 다시 인식"이 이 값을 다시 덮어쓰지 않게 표시해둔다
       await saveInspectionIndex(inspectionState.items);
       await propagateInspectionDateToPerfList(item);
       renderInspectionMain();
@@ -5814,6 +5815,7 @@ async function renderInspectionMain(){
       const item = inspectionState.items.find(it=>it.id===inp.dataset.id);
       if(!item) return;
       item.extractedDate = inp.value.trim();
+      item.dateManuallyEdited = true; // 나중에 "전체 다시 인식"이 이 값을 다시 덮어쓰지 않게 표시해둔다
       await saveInspectionIndex(inspectionState.items);
       await propagateInspectionDateToPerfList(item);
       renderInspectionMain();
