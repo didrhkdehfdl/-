@@ -1999,15 +1999,23 @@ function parseBizRegFromText(text){
 // anywhere in OCR'd text. This form only has one such date (점검년월일), so
 // a plain first-match search is more robust than trying to anchor on the
 // label text, which OCR frequently mangles or reorders.
+// 월 1~12, 일 1~31, 연도 20xx 범위를 벗어나면 진짜 날짜가 아니라 OCR이 다른
+// 숫자(일련번호 등)를 날짜 모양으로 잘못 읽은 것으로 보고 버린다 — 숫자만
+// 남기는 인식 패스는 어디를 읽었는지 위치를 가리지 않아서, "성명" 옆 코드
+// 같은 걸 "5690-26-37"처럼 날짜 형태로 잘못 뽑아내는 경우가 있었다.
+function isPlausibleInspectionDate(y, mo, d){
+  y = Number(y); mo = Number(mo); d = Number(d);
+  return y>=2000 && y<=2099 && mo>=1 && mo<=12 && d>=1 && d<=31;
+}
 function parseInspectionDateFromText(text){
   text = text || '';
   // "2026년 07월 23일" (spacing tolerant, OCR often adds/drops spaces)
   let m = text.match(/(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
-  if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+  if(m && isPlausibleInspectionDate(m[1],m[2],m[3])) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
   // "2026-07-23" / "2026.07.23" / "2026/07/23" / "2026_07_23" — some
   // certificate templates print the date this way instead of using 년/월/일.
   m = text.match(/(\d{4})[-.\/_](\d{1,2})[-.\/_](\d{1,2})/);
-  if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+  if(m && isPlausibleInspectionDate(m[1],m[2],m[3])) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
   return '';
 }
 // Finds the 대표자 성명 value: looks for the "성명" label and reads the
