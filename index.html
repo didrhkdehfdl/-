@@ -9008,6 +9008,12 @@ function createCaseFromImportRow(row, type){
       inverterBuy: inverterPrices ? inverterPrices.buy : 0,
       inverterSell: inverterPrices ? inverterPrices.sell : 0,
       structureNote: row.structureType,
+      // 부착형이면 이 뒤의 applyAttachedStructurePricing(p)이 고정 단가(3kW당
+      // 구매 187,495원/판매 220,000원)로 덮어쓴다 — 부착형이 아닐 때만 실적리스트에
+      // 실제로 적힌 구조물 구매가/판매가가 그대로 쓰인다. 50만원 상한은 그 뒤의
+      // computeProfitCase 계산 단계에서 그대로 적용된다(값의 출처와 무관).
+      structureBuy: row.structureBuy || 0,
+      structureSell: row.structureSell || 0,
       customerDeposit: row.deposit || row.totalAmount || 0,
       salesCost: (row.deposit || row.totalAmount)
         ? computeFinalSalesCost(row.deposit || row.totalAmount, row.companyPrice || computePerfCompanyPrice(row) || 0, row.extra)
@@ -9542,7 +9548,7 @@ async function exportPerfListToExcel(){
     ws['!cols'] = [{wch:5}, ...PERF_COLUMNS.map(([field])=>{
       if(['address','structureType','extraNote','note','moduleModel'].includes(field)) return {wch:26};
       if(['corp','customer','agent','team','inverterModel'].includes(field)) return {wch:14};
-      if(['totalAmount','deposit','supplyAmount','companyPrice','extra','salesCost','finalSalesCost','receivable'].includes(field)) return {wch:13};
+      if(['totalAmount','deposit','supplyAmount','companyPrice','extra','salesCost','finalSalesCost','receivable','structureBuy','structureSell'].includes(field)) return {wch:13};
       return {wch:11};
     })];
     // Freeze the header row so it stays visible while scrolling.
