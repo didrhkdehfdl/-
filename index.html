@@ -6374,6 +6374,20 @@ async function runBizRegOcrForItem(item, targetState){
     console.error(err);
     item.ocrStatus = 'error';
   }
+  // 실시간 동기화 때문에 처리 도중 targetState.items가 통째로 새 배열로
+  // 바뀌어 있을 수 있다(방금 다른 항목을 저장한 게 되돌아온 echo) — item이
+  // 더 이상 그 배열 안의 객체가 아니면, id로 지금 배열 안의 진짜 항목을
+  // 다시 찾아 결과를 옮겨 실어야 방금 낸 결과가 사라지지 않는다.
+  const target = targetState.items.find(it => it.id === item.id);
+  if(target && target !== item){
+    Object.assign(target, {
+      ocrText: item.ocrText, ocrStatus: item.ocrStatus, isCorporate: item.isCorporate,
+      bizName: item.bizName, ownerName: item.ownerName, bizNumber: item.bizNumber,
+      bizType: item.bizType, bizItem: item.bizItem, email: item.email,
+    });
+  } else if(!target){
+    targetState.items.push(item);
+  }
   await saveAgentDocsIndex(targetState.items, targetState);
   renderAgentDocsMain();
 }
