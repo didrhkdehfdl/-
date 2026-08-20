@@ -5865,7 +5865,16 @@ async function renderInspectionMain(){
     await ensureInspectionLoaded();
     if(state.activeTab !== 'inspection') return;
   }
-  const items = inspectionState.items.filter(it=>it.category===inspectionState.category);
+  // 점검년월일 기준 오름차순 정렬 — 날짜를 아직 못 읽은(공란) 건은 맨 뒤로
+  // 보낸다(날짜가 없으면 정렬 기준 자체가 없으므로).
+  const items = inspectionState.items.filter(it=>it.category===inspectionState.category)
+    .slice()
+    .sort((a,b)=>{
+      if(!a.extractedDate && !b.extractedDate) return 0;
+      if(!a.extractedDate) return 1;
+      if(!b.extractedDate) return -1;
+      return a.extractedDate < b.extractedDate ? -1 : a.extractedDate > b.extractedDate ? 1 : 0;
+    });
   const matches = items.map(it => ({ item: it, m: computeInspectionMatch(it) }));
   const matchCount = matches.filter(x => x.m.overall).length;
   const mismatchCount = items.length - matchCount;
