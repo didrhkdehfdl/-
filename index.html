@@ -6316,6 +6316,7 @@ async function ensureAgentDocsLoadedForState(targetState, isOM){
     agentDocsSubs[subKey] = subscribeListToStorage(isOM ? OM_DOCS_INDEX_KEY : AGENT_DOCS_INDEX_KEY, targetState, {
       isActive: () => state.activeTab === (isOM ? 'omTeam' : 'agentDocs'),
       render: renderAgentDocsMain,
+      skipApply: () => agentDocsOcrBatchActive,
     });
   }
   await agentDocsSubs[subKey].firstLoad;
