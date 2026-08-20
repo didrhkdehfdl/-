@@ -5764,6 +5764,7 @@ async function ensureInspectionLoaded(){
       migrate: items => { items.forEach(it=>{ if(!it.category){ it.category = 'sagup'; migratedAny = true; } }); },
       isActive: () => state.activeTab === 'inspection',
       render: renderInspectionMain,
+      skipApply: () => !!inspectionState.reocrProgress,
     });
   }
   await inspectionSub.firstLoad;
