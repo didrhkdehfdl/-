@@ -7657,6 +7657,19 @@ function buildInvoicePrepResults(){
     // 발행 처리하는 오늘 날짜를 쓴다.
     const normRow = isOM ? { ...row, totalAmount: row.amount, certDate: isoDate(new Date()) } : row;
     const plan = computeInvoicePlanForRow(normRow, agentDocsItems);
+    // O&M 리스트엔 "발행번호" 칸이 따로 있어서, 채워져 있으면 연락처보다 그걸
+    // 우선 쓴다 — 현금영수증은 발급수단번호 자리에, 세금계산서는 비고 자리에
+    // 참고용으로 들어간다(유형 판단 자체는 그대로 두고 식별 정보만 바꾼다).
+    if(isOM && row.invoiceNo && plan.type !== 'skip'){
+      if(plan.type === 'cash'){
+        plan.buyerId = row.invoiceNo;
+        plan.phoneOptions = [];
+        plan.source = `발행번호(${row.invoiceNo})`;
+      }else if(plan.type === 'tax'){
+        plan.note = row.invoiceNo;
+        plan.source = `${plan.source} · 발행번호 참고: ${row.invoiceNo}`;
+      }
+    }
     const company = matchCompanyForRow(normRow);
     return { id: row.id, row: normRow, plan, companyId: company ? company.id : null };
   });
