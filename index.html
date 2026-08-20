@@ -5868,17 +5868,24 @@ async function renderInspectionMain(){
     await ensureInspectionLoaded();
     if(state.activeTab !== 'inspection') return;
   }
-  // 점검년월일 기준 오름차순 정렬 — 날짜를 아직 못 읽은(공란) 건은 맨 뒤로
-  // 보낸다(날짜가 없으면 정렬 기준 자체가 없으므로).
-  const items = inspectionState.items.filter(it=>it.category===inspectionState.category)
-    .slice()
-    .sort((a,b)=>{
-      if(!a.extractedDate && !b.extractedDate) return 0;
-      if(!a.extractedDate) return 1;
-      if(!b.extractedDate) return -1;
-      return a.extractedDate < b.extractedDate ? -1 : a.extractedDate > b.extractedDate ? 1 : 0;
-    });
-  const matches = items.map(it => ({ item: it, m: computeInspectionMatch(it) }));
+  // 점검년월일 기준으로 정렬(방향은 sortDir로 전환)하고, mismatchPos가
+  // 켜져 있으면 불일치/일치 그룹을 위/아래로 먼저 나눈 다음 그 안에서 다시
+  // 날짜순으로 정렬한다. 날짜를 아직 못 읽은(공란) 건은 항상 맨 뒤로 보낸다.
+  let matches = inspectionState.items.filter(it=>it.category===inspectionState.category)
+    .map(it => ({ item: it, m: computeInspectionMatch(it) }));
+  matches.sort((a, b) => {
+    if(inspectionState.mismatchPos && a.m.overall !== b.m.overall){
+      const aRank = a.m.overall ? 1 : 0, bRank = b.m.overall ? 1 : 0; // 0=불일치, 1=일치
+      return inspectionState.mismatchPos === 'top' ? aRank-bRank : bRank-aRank;
+    }
+    const ad = a.item.extractedDate, bd = b.item.extractedDate;
+    if(!ad && !bd) return 0;
+    if(!ad) return 1;
+    if(!bd) return -1;
+    const cmp = ad < bd ? -1 : ad > bd ? 1 : 0;
+    return inspectionState.sortDir === 'desc' ? -cmp : cmp;
+  });
+  const items = matches.map(x => x.item);
   const matchCount = matches.filter(x => x.m.overall).length;
   const mismatchCount = items.length - matchCount;
 
