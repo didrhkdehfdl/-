@@ -8888,6 +8888,8 @@ function parseImportSheet(sheetName){
         inverterQty: parseExcelNumber(get('inverterQty')),
         team: String(get('team')||''),
         structureType: String(get('structureType')||''),
+        structureBuy: parseExcelNumber(get('structureBuy')),
+        structureSell: parseExcelNumber(get('structureSell')),
         agent: String(get('agent')||''),
         depositDate: excelDateToIso(get('depositDate')),
         deposit: parseExcelNumber(get('deposit')),
