@@ -1433,12 +1433,6 @@ async function deleteCaseStorage(id){
 }
 
 const CONTRACTS_INDEX_KEY = 'contracts-index';
-async function loadContractsIndex(){
-  try{
-    const value = await loadFileFromStorage(CONTRACTS_INDEX_KEY);
-    return value ? JSON.parse(value) : [];
-  }catch(e){ return []; }
-}
 async function saveContractsIndex(list){
   try{
     await saveFileToStorage(CONTRACTS_INDEX_KEY, JSON.stringify(list));
@@ -1764,12 +1758,6 @@ function fmtFileSize(bytes){
 }
 
 const INSPECTION_INDEX_KEY = 'inspection-index';
-async function loadInspectionIndex(){
-  try{
-    const value = await loadFileFromStorage(INSPECTION_INDEX_KEY);
-    return value ? JSON.parse(value) : [];
-  }catch(e){ return []; }
-}
 async function saveInspectionIndex(list){
   try{
     await saveFileToStorage(INSPECTION_INDEX_KEY, JSON.stringify(list));
