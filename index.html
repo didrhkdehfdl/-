@@ -5707,8 +5707,21 @@ async function runOcrForItem(item){
     console.error(err);
     item.ocrStatus = 'error';
   }
+  // 실시간 동기화 때문에 처리 도중 inspectionState.items가 통째로 새 배열로
+  // 바뀌어 있을 수 있다(방금 다른 항목을 저장한 게 되돌아온 echo) — 그러면
+  // item은 더 이상 그 배열 안의 객체가 아니라서, 그대로 저장하면 지금 낸 결과가
+  // 조용히 사라진다. id로 지금 배열 안의 진짜 항목을 다시 찾아 결과를 옮겨 싣는다.
+  const target = inspectionState.items.find(it => it.id === item.id);
+  if(target && target !== item){
+    Object.assign(target, {
+      ocrText: item.ocrText, extractedName: item.extractedName, extractedDate: item.extractedDate,
+      ocrStatus: item.ocrStatus, nameManuallyEdited: item.nameManuallyEdited, dateManuallyEdited: item.dateManuallyEdited,
+    });
+  } else if(!target){
+    inspectionState.items.push(item);
+  }
   await saveInspectionIndex(inspectionState.items);
-  await propagateInspectionDateToPerfList(item);
+  await propagateInspectionDateToPerfList(target || item);
   renderInspectionMain();
 }
 
