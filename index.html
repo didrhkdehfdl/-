@@ -8141,18 +8141,20 @@ function normalizeConcatenatedPhones(str){
   const parts = s.split(/(?=010-?\d{3,4}-?\d{4})/g).map(p=>p.trim()).filter(Boolean);
   return parts.length > 1 ? parts.join('\n') : s;
 }
+let omListSub = null;
 async function ensureOMListLoaded(){
   if(omListState.loaded || omListState.loading) return;
   omListState.loading = true;
-  try{
-    const raw = await loadFileFromStorage(OM_LIST_KEY);
-    omListState.rows = raw ? JSON.parse(raw) : [];
-  }catch(e){ omListState.rows = []; }
   let fixedAny = false;
-  omListState.rows.forEach(row=>{
-    const fixed = normalizeConcatenatedPhones(row.phone);
-    if(fixed !== row.phone){ row.phone = fixed; fixedAny = true; }
-  });
+  if(!omListSub){
+    omListSub = subscribeListToStorage(OM_LIST_KEY, omListState, {
+      field: 'rows',
+      migrate: rows => { rows.forEach(row=>{ const fixed = normalizeConcatenatedPhones(row.phone); if(fixed !== row.phone){ row.phone = fixed; fixedAny = true; } }); },
+      isActive: () => state.activeTab === 'omList',
+      render: renderOMListMain,
+    });
+  }
+  await omListSub.firstLoad;
   if(fixedAny) await saveOMListRows();
   omListState.loading = false;
   omListState.loaded = true;
