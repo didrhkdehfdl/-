@@ -5976,6 +5976,16 @@ async function renderInspectionMain(){
       renderInspectionMain();
     });
   });
+  const sortDirBtn = document.getElementById('inspectionSortDirBtn');
+  if(sortDirBtn) sortDirBtn.addEventListener('click', ()=>{
+    inspectionState.sortDir = inspectionState.sortDir==='desc' ? 'asc' : 'desc';
+    renderInspectionMain();
+  });
+  const mismatchPosBtn = document.getElementById('inspectionMismatchPosBtn');
+  if(mismatchPosBtn) mismatchPosBtn.addEventListener('click', ()=>{
+    inspectionState.mismatchPos = inspectionState.mismatchPos===null ? 'top' : inspectionState.mismatchPos==='top' ? 'bottom' : null;
+    renderInspectionMain();
+  });
 
   main.querySelectorAll('.inspection-name-input').forEach(inp=>{
     inp.addEventListener('change', async ()=>{
