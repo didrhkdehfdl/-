@@ -7700,7 +7700,7 @@ function buildTaxInvoiceWorkbook(items, supplier, itemName){
       '01', yyyymmdd(firstDateOf(row.certDate)),
       String(supplier.bizNumber||'').replace(/-/g,''), '', supplier.bizName||'', supplier.ownerName||'', supplier.address||'', supplier.bizType||'', supplier.bizItem||'', supplier.email||'',
       String(plan.buyer.bizNumber||'').replace(/-/g,''), '', plan.buyer.bizName||'', plan.buyer.ownerName||row.customer||'', row.address||'', plan.buyer.bizType||'', plan.buyer.bizItem||'', plan.buyer.email||'', '',
-      supplyAmt, vat, '',
+      supplyAmt, vat, plan.note||'',
       day, itemName, '', 1, supplyAmt, supplyAmt, vat, '',
       '','','','','','','','', '','','','','','','','', '','','','','','','','',
       '', '', '', '',
@@ -7722,7 +7722,9 @@ function buildCashReceiptWorkbook(items){
     const total = Math.round(Number(row.totalAmount)||0);
     const supplyAmt = Math.round(total/1.1);
     const vat = total - supplyAmt;
-    return ['0', String(plan.buyerId||'').replace(/[^0-9-]/g,''), total, supplyAmt, vat, `${row.customer||''} 현금영수증`];
+    // 발급수단번호는 원래 전화번호(숫자+"-")뿐이었지만, 이제 O&M의 "발행번호"가
+    // 들어올 수도 있어(영문/숫자 섞인 형식일 수 있음) 숫자만 남기지 않고 그대로 쓴다.
+    return ['0', String(plan.buyerId||'').trim(), total, supplyAmt, vat, `${row.customer||''} 현금영수증`];
   });
   const ws = XLSX.utils.aoa_to_sheet([
     ['엑셀 업로드 양식(현금영수증)'],
