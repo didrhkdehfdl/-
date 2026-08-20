@@ -1557,6 +1557,60 @@ async function saveFileToStorage(key, value, timeoutMs){
   }
 }
 
+// 여러 사람이 같이 쓰는 "목록형" 데이터(사용전점검·영업자용 서류·입금확인·계약서·
+// O&M 리스트 등)는 한 번 불러온 뒤로는 새로고침 전까지 옛날 상태로 남아있었다 —
+// 이 함수는 그 문서를 실시간으로 구독해서, 다른 사람이 저장할 때마다(내 저장 포함)
+// targetState.items를 자동으로 최신화하고, 지금 그 화면을 보고 있으면(그리고
+// 입력 칸에 포커스가 있어 타이핑을 방해하지 않는다면) 화면도 자동으로 다시 그린다.
+// 반환값의 firstLoad를 await하면 최초 1회 값이 들어올 때까지 기다릴 수 있다.
+function subscribeListToStorage(key, targetState, opts){
+  opts = opts || {};
+  let resolveFirst;
+  const firstLoad = new Promise(res => { resolveFirst = res; });
+  const settleFirst = () => { if(resolveFirst){ resolveFirst(); resolveFirst = null; } };
+  const unsub = appDataDoc(key).onSnapshot(async snap => {
+    try{
+      let raw = null;
+      if(snap && snap.exists){
+        const data = snap.data();
+        if(data.storedIn === 'storage'){
+          const url = await fileStorageRef(key).getDownloadURL();
+          const resp = await fetch(url);
+          if(!resp.ok) throw new Error(`파일 다운로드 실패 (HTTP ${resp.status})`);
+          const blob = await resp.blob();
+          raw = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+        } else {
+          raw = data.value;
+        }
+      }
+      const items = raw ? JSON.parse(raw) : [];
+      if(opts.migrate) opts.migrate(items);
+      const wasFirst = !!resolveFirst;
+      targetState.items = items;
+      settleFirst();
+      if(!wasFirst){
+        // 최초 로딩이 아니라 그 뒤에 생긴 변경(다른 사람의 저장 포함) —
+        // 지금 이 화면을 보고 있고, 입력 중이 아닐 때만 다시 그려서 타이핑을
+        // 방해하지 않는다.
+        const focusInMain = document.activeElement && document.activeElement.closest && document.activeElement.closest('#main');
+        if(!focusInMain && opts.isActive && opts.isActive() && opts.render) opts.render();
+      }
+    }catch(e){
+      console.error('subscribeListToStorage', key, e);
+      settleFirst();
+    }
+  }, err => {
+    console.error('subscribeListToStorage snapshot error', key, err);
+    settleFirst();
+  });
+  return { firstLoad, unsub };
+}
+
 // 인덱스/케이스/파일 삭제가 모두 이 하나의 함수로 통일된다 (Firestore 문서 +
 // Storage에 실제로 올라간 파일이 있다면 그것도 함께 지운다).
 async function deleteFromStorage(key){
