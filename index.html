@@ -5733,11 +5733,15 @@ async function runOcrForItem(item){
 // 텍스트를 넣어봐야 다음 렌더링에서 바로 사라진다. 대신 상태(state)에 진행
 // 상황을 저장해두고, 렌더링할 때마다 그 상태를 읽어서 버튼 글자를 만든다.
 async function reocrAllInspectionItems(){
-  const items = [...inspectionState.items];
-  for(let i=0; i<items.length; i++){
-    inspectionState.reocrProgress = { current: i+1, total: items.length };
+  // id만 미리 뽑아두고, 실제 항목 객체는 처리 직전에 매번 다시 찾는다 —
+  // 실시간 동기화로 inspectionState.items가 도중에 통째로 새 배열로 바뀔 수
+  // 있어서, 미리 복사해둔 객체를 계속 쓰면 이미 낡은 참조가 될 수 있다.
+  const ids = inspectionState.items.map(it => it.id);
+  for(let i=0; i<ids.length; i++){
+    inspectionState.reocrProgress = { current: i+1, total: ids.length };
     renderInspectionMain();
-    await runOcrForItem(items[i]);
+    const item = inspectionState.items.find(it => it.id === ids[i]);
+    if(item) await runOcrForItem(item);
   }
   inspectionState.reocrProgress = null;
   renderInspectionMain();
