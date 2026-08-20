@@ -6059,19 +6059,24 @@ const OM_DEPOSIT_CONFIRM_KEY = 'omdocs-deposit-confirm';
 let depositConfirmState = { items:[], loaded:false, loading:false };
 const depositConfirmStateDefault = depositConfirmState;
 let depositConfirmStateOM = { items:[], loaded:false, loading:false };
+const depositConfirmSubs = { default: null, om: null };
 async function ensureDepositConfirmLoaded(){
   // 로딩 중(await) 다른 탭으로 전환되면 depositConfirmState 포인터 자체가
-  // 바뀌므로, 지금 가리키는 대상을 미리 붙잡아두고 끝까지 그 객체에만
-  // 써야 한다 — 안 그러면 응답이 늦게 온 팀의 데이터가 그 사이 전환된
+  // 바뀌므로, 지금 가리키는 대상을 미리 붙잡아두고 끝까지 그 객체 기준으로
+  // 판단해야 한다 — 안 그러면 응답이 늦게 온 팀의 데이터가 그 사이 전환된
   // 다른 팀의 상태에 덮어써진다.
   const targetState = depositConfirmState;
   if(targetState.loaded || targetState.loading) return;
   targetState.loading = true;
-  const key = targetState===depositConfirmStateOM ? OM_DEPOSIT_CONFIRM_KEY : DEPOSIT_CONFIRM_KEY;
-  try{
-    const raw = await loadFileFromStorage(key);
-    targetState.items = raw ? JSON.parse(raw) : [];
-  }catch(e){ targetState.items = []; }
+  const isOM = targetState === depositConfirmStateOM;
+  const subKey = isOM ? 'om' : 'default';
+  if(!depositConfirmSubs[subKey]){
+    depositConfirmSubs[subKey] = subscribeListToStorage(isOM ? OM_DEPOSIT_CONFIRM_KEY : DEPOSIT_CONFIRM_KEY, targetState, {
+      isActive: () => (isOM ? state.activeTab==='omTeam' && agentDocsStateOM.category==='deposit' : state.activeTab==='agentDocs' && agentDocsStateDefault.category==='deposit'),
+      render: renderDepositConfirmTab,
+    });
+  }
+  await depositConfirmSubs[subKey].firstLoad;
   targetState.loading = false;
   targetState.loaded = true;
 }
