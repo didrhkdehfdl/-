@@ -5742,6 +5742,13 @@ async function renderInspectionMain(){
   document.getElementById('inspectionUploadInput').addEventListener('change', handleInspectionUpload);
   const reocrAllBtn = document.getElementById('inspectionReocrAllBtn');
   if(reocrAllBtn) reocrAllBtn.addEventListener('click', reocrAllInspectionItems);
+  main.querySelectorAll('.inspection-cat-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(inspectionState.category === btn.dataset.cat) return;
+      inspectionState.category = btn.dataset.cat;
+      renderInspectionMain();
+    });
+  });
 
   main.querySelectorAll('.inspection-name-input').forEach(inp=>{
     inp.addEventListener('change', async ()=>{
