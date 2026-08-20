@@ -6223,29 +6223,31 @@ async function renderDepositConfirmTab(){
   });
 }
 
-async function ensureAgentDocsLoaded(){
-  // 로딩 중(await) 다른 탭으로 전환되면 agentDocsState 포인터가 바뀌므로,
-  // 지금 가리키는 대상을 미리 붙잡아두고 끝까지 그 객체에만 써야 한다.
-  const targetState = agentDocsState;
-  if(targetState.loaded || targetState.loading) return;
-  targetState.loading = true;
-  targetState.items = await loadAgentDocsIndex(); // 키는 호출 시점에 즉시(동기) 계산되므로 안전
-  targetState.loading = false;
-  targetState.loaded = true;
-}
+const agentDocsSubs = { default: null, om: null };
 // 세금계산서 준비 화면처럼, 지금 활성 탭이 영업자용/O&M팀이 아니어도 특정
 // 네임스페이스의 서류 목록을 미리 불러와야 할 때 쓴다(현재 activeTab에
 // 의존하는 ensureAgentDocsLoaded/currentAgentDocsIndexKey와 달리, 대상을
-// 직접 지정해서 다른 탭에 있어도 정확한 목록을 가져올 수 있다).
+// 직접 지정해서 다른 탭에 있어도 정확한 목록을 가져올 수 있다). 실시간 구독이라
+// 다른 사람이 올린 서류도 새로고침 없이 화면에 바로 반영된다.
 async function ensureAgentDocsLoadedForState(targetState, isOM){
   if(targetState.loaded || targetState.loading) return;
   targetState.loading = true;
-  try{
-    const value = await loadFileFromStorage(isOM ? OM_DOCS_INDEX_KEY : AGENT_DOCS_INDEX_KEY);
-    targetState.items = value ? JSON.parse(value) : [];
-  }catch(e){ targetState.items = []; }
+  const subKey = isOM ? 'om' : 'default';
+  if(!agentDocsSubs[subKey]){
+    agentDocsSubs[subKey] = subscribeListToStorage(isOM ? OM_DOCS_INDEX_KEY : AGENT_DOCS_INDEX_KEY, targetState, {
+      isActive: () => state.activeTab === (isOM ? 'omTeam' : 'agentDocs'),
+      render: renderAgentDocsMain,
+    });
+  }
+  await agentDocsSubs[subKey].firstLoad;
   targetState.loading = false;
   targetState.loaded = true;
+}
+async function ensureAgentDocsLoaded(){
+  // 로딩 중(await) 다른 탭으로 전환되면 agentDocsState 포인터가 바뀌므로,
+  // 지금 가리키는 대상을 미리 붙잡아두고 끝까지 그 객체 기준으로 판단해야 한다.
+  const targetState = agentDocsState;
+  await ensureAgentDocsLoadedForState(targetState, targetState === agentDocsStateOM);
 }
 
 // Runs OCR on a 사업자등록증 upload and fills in the parsed business-info
