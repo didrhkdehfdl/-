@@ -4823,6 +4823,8 @@ const IMPORT_HEADER_MAP = [
   ['인버터수량', 'inverterQty'],
   ['시공담당자', 'team'],
   ['시공형태', 'structureType'],
+  ['구조물구매가', 'structureBuy'],
+  ['구조물판매가', 'structureSell'],
   ['계약일자', 'contractDate'],
   ['계약법인', 'corp'],
   ['시공일자', 'date'],
@@ -4861,6 +4863,8 @@ const PERF_COLUMNS = [
   ['inverterQty','인버터 수량','number'],
   ['team','시공담당자','team'],
   ['structureType','시공형태','text'],
+  ['structureBuy','구조물 구매가','number'],
+  ['structureSell','구조물 판매가','number'],
   ['agent','영업자','text'],
   ['contractDate','계약일자','date'],
   ['depositDate','입금일자','multidate'],
@@ -4885,7 +4889,7 @@ const PERF_COLUMNS = [
 const PERF_COLUMN_WIDTH = {
   corp:3.5, date:3.5, customer:6, phone:8, rrn:6, address:15, capacity:4.5,
   totalAmount:5, moduleModel:12, moduleQty:2.2, inverterModel:3.5, inverterQty:2.2,
-  team:3, structureType:26, agent:3, contractDate:3.5, depositDate:3.5, deposit:5,
+  team:3, structureType:26, structureBuy:5, structureSell:5, agent:3, contractDate:3.5, depositDate:3.5, deposit:5,
   receivable:4.5, certDate:3.5, taxTarget:2.5, taxDate:3.5, supplyAmount:5,
   companyPrice:5, extra:4, salesCost:4, finalSalesCost:4.5, payDate:3.5,
   extraNote:10, note:10
