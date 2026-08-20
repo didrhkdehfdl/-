@@ -5700,15 +5700,21 @@ async function reocrAllInspectionItems(){
   if(btn) btn.textContent = '🔄 전체 다시 인식';
 }
 
+let inspectionSub = null;
 async function ensureInspectionLoaded(){
   if(inspectionState.loaded || inspectionState.loading) return;
   inspectionState.loading = true;
-  const items = await loadInspectionIndex();
-  // 카테고리 구분 이전에 저장된 항목은 전부 "사급"으로 옮긴다.
   let migratedAny = false;
-  items.forEach(it=>{ if(!it.category){ it.category = 'sagup'; migratedAny = true; } });
-  inspectionState.items = items;
-  if(migratedAny) await saveInspectionIndex(items);
+  if(!inspectionSub){
+    inspectionSub = subscribeListToStorage(INSPECTION_INDEX_KEY, inspectionState, {
+      // 카테고리 구분 이전에 저장된 항목은 전부 "사급"으로 옮긴다.
+      migrate: items => { items.forEach(it=>{ if(!it.category){ it.category = 'sagup'; migratedAny = true; } }); },
+      isActive: () => state.activeTab === 'inspection',
+      render: renderInspectionMain,
+    });
+  }
+  await inspectionSub.firstLoad;
+  if(migratedAny) await saveInspectionIndex(inspectionState.items);
   inspectionState.loading = false;
   inspectionState.loaded = true;
 }
