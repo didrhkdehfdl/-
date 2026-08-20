@@ -5666,7 +5666,7 @@ async function renderInspectionMain(){
     await ensureInspectionLoaded();
     if(state.activeTab !== 'inspection') return;
   }
-  const items = inspectionState.items;
+  const items = inspectionState.items.filter(it=>it.category===inspectionState.category);
   const matches = items.map(it => ({ item: it, m: computeInspectionMatch(it) }));
   const matchCount = matches.filter(x => x.m.overall).length;
   const mismatchCount = items.length - matchCount;
@@ -5679,6 +5679,11 @@ async function renderInspectionMain(){
       어느 쪽이 다른지 표에 바로 안내됩니다. 자동 인식이 틀렸다면 표에서 직접 값을 고칠 수 있고, 일치 여부는 바로 다시 계산됩니다.
       일치로 확정된 건은 점검년월일이 같은 고객명의 실적리스트 필증일자 칸에 자동으로 채워집니다.
     </p>
+    <div style="display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; width:fit-content; margin-bottom:16px;">
+      ${INSPECTION_CATEGORIES.map(c => `
+        <button class="inspection-cat-btn" data-cat="${c.key}" style="padding:9px 16px; font-size:12.5px; border:none; ${c.key!==INSPECTION_CATEGORIES[0].key?'border-left:1px solid var(--line);':''} cursor:pointer; background:${inspectionState.category===c.key?'var(--panel-2)':'transparent'}; color:${inspectionState.category===c.key?'var(--gold)':'var(--muted)'};">${c.label}</button>
+      `).join('')}
+    </div>
     <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:16px;">
       <input type="file" id="inspectionUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
       ${items.length>0 ? `<button id="inspectionReocrAllBtn" style="font-size:12px; padding:8px 14px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">🔄 전체 다시 인식</button>` : ''}
