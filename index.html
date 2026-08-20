@@ -5729,7 +5729,7 @@ async function runOcrForItem(item, skipSave){
   } else if(!target){
     inspectionState.items.push(item);
   }
-  await saveInspectionIndex(inspectionState.items);
+  if(!skipSave) await saveInspectionIndex(inspectionState.items);
   await propagateInspectionDateToPerfList(target || item);
   renderInspectionMain();
 }
