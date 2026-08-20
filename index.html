@@ -7616,7 +7616,7 @@ function matchCompanyForRow(row){
 function computeInvoicePlanForRow(row, agentDocsItems){
   const bizDoc = findAgentDoc(row.customer, 'bizreg', agentDocsItems);
   if(bizDoc && bizDoc.bizNumber){
-    return { type:'tax', source:'사업자등록증', buyer:{
+    return { type:'tax', source:bizDoc.bizNumber, buyer:{
       bizNumber: bizDoc.bizNumber, bizName: bizDoc.bizName||'', ownerName: bizDoc.ownerName||row.customer,
       bizType: bizDoc.bizType||'', bizItem: bizDoc.bizItem||'', email: bizDoc.email||''
     }};
@@ -7633,7 +7633,7 @@ function computeInvoicePlanForRow(row, agentDocsItems){
     return { type:'skip', reason:'법인인데 사업자등록증이 없음' };
   }
   if(row.rrn){
-    return { type:'tax', source:'주민등록번호(개인)', buyer:{ bizNumber: row.rrn, ownerName: row.customer } };
+    return { type:'tax', source:row.rrn, buyer:{ bizNumber: row.rrn, ownerName: row.customer } };
   }
   // 사업자등록증도, 현금영수증 체크된 계약서도, 주민번호도 없으면(O&M 리스트가
   // 특히 그렇다 — 주민번호 항목 자체가 없음) 연락처가 있는 한 기본은 현금영수증으로
