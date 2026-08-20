@@ -6303,6 +6303,10 @@ async function renderDepositConfirmTab(){
 }
 
 const agentDocsSubs = { default: null, om: null };
+// 업로드 후 연달아 여러 건 OCR을 돌릴 때, 그 사이 저장이 실시간 동기화 echo와
+// 겹쳐 다른 항목이 사라지는 걸 막기 위한 플래그 — subscribeListToStorage의
+// skipApply에서 참조한다.
+let agentDocsOcrBatchActive = false;
 // 세금계산서 준비 화면처럼, 지금 활성 탭이 영업자용/O&M팀이 아니어도 특정
 // 네임스페이스의 서류 목록을 미리 불러와야 할 때 쓴다(현재 activeTab에
 // 의존하는 ensureAgentDocsLoaded/currentAgentDocsIndexKey와 달리, 대상을
@@ -6474,8 +6478,13 @@ async function handleAgentDocUpload(e){
   if(skipped.length){
     alert(`다음 파일은 저장하지 못했습니다:\n${skipped.join('\n')}`);
   }
-  for(const item of newBizregItems){
-    await runBizRegOcrForItem(item, targetState);
+  agentDocsOcrBatchActive = true;
+  try{
+    for(const item of newBizregItems){
+      await runBizRegOcrForItem(item, targetState);
+    }
+  } finally {
+    agentDocsOcrBatchActive = false;
   }
 }
 
