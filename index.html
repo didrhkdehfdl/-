@@ -9338,18 +9338,32 @@ function scanForResizableTables(){
     if(!t.dataset.resizeInit) initResizableTable(t);
   });
 }
+// 표 안의 textarea는 내용이 길어져도 안에서 스크롤되지 않고, 셀 자체(행 높이)가
+// 늘어나도록 내용에 맞춰 높이를 자동으로 키운다.
+function autoResizeTextarea(el){
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+function autoResizeAllTextareas(){
+  document.querySelectorAll('#main td textarea').forEach(autoResizeTextarea);
+}
+document.addEventListener('input', (e)=>{
+  if(e.target.tagName === 'TEXTAREA' && e.target.closest('#main td')) autoResizeTextarea(e.target);
+});
 let resizeTablesRAF = null;
 const resizableTablesObserver = new MutationObserver(()=>{
   if(resizeTablesRAF) return;
   resizeTablesRAF = requestAnimationFrame(()=>{
     resizeTablesRAF = null;
     scanForResizableTables();
+    autoResizeAllTextareas();
   });
 });
 const resizableTablesRoot = document.getElementById('main');
 if(resizableTablesRoot){
   resizableTablesObserver.observe(resizableTablesRoot, { childList:true, subtree:true });
   scanForResizableTables();
+  autoResizeAllTextareas();
 }
 
 function loadScript(src){
