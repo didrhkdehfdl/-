@@ -5732,36 +5732,21 @@ async function runOcrForItem(item, skipSave){
       // 비슷한 다른 문자(예: 2와 9)를 헷갈리기 쉬운데, 인식 대상을 숫자와
       // "년월일"로만 제한하면 훨씬 정확해진다.
       if(!item.dateManuallyEdited){
-        // 가장 정확한 방법: 전체 페이지 인식 결과에서 "년"과 "일"이 같이 있는
-        // 줄(=점검년월일 줄)의 위치를 찾아, 그 줄만 잘라 3.5배로 확대한 뒤
-        // 숫자만 다시 인식한다 — 페이지 전체를 한 번에 읽을 때보다 숫자 하나가
-        // 차지하는 픽셀이 훨씬 커져서 2/9, 1/7처럼 비슷하게 생긴 숫자를 훨씬
-        // 잘 구분한다.
-        let cropDateText = '';
-        try{
-          const lines = (result.data.lines) || [];
-          const dateLine = lines.find(l => l.text && /년/.test(l.text) && /일/.test(l.text));
-          if(dateLine && dateLine.bbox){
-            const cropped = cropAndUpscaleCanvas(canvas, dateLine.bbox, 3.5);
-            if(cropped){
-              await worker.setParameters({ tessedit_pageseg_mode: '7', tessedit_char_whitelist: '0123456789년월일 .-_' });
-              const cropResult = await withTimeout(worker.recognize(cropped), 20000);
-              if(cropResult && cropResult.data.text) cropDateText = cropResult.data.text;
-            }
-          }
-        }catch(e){ /* 실패하면 그냥 기존 방식(전체 페이지 인식)으로 넘어간다 */ }
+        // (줄 단위로 잘라 확대해서 다시 읽는 방식을 시도했었는데, bbox 좌표가
+        // 캔버스 기준과 안 맞았는지 오히려 완전히 엉뚱한 값이 나와서 되돌렸다.)
         let dateText = text;
         try{
           await worker.setParameters({ tessedit_pageseg_mode: '6', tessedit_char_whitelist: '0123456789년월일 .-_' });
           const dateResult = await withTimeout(worker.recognize(canvas), 45000);
           if(dateResult && dateResult.data.text) dateText = dateResult.data.text;
         }catch(e){ /* 실패하면 그냥 기존 일반 인식 결과로 날짜를 찾는다 */ }
-        // 우선순위: ① 날짜 줄만 확대해서 다시 읽은 결과(가장 정확) → ② 전체
-        // 페이지 일반 인식 결과 → ③ 전체 페이지 숫자 전용 인식 결과. ②·③은
-        // 페이지 전체를 다시 읽는 거라 완전히 다른(더 틀린) 값을 내놓는 경우도
-        // 확인됐지만, 그럴듯한 범위(1~12월, 1~31일) 안에 들면 그대로 채택되는
-        // 문제가 있어 순서를 이렇게 정했다.
-        item.extractedDate = parseInspectionDateFromText(cropDateText) || parseInspectionDateFromText(text) || parseInspectionDateFromText(dateText);
+        // 숫자만 다시 읽는 이 두 번째 패스는 이미지를 처음부터 다시(별도로)
+        // 인식하는 거라, 숫자 구분은 더 정확할 때도 있지만 완전히 다른(더
+        // 틀린) 값을 내놓는 경우도 실제로 확인됐다 — 그런데도 그럴듯한
+        // 범위(1~12월, 1~31일) 안에 들면 그대로 채택돼 사람 눈에 정확한 일반
+        // 인식 결과보다 우선시되는 문제가 있었다. 그래서 일반 인식 결과를
+        // 먼저 신뢰하고, 거기서 못 찾았을 때만 숫자 전용 패스로 보완한다.
+        item.extractedDate = parseInspectionDateFromText(text) || parseInspectionDateFromText(dateText);
       }
       item.ocrStatus = (item.extractedName || item.extractedDate) ? 'done' : 'unrecognized';
     } finally {
