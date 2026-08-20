@@ -1585,7 +1585,7 @@ function subscribeListToStorage(key, targetState, opts){
       const items = raw ? JSON.parse(raw) : [];
       if(opts.migrate) opts.migrate(items);
       const wasFirst = !!resolveFirst;
-      targetState.items = items;
+      targetState[opts.field || 'items'] = items;
       settleFirst();
       if(!wasFirst){
         // 최초 로딩이 아니라 그 뒤에 생긴 변경(다른 사람의 저장 포함) —
