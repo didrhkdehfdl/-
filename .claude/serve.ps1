@@ -1,4 +1,4 @@
-$root = "C:\Users\여분\Downloads\업무효율화"
+$root = Split-Path -Parent $PSScriptRoot
 $port = 8791
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$port/")

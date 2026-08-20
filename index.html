@@ -5717,7 +5717,13 @@ async function runOcrForItem(item, skipSave){
           const dateResult = await withTimeout(worker.recognize(canvas), 45000);
           if(dateResult && dateResult.data.text) dateText = dateResult.data.text;
         }catch(e){ /* 실패하면 그냥 기존 일반 인식 결과로 날짜를 찾는다 */ }
-        item.extractedDate = parseInspectionDateFromText(dateText) || parseInspectionDateFromText(text);
+        // 숫자만 다시 읽는 이 두 번째 패스는 이미지를 처음부터 다시(별도로)
+        // 인식하는 거라, 숫자 구분은 더 정확할 때도 있지만 완전히 다른(더
+        // 틀린) 값을 내놓는 경우도 실제로 확인됐다 — 그런데도 그럴듯한
+        // 범위(1~12월, 1~31일) 안에 들면 그대로 채택돼 사람 눈에 정확한 일반
+        // 인식 결과보다 우선시되는 문제가 있었다. 그래서 일반 인식 결과를
+        // 먼저 신뢰하고, 거기서 못 찾았을 때만 숫자 전용 패스로 보완한다.
+        item.extractedDate = parseInspectionDateFromText(text) || parseInspectionDateFromText(dateText);
       }
       item.ocrStatus = (item.extractedName || item.extractedDate) ? 'done' : 'unrecognized';
     } finally {
