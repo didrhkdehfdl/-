@@ -4977,10 +4977,17 @@ function parseExcelNumber(v){
 
 // ---------- 계약서 (contracts) tab ----------
 
+let contractsSub = null;
 async function ensureContractsLoaded(){
   if(contractsState.loaded || contractsState.loading) return;
   contractsState.loading = true;
-  contractsState.items = await loadContractsIndex();
+  if(!contractsSub){
+    contractsSub = subscribeListToStorage(CONTRACTS_INDEX_KEY, contractsState, {
+      isActive: () => state.activeTab === 'contracts',
+      render: renderContractsMain,
+    });
+  }
+  await contractsSub.firstLoad;
   contractsState.loading = false;
   contractsState.loaded = true;
 }
