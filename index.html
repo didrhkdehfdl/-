@@ -5666,27 +5666,6 @@ function estimateSkewAngle(canvas){
   return bestAngle;
 }
 
-// 큰 캔버스에서 한 줄(bbox)만 잘라내어 훨씬 크게 확대한 새 캔버스를 만든다.
-// 전체 페이지를 한 번에 인식하면 숫자 하나가 차지하는 실제 픽셀 수가 적어서
-// 2/9, 1/7처럼 생김새가 비슷한 숫자를 헷갈리기 쉬운데, 그 줄만 잘라 3~4배로
-// 키워서 다시 인식하면 같은 이미지라도 훨씬 잘 읽힌다.
-function cropAndUpscaleCanvas(canvas, bbox, scaleFactor){
-  const padY = Math.max(4, Math.round((bbox.y1-bbox.y0)*0.4));
-  const padX = Math.max(4, Math.round((bbox.y1-bbox.y0)*0.6));
-  const x0 = Math.max(0, bbox.x0 - padX), y0 = Math.max(0, bbox.y0 - padY);
-  const x1 = Math.min(canvas.width, bbox.x1 + padX), y1 = Math.min(canvas.height, bbox.y1 + padY);
-  const w = x1 - x0, h = y1 - y0;
-  if(w <= 0 || h <= 0) return null;
-  const out = document.createElement('canvas');
-  out.width = Math.round(w * scaleFactor);
-  out.height = Math.round(h * scaleFactor);
-  const ctx = out.getContext('2d');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(canvas, x0, y0, w, h, 0, 0, out.width, out.height);
-  return out;
-}
-
 // Runs OCR on one 사용전점검 확인증 upload (PDF or image) and fills in the
 // item's extracted 대표자 성명 / 점검년월일 fields. Always leaves the item
 // in a usable state — on any failure it just marks the fields unrecognized
