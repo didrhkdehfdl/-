@@ -5715,14 +5715,19 @@ async function runOcrForItem(item){
 // Re-runs OCR for every uploaded 사용전점검 확인증 one at a time (not in
 // parallel, to keep the client-side OCR engine's CPU/memory use reasonable
 // — mirrors how a fresh batch upload is processed).
+// runOcrForItem이 항목 하나 처리할 때마다 renderInspectionMain()을 다시 그려서
+// 버튼 DOM 자체가 매번 새로 만들어진다 — 그래서 btn 변수에 직접 진행 상황
+// 텍스트를 넣어봐야 다음 렌더링에서 바로 사라진다. 대신 상태(state)에 진행
+// 상황을 저장해두고, 렌더링할 때마다 그 상태를 읽어서 버튼 글자를 만든다.
 async function reocrAllInspectionItems(){
-  const btn = document.getElementById('inspectionReocrAllBtn');
   const items = [...inspectionState.items];
   for(let i=0; i<items.length; i++){
-    if(btn) btn.textContent = `🔄 다시 인식 중… (${i+1}/${items.length})`;
+    inspectionState.reocrProgress = { current: i+1, total: items.length };
+    renderInspectionMain();
     await runOcrForItem(items[i]);
   }
-  if(btn) btn.textContent = '🔄 전체 다시 인식';
+  inspectionState.reocrProgress = null;
+  renderInspectionMain();
 }
 
 let inspectionSub = null;
