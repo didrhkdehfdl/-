@@ -5767,12 +5767,14 @@ async function renderInspectionMain(){
               : (m.manual ? `<button class="inspection-unforce-btn" data-id="${item.id}" style="margin-top:4px; font-size:10.5px; padding:3px 7px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">자동판정으로</button>` : '');
             const nameNote = item.extractedName && !m.nameMatch ? `<div style="font-size:10.5px; color:var(--neg);">이름 불일치</div>` : '';
             const dateNote = item.extractedDate && !m.dateMatch ? `<div style="font-size:10.5px; color:var(--neg);">날짜 불일치</div>` : '';
+            const nameManualNote = item.nameManuallyEdited ? `<div style="font-size:10.5px; color:var(--gold);">직접 수정됨(재인식해도 안 바뀜)</div>` : '';
+            const dateManualNote = item.dateManuallyEdited ? `<div style="font-size:10.5px; color:var(--gold);">직접 수정됨(재인식해도 안 바뀜)</div>` : '';
             return `
             <tr data-id="${item.id}">
               <td style="padding:7px 6px; font-size:13px;">${escapeHtml(item.fileName)}<div style="font-size:10.5px; color:var(--muted);">${fmtFileSize(item.size||0)}</div></td>
               <td style="padding:7px 6px;">
                 <input type="text" class="inspection-name-input" data-id="${item.id}" value="${escapeHtml(item.extractedName||'')}" placeholder="인식 실패" style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:6px 8px; color:var(--text); font-size:12.5px;">
-                ${nameNote}
+                ${nameNote}${nameManualNote}
               </td>
               <td style="padding:7px 6px;">
                 <input type="text" class="inspection-date-input" data-id="${item.id}" value="${escapeHtml(item.extractedDate||'')}" placeholder="YYYY-MM-DD" style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:6px 8px; color:var(--text); font-size:12.5px;">
