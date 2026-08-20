@@ -5815,6 +5815,7 @@ async function renderInspectionMain(){
               <td style="padding:7px 6px; text-align:center;">${statusHtml}${toggleMatchBtn ? `<div>${toggleMatchBtn}</div>` : ''}</td>
               <td style="padding:7px 6px; white-space:nowrap;">
                 <button class="inspection-reocr-btn" data-id="${item.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">다시 인식</button>
+                <button class="inspection-ocrtext-btn" data-id="${item.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">원문 보기</button>
                 <button class="inspection-view-btn" data-id="${item.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">보기</button>
                 <button class="inspection-del-btn" data-id="${item.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button>
               </td>
