@@ -4700,7 +4700,17 @@ function renderProfitMain(){
     if(module2Prices){ p.module2Buy = module2Prices.buy; p.module2Sell = module2Prices.sell; }
     const inverterPrices = PROFIT_INVERTER_PRICES[String(p.inverterModel||'').trim()];
     if(inverterPrices){ p.inverterBuy = inverterPrices.buy; p.inverterSell = inverterPrices.sell; }
-    applyAttachedStructurePricing(p);
+    const isAttachedStructure = applyAttachedStructurePricing(p);
+    if(!isAttachedStructure){
+      // 부착형이 아니면, 업로드해둔 사급 실적리스트에서 같은 고객명의 구조물
+      // 구매가/판매가를 찾아 그대로 가져온다 — 50만원 상한은 이후 계산 단계
+      // (computeProfitCase)에서 항상 그대로 적용되므로 여기서는 값만 옮긴다.
+      const importRow = (importState.rows||[]).find(r => String(r.customer||'').trim() === String(p.customer||'').trim());
+      if(importRow && (importRow.structureBuy || importRow.structureSell)){
+        p.structureBuy = Number(importRow.structureBuy)||0;
+        p.structureSell = Number(importRow.structureSell)||0;
+      }
+    }
     const price = computePerfCompanyPrice({ moduleModel: p.moduleModel, structureType: p.structureNote, capacityKw: p.capacityKw });
     if(price !== null) p.depositPrice = price;
     p.constructionCost = computeConstructionCost(p.capacityKw);
