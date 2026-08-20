@@ -5776,7 +5776,7 @@ async function renderInspectionMain(){
     </div>
     <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:16px;">
       <input type="file" id="inspectionUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
-      ${items.length>0 ? `<button id="inspectionReocrAllBtn" style="font-size:12px; padding:8px 14px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">🔄 전체 다시 인식</button>` : ''}
+      ${items.length>0 ? `<button id="inspectionReocrAllBtn" ${inspectionState.reocrProgress?'disabled':''} style="font-size:12px; padding:8px 14px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">${inspectionState.reocrProgress ? `🔄 다시 인식 중… (${inspectionState.reocrProgress.current}/${inspectionState.reocrProgress.total})` : '🔄 전체 다시 인식'}</button>` : ''}
       <div style="display:flex; gap:8px; font-size:13px; font-weight:600;">
         <span style="padding:6px 12px; border-radius:6px; background:rgba(47,125,92,.15); color:var(--pos);">✓ 일치 ${matchCount}건</span>
         <span style="padding:6px 12px; border-radius:6px; background:rgba(178,59,46,.15); color:var(--neg);">✕ 불일치 ${mismatchCount}건</span>
