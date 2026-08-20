@@ -5827,6 +5827,9 @@ async function renderInspectionMain(){
 async function handleInspectionUpload(e){
   const files = [...(e.target.files||[])];
   if(files.length===0) return;
+  // 업로드 도중(await) 다른 카테고리 탭으로 바뀌어도, 지금 누른 탭 기준으로
+  // 분류되도록 시작 시점의 카테고리를 미리 붙잡아둔다.
+  const targetCategory = inspectionState.category;
   const MAX_BYTES = 3.5*1024*1024; // see contracts upload for why (base64 inflates ~33%, storage cap is 5MB)
   const skipped = [];
   const newItems = [];
@@ -5849,7 +5852,7 @@ async function handleInspectionUpload(e){
       const id = rid();
       const saveResult = await saveInspectionFileData(id, base64);
       if(!saveResult.ok){ skipped.push(`${file.name} (저장 실패: ${saveResult.reason})`); continue; }
-      const item = { id, fileName: file.name, size: file.size, mime: file.type, extractedName:'', extractedDate:'', ocrStatus:'pending' };
+      const item = { id, fileName: file.name, size: file.size, mime: file.type, extractedName:'', extractedDate:'', ocrStatus:'pending', category: targetCategory };
       inspectionState.items.push(item);
       newItems.push(item);
     }catch(err){
