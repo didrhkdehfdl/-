@@ -1800,12 +1800,6 @@ const OM_DOCS_INDEX_KEY = 'omdocs-index';
 function currentAgentDocsIndexKey(){
   return agentDocsState === agentDocsStateOM ? OM_DOCS_INDEX_KEY : AGENT_DOCS_INDEX_KEY;
 }
-async function loadAgentDocsIndex(){
-  try{
-    const value = await loadFileFromStorage(currentAgentDocsIndexKey());
-    return value ? JSON.parse(value) : [];
-  }catch(e){ return []; }
-}
 // targetState를 넘기면 그 네임스페이스(영업자용/O&M팀)의 저장 위치로 확정해서
 // 저장한다 — 안 넘기면(기존 동작) 호출 시점의 현재 탭 기준으로 저장한다.
 // await를 거치는 흐름(업로드/OCR)에서는 반드시 targetState를 넘겨야, 저장
