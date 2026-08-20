@@ -2009,8 +2009,11 @@ function isPlausibleInspectionDate(y, mo, d){
 }
 function parseInspectionDateFromText(text){
   text = text || '';
-  // "2026년 07월 23일" (spacing tolerant, OCR often adds/drops spaces)
-  let m = text.match(/(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  // "2026년 07월 23일" (spacing tolerant, OCR often adds/drops spaces).
+  // "월"을 literal로 요구하면 OCR이 이걸 받침만 다른 비슷한 글자(원/웜/윌
+  // 등)로 잘못 읽었을 때 통째로 매칭에 실패한다 — 앞뒤로 "년"과 "일"이라는
+  // 확실한 숫자 앵커가 있으니, 그 사이 글자는 뭐가 오든 크게 상관없다.
+  let m = text.match(/(\d{4})\s*년\s*(\d{1,2})\s*.{0,2}\s*(\d{1,2})\s*일/);
   if(m && isPlausibleInspectionDate(m[1],m[2],m[3])) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
   // "2026-07-23" / "2026.07.23" / "2026/07/23" / "2026_07_23" — some
   // certificate templates print the date this way instead of using 년/월/일.
