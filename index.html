@@ -5778,7 +5778,7 @@ async function renderInspectionMain(){
               </td>
               <td style="padding:7px 6px;">
                 <input type="text" class="inspection-date-input" data-id="${item.id}" value="${escapeHtml(item.extractedDate||'')}" placeholder="YYYY-MM-DD" style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:6px 8px; color:var(--text); font-size:12.5px;">
-                ${dateNote}
+                ${dateNote}${dateManualNote}
               </td>
               <td style="padding:7px 6px; text-align:center;">${statusHtml}${toggleMatchBtn ? `<div>${toggleMatchBtn}</div>` : ''}</td>
               <td style="padding:7px 6px; white-space:nowrap;">
