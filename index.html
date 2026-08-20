@@ -534,7 +534,7 @@ const INSPECTION_CATEGORIES = [
   { key:'gyeonggi', label:'경기도주택지원' },
   { key:'housing', label:'주택지원' },
 ];
-let inspectionState = { items:[], loaded:false, loading:false, category:'sagup' };
+let inspectionState = { items:[], loaded:false, loading:false, category:'sagup', reocrProgress:null };
 const inspectionFileCache = {}; // id -> base64 file content, loaded lazily from storage
 let agentDocsState = { category:'contract', items:[], loaded:false, loading:false };
 // O&M팀 탭은 영업자용과 화면/기능은 완전히 같지만 데이터는 별도로 관리한다.
