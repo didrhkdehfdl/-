@@ -5885,6 +5885,12 @@ async function renderInspectionMain(){
       if(item) runOcrForItem(item);
     });
   });
+  main.querySelectorAll('.inspection-ocrtext-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const item = inspectionState.items.find(it=>it.id===btn.dataset.id);
+      if(item) showTextPreviewOverlay(item.ocrText, `인식된 원문 — ${item.fileName}`);
+    });
+  });
   main.querySelectorAll('.inspection-view-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const item = inspectionState.items.find(it=>it.id===btn.dataset.id);
