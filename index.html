@@ -526,7 +526,15 @@ let state = { cases: [], activeId: null, activeTab: 'sales', profitView: 'detail
 let importState = { mode:'upload', fileName:'', sheetNames:[], sheetName:'', rows:[], search:'', loading:false, error:'', manualRows:[], selected:new Set(), selectedManual:new Set() };
 let contractsState = { items:[], selected:new Set(), loaded:false, loading:false, sortOrder:'asc' };
 const contractFileCache = {}; // id -> base64 PDF content, loaded lazily from storage
-let inspectionState = { items:[], loaded:false, loading:false };
+// 사급/경기도주택지원/주택지원 세 가지를 한 목록 안에서 category로 나눠 관리한다
+// (영업자용의 서류 분류 탭과 같은 방식) — 파일마다 별도 저장 위치를 두지 않고,
+// 하나의 인덱스에 category만 붙여서 필터링한다.
+const INSPECTION_CATEGORIES = [
+  { key:'sagup', label:'사급' },
+  { key:'gyeonggi', label:'경기도주택지원' },
+  { key:'housing', label:'주택지원' },
+];
+let inspectionState = { items:[], loaded:false, loading:false, category:'sagup' };
 const inspectionFileCache = {}; // id -> base64 file content, loaded lazily from storage
 let agentDocsState = { category:'contract', items:[], loaded:false, loading:false };
 // O&M팀 탭은 영업자용과 화면/기능은 완전히 같지만 데이터는 별도로 관리한다.
