@@ -5746,12 +5746,18 @@ async function reocrAllInspectionItems(){
   // 실시간 동기화로 inspectionState.items가 도중에 통째로 새 배열로 바뀔 수
   // 있어서, 미리 복사해둔 객체를 계속 쓰면 이미 낡은 참조가 될 수 있다.
   const ids = inspectionState.items.map(it => it.id);
+  // 매 건마다 저장하면 실시간 동기화 echo와 겹쳐서(구독은 위에서 이 동안
+  // skipApply로 막아뒀지만) 저장 자체가 너무 잦아지는 것도 부담이라, 5건마다
+  // 한 번씩만 모아서 저장하고 마지막에 한 번 더 저장해 남은 건을 반영한다.
+  const SAVE_EVERY = 5;
   for(let i=0; i<ids.length; i++){
     inspectionState.reocrProgress = { current: i+1, total: ids.length };
     renderInspectionMain();
     const item = inspectionState.items.find(it => it.id === ids[i]);
-    if(item) await runOcrForItem(item);
+    if(item) await runOcrForItem(item, true);
+    if((i+1) % SAVE_EVERY === 0) await saveInspectionIndex(inspectionState.items);
   }
+  await saveInspectionIndex(inspectionState.items);
   inspectionState.reocrProgress = null;
   renderInspectionMain();
 }
