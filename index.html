@@ -7080,6 +7080,227 @@ function renderModulePricesMain(){
   });
 }
 
+// ---------- 문의 대응 (카카오톡 문의 대화 가져오기) ----------
+// "정부사업 전달방" 같은 단체 카카오톡방에서 내보낸 .txt 대화 파일을 올리면,
+// 메시지마다 적혀있는 지역/질문/성함(고객)/연락처를 자동으로 뽑아 표로 만든다.
+// 사람마다 [사급 문의]/*사급문의*/<사급문의> 처럼 표기가 다르고, "1. 지역 :"
+// 식 번호매기기와 "성함 :" 식 라벨이 섞여 있어 최대한 관대하게 파싱한다 —
+// 자동 인식이 틀린 항목은 표에서 바로 고칠 수 있다.
+const INQUIRY_KEY = 'inquiry-list';
+let inquiryState = { items:[], loaded:false, loading:false, search:'', page:1, importMsg:'' };
+const INQUIRY_PAGE_SIZE = 50;
+const INQUIRY_DATE_RE = /^-+\s*(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/;
+const INQUIRY_HEADER_RE = /^\[(.+?)\]\s*\[((?:오전|오후)\s*\d{1,2}:\d{2})\]\s*(.*)$/;
+const INQUIRY_PHONE_RE = /0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}/;
+const INQUIRY_LABEL_RE = /^(?:\d+\.\s*)?(지역|위치|주소|설치주소|성함|고객|이름|연락처|전화번호|전화|휴대폰|질문|문의내용|내용)\s*[:：]\s*(.*)$/;
+function parseKakaoInquiryText(text){
+  const lines = text.split(/\r?\n/);
+  const records = [];
+  let curDate = '', curSender = '', curTime = '', curTag = '';
+  let blockLines = [];
+  function flush(){
+    if(!blockLines.length) return;
+    const fields = {};
+    const extraLines = [];
+    for(const ln of blockLines){
+      const m = INQUIRY_LABEL_RE.exec(ln.trim());
+      if(m){
+        if(!(m[1] in fields)) fields[m[1]] = m[2].trim();
+      } else if(ln.trim()){
+        extraLines.push(ln.trim());
+      }
+    }
+    const fullText = blockLines.join('\n');
+    const region = fields['지역'] || fields['위치'] || fields['주소'] || fields['설치주소'] || '';
+    const question = fields['질문'] || curTag || (fields['문의내용']||'').slice(0,30) || '';
+    const phoneSource = fields['전화'] || fields['연락처'] || fields['전화번호'] || fields['휴대폰'] || '';
+    let name = fields['성함'] || fields['고객'] || fields['이름'] || '';
+    const phoneMatch = INQUIRY_PHONE_RE.exec(phoneSource) || INQUIRY_PHONE_RE.exec(fullText);
+    const phone = phoneMatch ? phoneMatch[0] : '';
+    if(!name && phoneSource){
+      const stripped = phoneSource.replace(INQUIRY_PHONE_RE, '').trim().replace(/^[\/\-\s]+|[\/\-\s]+$/g, '');
+      if(stripped) name = stripped;
+    }
+    let detail = fields['내용'] || fields['문의내용'] || '';
+    if(!detail && extraLines.length) detail = extraLines.join(' ');
+    const hasStructured = !!(region || fields['질문'] || name || phone);
+    if(hasStructured){
+      records.push({
+        id: rid(), date: curDate, sender: curSender, region, question,
+        customer: name, phone, detail: detail.slice(0,300),
+      });
+    }
+    blockLines = [];
+  }
+  for(const raw of lines){
+    const ln = raw.replace(/\s+$/,'');
+    const dm = INQUIRY_DATE_RE.exec(ln);
+    if(dm){
+      flush();
+      curDate = `${dm[1]}-${String(dm[2]).padStart(2,'0')}-${String(dm[3]).padStart(2,'0')}`;
+      continue;
+    }
+    const hm = INQUIRY_HEADER_RE.exec(ln);
+    if(hm){
+      flush();
+      curSender = hm[1]; curTime = hm[2];
+      const tail = hm[3].trim();
+      const tagm = /^[\[*<]+\s*([^\]*>]+?)\s*[\]*>]+/.exec(tail);
+      curTag = tagm ? tagm[1].trim() : '';
+      const rest = tagm ? tail.slice(tagm[0].length).trim() : tail;
+      if(rest) blockLines.push(rest);
+      continue;
+    }
+    blockLines.push(ln);
+  }
+  flush();
+  return records;
+}
+let inquirySub = null;
+async function ensureInquiryLoaded(){
+  if(inquiryState.loaded || inquiryState.loading) return;
+  inquiryState.loading = true;
+  if(!inquirySub){
+    inquirySub = subscribeListToStorage(INQUIRY_KEY, inquiryState, {
+      isActive: () => state.activeTab === 'inquiry',
+      render: renderInquiryMain,
+    });
+  }
+  await inquirySub.firstLoad;
+  inquiryState.loading = false;
+  inquiryState.loaded = true;
+}
+async function saveInquiryList(){
+  try{ await saveFileToStorage(INQUIRY_KEY, JSON.stringify(inquiryState.items)); }catch(e){ console.error(e); }
+}
+function newInquiryItem(){
+  return { id: rid(), date: isoDate(new Date()), sender:'', region:'', question:'', customer:'', phone:'', detail:'' };
+}
+async function renderInquiryMain(){
+  const main = document.getElementById('main');
+  if(!inquiryState.loaded){
+    main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+    await ensureInquiryLoaded();
+    if(state.activeTab !== 'inquiry') return;
+  }
+  const s = inquiryState;
+  const q = s.search.trim();
+  let items = q
+    ? s.items.filter(it => [it.region,it.question,it.customer,it.phone,it.sender,it.detail].some(v=>(v||'').includes(q)))
+    : s.items;
+  items = items.slice().sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  const totalPages = Math.max(1, Math.ceil(items.length / INQUIRY_PAGE_SIZE));
+  if(s.page > totalPages) s.page = totalPages;
+  if(s.page < 1) s.page = 1;
+  const pageItems = items.slice((s.page-1)*INQUIRY_PAGE_SIZE, s.page*INQUIRY_PAGE_SIZE);
+
+  main.innerHTML = `
+    <h2 class="section-title">문의 대응</h2>
+    <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 14px;">
+      단체 카카오톡방에서 "대화 내보내기"한 .txt 파일을 올리면, 메시지마다 적힌 지역·질문·성함·연락처를
+      자동으로 뽑아 표로 만듭니다. 자동 인식이 틀렸으면 표에서 직접 고칠 수 있습니다.
+    </p>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      <input type="file" id="inquiryImportInput" accept=".txt" style="font-size:13px; color:var(--muted);">
+      <input id="inquirySearch" placeholder="지역/질문/고객명/연락처 검색" value="${escapeHtml(s.search)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; min-width:220px;">
+      <button id="inquiryAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 문의 추가</button>
+      <span style="font-size:12px; color:var(--muted);">총 ${items.length}건</span>
+    </div>
+    ${s.importMsg ? `<div style="padding:10px 12px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px; margin-bottom:12px; white-space:pre-line;">${escapeHtml(s.importMsg)}</div>` : ''}
+    ${items.length===0 ? `<div class="empty-side">아직 등록된 문의가 없습니다. 위에서 .txt 파일을 올리거나 "+ 문의 추가"로 직접 입력해주세요.</div>` : `
+    <div class="table-wrap">
+      <table style="width:100%; border-collapse:collapse;">
+        <thead><tr>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">접수일</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:180px;">지역</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:140px;">질문</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:120px;">고객명</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:130px;">연락처</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">비고</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:60px;">삭제</th>
+        </tr></thead>
+        <tbody>
+          ${pageItems.map(it => `
+            <tr data-id="${it.id}">
+              <td style="padding:5px 6px;"><input type="text" class="inquiry-f" data-field="date" data-id="${it.id}" value="${escapeHtml(it.date)}" placeholder="YYYY-MM-DD" style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:5px 6px;"><input type="text" class="inquiry-f" data-field="region" data-id="${it.id}" value="${escapeHtml(it.region)}" style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:5px 6px;"><input type="text" class="inquiry-f" data-field="question" data-id="${it.id}" value="${escapeHtml(it.question)}" style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:5px 6px;"><input type="text" class="inquiry-f" data-field="customer" data-id="${it.id}" value="${escapeHtml(it.customer)}" style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:5px 6px;"><input type="text" class="inquiry-f" data-field="phone" data-id="${it.id}" value="${escapeHtml(it.phone)}" style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:5px 6px;"><textarea class="inquiry-f" data-field="detail" data-id="${it.id}" rows="1" style="width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px; resize:none; overflow:hidden; min-height:30px;">${escapeHtml(it.detail)}</textarea></td>
+              <td style="padding:5px 6px; text-align:center;"><button class="inquiry-del-btn" data-id="${it.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${totalPages>1 ? `
+    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
+      <button id="inquiryPrevPageBtn" ${s.page<=1?'disabled':''} style="font-size:12px; padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--text); cursor:pointer;">◀ 이전</button>
+      <span style="font-size:12.5px; color:var(--muted);">${s.page} / ${totalPages} 페이지</span>
+      <button id="inquiryNextPageBtn" ${s.page>=totalPages?'disabled':''} style="font-size:12px; padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--text); cursor:pointer;">다음 ▶</button>
+    </div>
+    ` : ''}
+    `}
+  `;
+
+  const importInput = document.getElementById('inquiryImportInput');
+  if(importInput) importInput.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    s.importMsg = '';
+    try{
+      const text = await file.text();
+      const parsed = parseKakaoInquiryText(text);
+      if(!parsed.length){
+        s.importMsg = '이 파일에서 문의로 인식되는 내용을 찾지 못했습니다.';
+      } else {
+        // 같은 날짜+연락처 조합이 이미 있으면 중복으로 보고 건너뛴다(같은 파일을
+        // 실수로 다시 올려도 목록이 두 배로 늘어나지 않게).
+        const existingKeys = new Set(s.items.map(it => `${it.date}|${it.phone}|${it.customer}`));
+        const fresh = parsed.filter(r => !existingKeys.has(`${r.date}|${r.phone}|${r.customer}`));
+        s.items = s.items.concat(fresh);
+        await saveInquiryList();
+        s.importMsg = `${parsed.length}건 인식 · ${fresh.length}건 새로 추가(중복 ${parsed.length-fresh.length}건 제외)`;
+      }
+    }catch(err){
+      console.error(err);
+      s.importMsg = '파일을 읽는 중 오류가 발생했습니다.';
+    }
+    e.target.value = '';
+    s.page = 1;
+    renderInquiryMain();
+  });
+  const searchInp = document.getElementById('inquirySearch');
+  if(searchInp) searchInp.addEventListener('input', (e)=>{ s.search = e.target.value; s.page = 1; renderInquiryMain(); });
+  const addBtn = document.getElementById('inquiryAddBtn');
+  if(addBtn) addBtn.addEventListener('click', async ()=>{
+    s.items.unshift(newInquiryItem());
+    await saveInquiryList();
+    renderInquiryMain();
+  });
+  main.querySelectorAll('.inquiry-f').forEach(el=>{
+    el.addEventListener('change', async ()=>{
+      const item = s.items.find(it=>it.id===el.dataset.id);
+      if(!item) return;
+      item[el.dataset.field] = el.value.trim();
+      await saveInquiryList();
+    });
+  });
+  main.querySelectorAll('.inquiry-del-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 문의를 삭제할까요?')) return;
+      s.items = s.items.filter(it=>it.id!==btn.dataset.id);
+      await saveInquiryList();
+      renderInquiryMain();
+    });
+  });
+  const prevPageBtn = document.getElementById('inquiryPrevPageBtn');
+  if(prevPageBtn) prevPageBtn.addEventListener('click', ()=>{ s.page -= 1; renderInquiryMain(); });
+  const nextPageBtn = document.getElementById('inquiryNextPageBtn');
+  if(nextPageBtn) nextPageBtn.addEventListener('click', ()=>{ s.page += 1; renderInquiryMain(); });
+}
+
 // ---------- 변경 이력 (모든 정산 건을 한 곳에서) ----------
 // 건 각각의 상세 화면에 있던 "🕒 변경 이력" 버튼과 완전히 같은 오버레이
 // (openCaseHistoryOverlay)를 재사용한다 — 여기서는 건을 하나하나 열지 않고도
