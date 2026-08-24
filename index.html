@@ -7289,10 +7289,10 @@ async function exportInquiryToExcel(items){
   if(btn){ btn.textContent = '내보내는 중…'; btn.disabled = true; }
   try{
     await loadXlsxLib();
-    const header = ['접수일','지역','질문','고객명','연락처','등록자','비고'];
-    const rows = items.map(it => [it.date, it.region, it.question, it.customer, it.phone, it.sender, it.detail]);
+    const header = ['접수일','지역','질문','고객명','연락처','등록자','문의내용','대응내용'];
+    const rows = items.map(it => [it.date, it.region, it.question, it.customer, it.phone, it.sender, it.detail, it.response||'']);
     const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
-    ws['!cols'] = [{wch:11},{wch:28},{wch:20},{wch:14},{wch:15},{wch:14},{wch:40}];
+    ws['!cols'] = [{wch:11},{wch:28},{wch:20},{wch:14},{wch:15},{wch:14},{wch:40},{wch:40}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '문의목록');
     XLSX.writeFile(wb, `문의대응목록_${isoDate(new Date())}.xlsx`);
