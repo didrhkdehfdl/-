@@ -6280,6 +6280,13 @@ const AGENT_DOC_CATEGORIES = [
   { key:'bizreg', label:'사업자등록증' },
   { key:'other', label:'기타서류' },
 ];
+// O&M팀은 계약서 대신 현금영수증으로 서류를 받는 경우가 많아, 이름만
+// "현금영수증"으로 바꿔 보여준다 — 카테고리 키('contract')는 그대로라
+// 세금계산서/현금영수증 준비 화면의 기존 판단 로직은 안 건드린다.
+function agentDocCategoryLabel(c){
+  if(c.key === 'contract' && state.activeTab === 'omTeam') return '현금영수증';
+  return c.label;
+}
 
 // ---- 입금확인 탭: 파일이 아니라 고객명/주소/계약금액/입금확인요청/입금날짜·입금액을
 // 직접 입력해서 관리하는 별도 목록. 서류 업로드와는 무관해서 agentDocsState.items가
