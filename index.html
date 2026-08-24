@@ -7324,7 +7324,7 @@ async function renderInquiryMain(){
   const s = inquiryState;
   const q = s.search.trim();
   let items = q
-    ? s.items.filter(it => [it.region,it.question,it.customer,it.phone,it.sender,it.detail].some(v=>(v||'').includes(q)))
+    ? s.items.filter(it => [it.region,it.question,it.customer,it.phone,it.sender,it.detail,it.response].some(v=>(v||'').includes(q)))
     : s.items;
   items = items.slice().sort((a,b)=> (b.date||'').localeCompare(a.date||''));
   const totalPages = Math.max(1, Math.ceil(items.length / INQUIRY_PAGE_SIZE));
