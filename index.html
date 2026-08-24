@@ -5932,7 +5932,7 @@ async function renderInspectionMain(){
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:190px;">작업</th>
         </tr></thead>
         <tbody>
-          ${matches.map(({item, m}) => {
+          ${pageMatches.map(({item, m}) => {
             const statusHtml = item.ocrStatus==='running'
               ? `<span style="color:var(--muted); font-size:12px;">인식 중…</span>`
               : (m.overall
