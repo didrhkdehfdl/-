@@ -6850,6 +6850,25 @@ async function renderAgentDocsMain(){
     const hint = document.getElementById('agentDocUploadHint');
     if(hint) hint.style.display = 'none';
   });
+  const agentDocPhoneInp = document.getElementById('agentDocPhoneInput');
+  const agentDocAmountInp = document.getElementById('agentDocAmountInput');
+  if(agentDocPhoneInp && agentDocAmountInp){
+    document.getElementById('agentDocCustomerInput').addEventListener('change', async (e)=>{
+      await ensureOMListLoaded();
+      const match = findOMListRowByCustomer(e.target.value.trim());
+      if(!match) return;
+      if(!agentDocPhoneInp.value.trim() && match.phone){
+        agentDocPhoneInp.value = match.phone;
+        agentDocsState.pendingPhone = match.phone;
+      }
+      if(!agentDocAmountInp.value.trim() && Number(match.amount)){
+        agentDocAmountInp.value = fmtNum(match.amount);
+        agentDocsState.pendingAmount = Number(match.amount);
+      }
+    });
+    agentDocPhoneInp.addEventListener('input', ()=>{ agentDocsState.pendingPhone = agentDocPhoneInp.value.trim(); });
+    agentDocAmountInp.addEventListener('input', ()=>{ agentDocsState.pendingAmount = parseMoneyInput(agentDocAmountInp.value); });
+  }
 
   main.querySelectorAll('.agentdoc-field').forEach(el=>{
     el.addEventListener('change', async ()=>{
