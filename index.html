@@ -6326,7 +6326,7 @@ function newDepositConfirmItem(){
 }
 function agentDocCategoryButtonsHtml(){
   return AGENT_DOC_CATEGORIES.map(c => `
-    <button class="agentdoc-cat-btn" data-cat="${c.key}" style="padding:9px 16px; font-size:12.5px; border:none; ${c.key!==AGENT_DOC_CATEGORIES[0].key?'border-left:1px solid var(--line);':''} cursor:pointer; background:${agentDocsState.category===c.key?'var(--panel-2)':'transparent'}; color:${agentDocsState.category===c.key?'var(--gold)':'var(--muted)'};">${c.label}</button>
+    <button class="agentdoc-cat-btn" data-cat="${c.key}" style="padding:9px 16px; font-size:12.5px; border:none; ${c.key!==AGENT_DOC_CATEGORIES[0].key?'border-left:1px solid var(--line);':''} cursor:pointer; background:${agentDocsState.category===c.key?'var(--panel-2)':'transparent'}; color:${agentDocsState.category===c.key?'var(--gold)':'var(--muted)'};">${agentDocCategoryLabel(c)}</button>
   `).join('');
 }
 async function renderDepositConfirmTab(){
