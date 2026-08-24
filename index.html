@@ -6728,7 +6728,7 @@ async function renderAgentDocsMain(){
       <input type="file" id="agentDocUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
     </div>
     <div id="agentDocUploadHint" style="display:none; color:var(--neg); font-size:12px; margin:-10px 0 16px;">먼저 고객명을 입력해주세요.</div>
-    ${items.length===0 ? `<div class="empty-side">아직 업로드된 ${AGENT_DOC_CATEGORIES.find(c=>c.key===agentDocsState.category).label}가 없습니다.</div>` : (
+    ${items.length===0 ? `<div class="empty-side">아직 업로드된 ${agentDocCategoryLabel(AGENT_DOC_CATEGORIES.find(c=>c.key===agentDocsState.category))}가 없습니다.</div>` : (
       isBizreg ? `
       ${agentDocSubSummaryHtml(items, 'taxInvoice', '세금계산서')}
       <div class="table-wrap">
