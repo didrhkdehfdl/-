@@ -6716,13 +6716,15 @@ async function renderAgentDocsMain(){
       (자동 인식이 틀리면 표에서 직접 고칠 수 있습니다).
     </p>
     <div style="display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; width:fit-content; margin-bottom:16px;">
-      ${AGENT_DOC_CATEGORIES.map(c => `
-        <button class="agentdoc-cat-btn" data-cat="${c.key}" style="padding:9px 16px; font-size:12.5px; border:none; ${c.key!==AGENT_DOC_CATEGORIES[0].key?'border-left:1px solid var(--line);':''} cursor:pointer; background:${agentDocsState.category===c.key?'var(--panel-2)':'transparent'}; color:${agentDocsState.category===c.key?'var(--gold)':'var(--muted)'};">${c.label}</button>
-      `).join('')}
+      ${agentDocCategoryButtonsHtml()}
     </div>
     <div style="margin-bottom:16px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
       <label style="font-size:13px; color:var(--muted);">고객명</label>
       <input type="text" id="agentDocCustomerInput" placeholder="예: 최정연" value="${escapeHtml(agentDocsState.pendingCustomer||'')}" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:180px;">
+      ${(state.activeTab==='omTeam' && agentDocsState.category==='contract') ? `
+        <input type="text" id="agentDocPhoneInput" placeholder="연락처(고객명 입력 시 자동 채움)" value="${escapeHtml(agentDocsState.pendingPhone||'')}" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:170px;">
+        <input type="text" id="agentDocAmountInput" placeholder="금액(고객명 입력 시 자동 채움)" value="${agentDocsState.pendingAmount ? fmtNum(agentDocsState.pendingAmount) : ''}" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:170px;">
+      ` : ''}
       <input type="file" id="agentDocUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
     </div>
     <div id="agentDocUploadHint" style="display:none; color:var(--neg); font-size:12px; margin:-10px 0 16px;">먼저 고객명을 입력해주세요.</div>
