@@ -6734,6 +6734,11 @@ async function renderAgentDocsMain(){
     await ensureAgentDocsLoaded();
     if(state.activeTab !== 'agentDocs' && state.activeTab !== 'omTeam') return;
   }
+  const isOMCashReceipt = state.activeTab === 'omTeam' && agentDocsState.category === 'contract';
+  if(isOMCashReceipt){
+    await ensureOMCashReceiptLoaded();
+    if(state.activeTab !== 'omTeam' || agentDocsState.category !== 'contract') return;
+  }
   const items = agentDocsState.items.filter(it => it.category === agentDocsState.category);
   const isBizreg = agentDocsState.category === 'bizreg';
   const sectionTitle = state.activeTab === 'omTeam' ? 'O&M팀 서류 관리' : '영업자용 서류 관리';
