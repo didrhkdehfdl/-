@@ -2997,6 +2997,10 @@ function renderMain(loading){
     renderInvoicePrepMain();
     return;
   }
+  if(state.activeTab === 'inquiry'){
+    renderInquiryMain();
+    return;
+  }
   if(state.activeTab === 'history'){
     renderHistoryMain();
     return;
