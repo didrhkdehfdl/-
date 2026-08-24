@@ -7316,6 +7316,17 @@ async function renderInquiryMain(){
     await saveInquiryList();
     renderInquiryMain();
   });
+  const exportBtn = document.getElementById('inquiryExportBtn');
+  if(exportBtn) exportBtn.addEventListener('click', ()=> exportInquiryToExcel(items));
+  main.querySelectorAll('.inquiry-map-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      // 방금 입력해놓고 아직 저장(change)이 안 된 값도 바로 쓸 수 있게,
+      // 저장된 값이 아니라 지금 화면에 있는 입력칸 값을 그대로 읽는다.
+      const row = btn.closest('tr');
+      const regionInp = row ? row.querySelector('.inquiry-f[data-field="region"]') : null;
+      openMapSearch(btn.dataset.provider, regionInp ? regionInp.value : '');
+    });
+  });
   main.querySelectorAll('.inquiry-f').forEach(el=>{
     el.addEventListener('change', async ()=>{
       const item = s.items.find(it=>it.id===el.dataset.id);
