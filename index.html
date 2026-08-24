@@ -6921,6 +6921,25 @@ async function renderAgentDocsMain(){
     agentDocPhoneInp.addEventListener('input', ()=>{ agentDocsState.pendingPhone = agentDocPhoneInp.value.trim(); });
     agentDocAmountInp.addEventListener('input', ()=>{ agentDocsState.pendingAmount = Number(String(agentDocAmountInp.value||'').replace(/[^0-9]/g,'')) || 0; });
   }
+  const omCashReceiptSaveBtn = document.getElementById('omCashReceiptSaveBtn');
+  if(omCashReceiptSaveBtn) omCashReceiptSaveBtn.addEventListener('click', async ()=>{
+    const customerInp = document.getElementById('agentDocCustomerInput');
+    const customer = customerInp ? customerInp.value.trim() : '';
+    if(!customer){ alert('고객명을 입력해주세요.'); return; }
+    const phone = agentDocPhoneInp ? agentDocPhoneInp.value.trim() : '';
+    const amount = agentDocAmountInp ? (Number(String(agentDocAmountInp.value||'').replace(/[^0-9]/g,''))||0) : 0;
+    omCashReceiptState.items.push({ id: rid(), date: isoDate(new Date()), customer, phone, amount });
+    await saveOMCashReceiptList();
+    renderAgentDocsMain();
+  });
+  main.querySelectorAll('.om-cash-receipt-del-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 기록을 삭제할까요?')) return;
+      omCashReceiptState.items = omCashReceiptState.items.filter(r=>r.id!==btn.dataset.id);
+      await saveOMCashReceiptList();
+      renderAgentDocsMain();
+    });
+  });
 
   main.querySelectorAll('.agentdoc-field').forEach(el=>{
     el.addEventListener('change', async ()=>{
