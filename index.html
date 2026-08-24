@@ -7176,6 +7176,37 @@ async function saveInquiryList(){
 function newInquiryItem(){
   return { id: rid(), date: isoDate(new Date()), sender:'', region:'', question:'', customer:'', phone:'', detail:'' };
 }
+async function exportInquiryToExcel(items){
+  const btn = document.getElementById('inquiryExportBtn');
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.textContent = '내보내는 중…'; btn.disabled = true; }
+  try{
+    await loadXlsxLib();
+    const header = ['접수일','지역','질문','고객명','연락처','등록자','비고'];
+    const rows = items.map(it => [it.date, it.region, it.question, it.customer, it.phone, it.sender, it.detail]);
+    const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    ws['!cols'] = [{wch:11},{wch:28},{wch:20},{wch:14},{wch:15},{wch:14},{wch:40}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '문의목록');
+    XLSX.writeFile(wb, `문의대응목록_${isoDate(new Date())}.xlsx`);
+  }catch(err){
+    console.error(err);
+    alert('엑셀로 내보내는 중 오류가 발생했습니다.');
+  } finally {
+    if(btn){ btn.textContent = originalLabel; btn.disabled = false; }
+  }
+}
+// 지역 텍스트로 네이버맵/카카오맵 검색 링크를 연다 — API 키 없이 쓸 수 있는
+// "검색 결과 페이지로 이동" 방식이라, 정확한 지도 좌표를 찾아주는 건 아니고
+// 그 지도 서비스의 검색 결과 화면을 새 탭으로 열어준다.
+function openMapSearch(provider, region){
+  const q = String(region||'').trim();
+  if(!q){ alert('먼저 지역을 입력해주세요.'); return; }
+  const url = provider === 'kakao'
+    ? `https://map.kakao.com/link/search/${encodeURIComponent(q)}`
+    : `https://map.naver.com/v5/search/${encodeURIComponent(q)}`;
+  window.open(url, '_blank', 'noopener');
+}
 async function renderInquiryMain(){
   const main = document.getElementById('main');
   if(!inquiryState.loaded){
