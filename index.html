@@ -6332,6 +6332,28 @@ async function saveDepositConfirmList(){
 function newDepositConfirmItem(){
   return { id: rid(), customerName:'', address:'', contractAmount:0, requested:false, requestedAt:'', depositDate:'', depositAmount:0 };
 }
+// O&M팀의 "현금영수증" 화면에서 고객명/연락처/금액을 "저장" 눌러 남기는 기록 —
+// 파일 업로드와는 별개로, 누가 언제 어떤 금액으로 현금영수증 대상을 확인했는지
+// 남겨두기 위한 단순 목록이다.
+const OM_CASH_RECEIPT_KEY = 'om-cash-receipt-records';
+let omCashReceiptState = { items:[], loaded:false, loading:false };
+let omCashReceiptSub = null;
+async function ensureOMCashReceiptLoaded(){
+  if(omCashReceiptState.loaded || omCashReceiptState.loading) return;
+  omCashReceiptState.loading = true;
+  if(!omCashReceiptSub){
+    omCashReceiptSub = subscribeListToStorage(OM_CASH_RECEIPT_KEY, omCashReceiptState, {
+      isActive: () => state.activeTab === 'omTeam' && agentDocsStateOM.category === 'contract',
+      render: renderAgentDocsMain,
+    });
+  }
+  await omCashReceiptSub.firstLoad;
+  omCashReceiptState.loading = false;
+  omCashReceiptState.loaded = true;
+}
+async function saveOMCashReceiptList(){
+  try{ await saveFileToStorage(OM_CASH_RECEIPT_KEY, JSON.stringify(omCashReceiptState.items)); }catch(e){ console.error(e); }
+}
 function agentDocCategoryButtonsHtml(){
   return AGENT_DOC_CATEGORIES.map(c => `
     <button class="agentdoc-cat-btn" data-cat="${c.key}" style="padding:9px 16px; font-size:12.5px; border:none; ${c.key!==AGENT_DOC_CATEGORIES[0].key?'border-left:1px solid var(--line);':''} cursor:pointer; background:${agentDocsState.category===c.key?'var(--panel-2)':'transparent'}; color:${agentDocsState.category===c.key?'var(--gold)':'var(--muted)'};">${agentDocCategoryLabel(c)}</button>
