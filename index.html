@@ -2136,6 +2136,14 @@ function findPerfRowByCustomer(name){
   const all = [...(importState.rows||[]), ...(importState.manualRows||[])];
   return all.find(row => String(row.customer||'').replace(/\s/g,'')===target) || null;
 }
+// O&M팀의 현금영수증(계약서) 업로드에서 고객명 입력 시 연락처·금액을 자동으로
+// 채워주기 위한 단순 매칭 — findPerfRowByCustomer와 같은 방식(공백 무시,
+// 정확히 일치)이지만 대상이 사급 실적리스트가 아니라 O&M 리스트다.
+function findOMListRowByCustomer(name){
+  const target = String(name||'').replace(/\s/g,'');
+  if(!target) return null;
+  return (omListState.rows||[]).find(row => String(row.customer||'').replace(/\s/g,'')===target) || null;
+}
 function findMatchingPerfRows(item){
   const tokens = extractNameTokensFromFilename(item.fileName);
   const nameCandidates = [item.extractedName, ...tokens].filter(Boolean).map(s=>s.replace(/\s/g,''));
