@@ -6867,7 +6867,7 @@ async function renderAgentDocsMain(){
       }
     });
     agentDocPhoneInp.addEventListener('input', ()=>{ agentDocsState.pendingPhone = agentDocPhoneInp.value.trim(); });
-    agentDocAmountInp.addEventListener('input', ()=>{ agentDocsState.pendingAmount = parseMoneyInput(agentDocAmountInp.value); });
+    agentDocAmountInp.addEventListener('input', ()=>{ agentDocsState.pendingAmount = Number(String(agentDocAmountInp.value||'').replace(/[^0-9]/g,'')) || 0; });
   }
 
   main.querySelectorAll('.agentdoc-field').forEach(el=>{
