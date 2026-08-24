@@ -9697,8 +9697,18 @@ function autoResizeTextarea(el){
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
 }
+// autoResizeTextarea를 원소 하나마다 부르면(읽기→쓰기→읽기→쓰기…) 매번 강제
+// 레이아웃 재계산(reflow)이 일어난다 — 표에 수백 행이 있으면(예: O&M 리스트)
+// 그 몇 배(행×textarea 칸 수)만큼 강제 reflow가 발생해서 탭을 바꿀 때마다
+// 화면이 멈칫거리는 원인이 된다. 여기서는 "읽기를 전부 먼저 끝내고, 쓰기는
+// 그 다음에 한꺼번에" 순서로 나눠서, reflow가 한 번만 일어나게 한다 — 방금
+// innerHTML로 새로 그려진 textarea라 아직 높이를 강제로 지정한 적이 없으니,
+// 'auto'로 초기화하는 절차 없이 scrollHeight를 바로 읽어도 값이 정확하다.
 function autoResizeAllTextareas(){
-  document.querySelectorAll('#main td textarea').forEach(autoResizeTextarea);
+  const els = document.querySelectorAll('#main td textarea');
+  const heights = [];
+  for(let i=0;i<els.length;i++) heights.push(els[i].scrollHeight); // 읽기 단계(한 번의 reflow로 전부 계산됨)
+  for(let i=0;i<els.length;i++) els[i].style.height = heights[i] + 'px'; // 쓰기 단계
 }
 document.addEventListener('input', (e)=>{
   if(e.target.tagName === 'TEXTAREA' && e.target.closest('#main td')) autoResizeTextarea(e.target);
