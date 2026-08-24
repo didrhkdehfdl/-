@@ -537,7 +537,8 @@ const INSPECTION_CATEGORIES = [
 // sortDir: 점검년월일 정렬 방향('asc'/'desc'). mismatchPos: 불일치 건을
 // 위/아래로 몰아서 볼지('top'/'bottom'/null=끄기, 그룹 안에서는 여전히
 // sortDir 기준으로 날짜순 정렬된다).
-let inspectionState = { items:[], loaded:false, loading:false, category:'sagup', reocrProgress:null, sortDir:'asc', mismatchPos:null };
+let inspectionState = { items:[], loaded:false, loading:false, category:'sagup', reocrProgress:null, sortDir:'asc', mismatchPos:null, page:1 };
+const INSPECTION_PAGE_SIZE = 50;
 const inspectionFileCache = {}; // id -> base64 file content, loaded lazily from storage
 let agentDocsState = { category:'contract', items:[], loaded:false, loading:false };
 // O&M팀 탭은 영업자용과 화면/기능은 완전히 같지만 데이터는 별도로 관리한다.
