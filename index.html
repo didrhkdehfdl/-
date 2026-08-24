@@ -7235,6 +7235,7 @@ async function renderInquiryMain(){
       <input type="file" id="inquiryImportInput" accept=".txt" style="font-size:13px; color:var(--muted);">
       <input id="inquirySearch" placeholder="지역/질문/고객명/연락처 검색" value="${escapeHtml(s.search)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; min-width:220px;">
       <button id="inquiryAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 문의 추가</button>
+      <button id="inquiryExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
       <span style="font-size:12px; color:var(--muted);">총 ${items.length}건</span>
     </div>
     ${s.importMsg ? `<div style="padding:10px 12px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12px; margin-bottom:12px; white-space:pre-line;">${escapeHtml(s.importMsg)}</div>` : ''}
