@@ -6756,13 +6756,38 @@ async function renderAgentDocsMain(){
     <div style="margin-bottom:16px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
       <label style="font-size:13px; color:var(--muted);">고객명</label>
       <input type="text" id="agentDocCustomerInput" placeholder="예: 최정연" value="${escapeHtml(agentDocsState.pendingCustomer||'')}" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:180px;">
-      ${(state.activeTab==='omTeam' && agentDocsState.category==='contract') ? `
+      ${isOMCashReceipt ? `
         <input type="text" id="agentDocPhoneInput" placeholder="연락처(고객명 입력 시 자동 채움)" value="${escapeHtml(agentDocsState.pendingPhone||'')}" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:170px;">
         <input type="text" id="agentDocAmountInput" placeholder="금액(고객명 입력 시 자동 채움)" value="${agentDocsState.pendingAmount ? fmtNum(agentDocsState.pendingAmount) : ''}" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; width:170px;">
+        <button id="omCashReceiptSaveBtn" style="padding:8px 14px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:12.5px; font-weight:600; cursor:pointer;">💾 저장</button>
       ` : ''}
       <input type="file" id="agentDocUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
     </div>
     <div id="agentDocUploadHint" style="display:none; color:var(--neg); font-size:12px; margin:-10px 0 16px;">먼저 고객명을 입력해주세요.</div>
+    ${isOMCashReceipt && omCashReceiptState.items.length ? `
+    <div class="table-wrap" style="margin-bottom:20px;">
+      <table style="width:100%; border-collapse:collapse;">
+        <thead><tr>
+          <th style="padding:7px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">날짜</th>
+          <th style="padding:7px 6px; font-size:11px; color:var(--muted); text-align:left;">고객명</th>
+          <th style="padding:7px 6px; font-size:11px; color:var(--muted); text-align:left;">연락처</th>
+          <th style="padding:7px 6px; font-size:11px; color:var(--muted); text-align:right;">금액</th>
+          <th style="padding:7px 6px; font-size:11px; color:var(--muted); width:60px;">삭제</th>
+        </tr></thead>
+        <tbody>
+          ${omCashReceiptState.items.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(r=>`
+            <tr>
+              <td style="padding:6px;">${escapeHtml(r.date)}</td>
+              <td style="padding:6px;">${escapeHtml(r.customer)}</td>
+              <td style="padding:6px;">${escapeHtml(r.phone)}</td>
+              <td style="padding:6px; text-align:right;">${fmtWon(r.amount)}</td>
+              <td style="padding:6px; text-align:center;"><button class="om-cash-receipt-del-btn" data-id="${r.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
     ${items.length===0 ? `<div class="empty-side">아직 업로드된 ${agentDocCategoryLabel(AGENT_DOC_CATEGORIES.find(c=>c.key===agentDocsState.category))}가 없습니다.</div>` : (
       isBizreg ? `
       ${agentDocSubSummaryHtml(items, 'taxInvoice', '세금계산서')}
