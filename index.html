@@ -5972,6 +5972,13 @@ async function renderInspectionMain(){
         </tbody>
       </table>
     </div>
+    ${totalPages>1 ? `
+    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
+      <button id="inspectionPrevPageBtn" ${inspectionState.page<=1?'disabled':''} style="font-size:12px; padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--text); cursor:pointer;">◀ 이전</button>
+      <span style="font-size:12.5px; color:var(--muted);">${inspectionState.page} / ${totalPages} 페이지 (총 ${matches.length}건)</span>
+      <button id="inspectionNextPageBtn" ${inspectionState.page>=totalPages?'disabled':''} style="font-size:12px; padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--text); cursor:pointer;">다음 ▶</button>
+    </div>
+    ` : ''}
     `}
   `;
 
