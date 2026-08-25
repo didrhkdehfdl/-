@@ -6629,7 +6629,7 @@ async function runBizRegOcrForItem(item, targetState){
     targetState.items.push(item);
   }
   await saveAgentDocsIndex(targetState.items, targetState);
-  renderAgentDocsMain();
+  if(state.activeTab === 'agentDocs' || state.activeTab === 'omTeam') renderAgentDocsMain();
 }
 
 async function handleAgentDocUpload(e){
