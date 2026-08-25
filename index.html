@@ -7510,7 +7510,7 @@ async function renderInquiryMain(){
               <td style="padding:5px 4px; text-align:center;"><textarea class="inquiry-f" data-field="response" data-id="${it.id}" rows="1" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 5px; color:var(--text); font-size:12px; line-height:1.4; resize:none; overflow:hidden; min-height:30px;">${escapeHtml(it.response||'')}</textarea></td>
               <td style="padding:5px 6px; text-align:center;"><button class="inquiry-del-btn" data-id="${it.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button></td>
             </tr>
-          `).join('')}
+          `;}).join('')}
         </tbody>
       </table>
     </div>
