@@ -9311,8 +9311,22 @@ async function renderOMListMain(){
     renderOMListMain();
   });
   document.getElementById('omListExportBtn').addEventListener('click', async ()=>{
-    await loadXlsxLib();
-    exportOMListToExcel();
+    await exportOMListToExcel();
+  });
+  document.getElementById('omListTemplateFile').addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      const buffer = await file.arrayBuffer();
+      omListTemplateState.buffer = buffer;
+      omListTemplateState.fileName = file.name;
+      omListTemplateState.savedAt = await saveOMListTemplate(buffer, file.name);
+    }catch(err){
+      console.error(err);
+      alert('양식 파일을 읽지 못했습니다.');
+    }
+    e.target.value = '';
+    renderOMListMain();
   });
   main.querySelectorAll('.om-field').forEach(el=>{
     el.addEventListener('change', async ()=>{
