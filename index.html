@@ -4584,6 +4584,9 @@ async function writeProfitCasesToLedger(masterArrayBuffer, items){
       AS: lv.salesDeductionNote,
       AU: Number(profitCase.maintenanceCost)||0,
     };
+    const formulaOverrides = {};
+    if(lv.moduleBuyFormula) formulaOverrides.R = lv.moduleBuyFormula;
+    if(lv.moduleSellFormula) formulaOverrides.S = lv.moduleSellFormula;
 
     Object.entries(plainValues).forEach(([col, raw])=>{
       let cEl = findCell(targetRow, col);
@@ -4593,7 +4596,12 @@ async function writeProfitCasesToLedger(masterArrayBuffer, items){
         targetRow.appendChild(cEl);
       }
       while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
-      if(dateCols.has(col) && raw){
+      if(formulaOverrides[col]){
+        cEl.removeAttribute('t');
+        const fEl = sheetDoc.createElementNS(SS_NS,'f');
+        fEl.textContent = formulaOverrides[col];
+        cEl.appendChild(fEl);
+      }else if(dateCols.has(col) && raw){
         const d = new Date(raw);
         const epoch = new Date(Date.UTC(1899,11,30));
         const days = Math.round((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()) - epoch.getTime())/86400000);
