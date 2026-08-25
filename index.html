@@ -8942,6 +8942,34 @@ function renderInvoicePrepMain(){
 // 자재비합계(Z열)는 원본에서도 제품단가*제품수량 수식이라 저장하지 않고
 // 표시/내보내기 시점에 그때그때 계산한다.
 const OM_LIST_KEY = 'om-list-rows';
+// 엑셀로 내보내기가 원본 "독립채산제(AS,타부서지원)" 파일과 색상·굵은글씨·
+// 테두리·병합까지 완전히 똑같이 나오도록, 영업비 정산 양식(salesLedgerState)과
+// 같은 방식으로 원본 파일 자체를 "양식"으로 한 번 올려서 저장해두고, 내보낼
+// 때마다 그 양식의 머리글(1~3행)은 그대로 둔 채 데이터 영역만 다시 채워
+// 넣는다. SheetJS 무료판은 셀 스타일을 새로 쓰지 못해서, 값만 새로 만드는
+// 방식으로는 원본과 똑같은 모양을 낼 수 없다 — 그래서 다른 통합 엑셀들
+// (카드관리, 영업비 정산)처럼 JSZip으로 원본 파일의 XML을 직접 고친다.
+let omListTemplateState = { buffer:null, fileName:'', savedAt:'' };
+const OM_LIST_TEMPLATE_KEY = 'om-list-template-b64';
+const OM_LIST_TEMPLATE_META_KEY = 'om-list-template-meta';
+async function saveOMListTemplate(buffer, fileName){
+  const savedAt = new Date().toISOString();
+  await saveFileToStorage(OM_LIST_TEMPLATE_KEY, arrayBufferToBase64(buffer), 30000);
+  await saveFileToStorage(OM_LIST_TEMPLATE_META_KEY, JSON.stringify({ fileName, savedAt }));
+  return savedAt;
+}
+async function restoreOMListTemplate(){
+  try{
+    const metaText = await loadFileFromStorage(OM_LIST_TEMPLATE_META_KEY);
+    if(!metaText) return;
+    const meta = JSON.parse(metaText);
+    const b64 = await loadFileFromStorage(OM_LIST_TEMPLATE_KEY, 30000);
+    if(!b64) return;
+    omListTemplateState.buffer = base64ToArrayBuffer(b64);
+    omListTemplateState.fileName = meta.fileName || '';
+    omListTemplateState.savedAt = meta.savedAt || '';
+  }catch(e){ console.error('O&M 리스트 양식 복원 실패', e); }
+}
 const OM_LIST_COLUMNS = [
   ['no','No.',60], ['as','A/S',50], ['receivedDate','접수일자',100], ['processedDate','처리일자',100],
   ['deptRequest','요청부서',90], ['requester','요청자',80], ['bizYear','사업년도',70], ['bizCategory','사업분류',90],
@@ -10543,6 +10571,7 @@ async function init(){
   if(Array.isArray(savedCompanyMaster)) companyMaster = savedCompanyMaster;
   await restoreCardReconFiles();
   await restoreSalesLedgerTemplate();
+  await restoreOMListTemplate();
   await restoreProfitLedgerTemplate();
   renderSidebar();
   renderMain();
