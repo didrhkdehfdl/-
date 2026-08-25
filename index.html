@@ -6693,7 +6693,7 @@ async function handleAgentDocUpload(e){
     }
   }
   await saveAgentDocsIndex(targetState.items, targetState);
-  renderAgentDocsMain();
+  if(state.activeTab === 'agentDocs' || state.activeTab === 'omTeam') renderAgentDocsMain();
   if(skipped.length){
     alert(`다음 파일은 저장하지 못했습니다:\n${skipped.join('\n')}`);
   }
