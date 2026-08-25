@@ -9268,11 +9268,16 @@ async function renderOMListMain(){
     <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
       "독립채산제(AS,타부서지원)" 엑셀의 "2026년도 데이터" 시트를 그대로 올려서 표로 관리하고, 같은 구성으로 다시 엑셀로 내보낼 수 있습니다.
     </p>
-    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
       <input type="file" id="omListFile" accept=".xlsx,.xls" style="font-size:13px; color:var(--muted);">
       <input id="omListSearch" placeholder="고객명/발전소명/요청자 검색" value="${escapeHtml(s.search)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; min-width:200px;">
       <button id="omListAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
       <button id="omListExportBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
+    </div>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; padding:8px 10px; border-radius:6px; background:var(--panel-2); border:1px solid var(--line);">
+      <span style="font-size:11.5px; color:var(--muted);">엑셀로 내보내기 양식(원본 파일과 똑같은 모양으로 내보내려면 필요):</span>
+      <input type="file" id="omListTemplateFile" accept=".xlsx,.xls" style="font-size:12px; color:var(--muted);">
+      <span style="font-size:11.5px; color:${omListTemplateState.fileName?'var(--muted)':'#ffcf8a'};">${omListTemplateState.fileName ? `현재 양식: ${escapeHtml(omListTemplateState.fileName)}` : '아직 양식이 없습니다 — 원본 "독립채산제(AS,타부서지원)" 파일을 올려주세요.'}</span>
     </div>
     ${s.error ? `<div style="color:var(--neg); font-size:13px; margin-bottom:10px;">${escapeHtml(s.error)}</div>` : ''}
     ${s.rows.length===0 ? `<div class="empty-side">아직 등록된 O&M 리스트가 없습니다. 엑셀을 올리거나 "+ 행 추가"로 직접 입력해주세요.</div>` : `
