@@ -4109,6 +4109,28 @@ const LEDGER_FORMULA_TEMPLATES = {
   AX: n => `AW${n}-AV${n}`,
   AY: n => `AX${n}/M${n}`,
 };
+// 이윤정산 건에 연결된 영업비 정산 건(salesMatch)이 없거나(고객명이 안 겹치는
+// 경우) 있어도 일부 값이 비어 있으면, 같은 고객명의 사급 실적리스트 행에서
+// 계약회사/영업담당자/회사입금가/영업비공제금/비고를 대신 가져온다 — 실적리스트는
+// 거의 모든 고객이 이미 올라가 있는 원본 데이터라 별도로 영업비 정산 건을 안
+// 만든 고객도 이 값들을 채울 수 있다. 모듈 구매/판매단가는 항상 모듈
+// 단가관리(PROFIT_MODULE_PRICES)에서 현재 등록된 모델 단가를 최신으로 가져오고,
+// 마스터에 없는 모델(단종 등)이면 이윤정산 건에 이미 저장된 값을 그대로 쓴다.
+function resolveProfitLedgerValues(profitCase, rec, salesCase){
+  const perfRow = findPerfRowByCustomer(profitCase.customer);
+  const corp = (rec && rec.corp) || (perfRow && perfRow.corp) || '';
+  const agentName = (salesCase && salesCase.agentName) || profitCase.agentName || (perfRow && perfRow.agent) || '';
+  const moduleModel = profitCase.moduleModel || (perfRow && perfRow.moduleModel) || '';
+  const masterPrice = PROFIT_MODULE_PRICES[moduleModel];
+  const moduleBuy = masterPrice ? masterPrice.buy : (Number(profitCase.moduleBuy)||0);
+  const moduleSell = masterPrice ? masterPrice.sell : (Number(profitCase.moduleSell)||0);
+  const companyPriceSource = rec ? rec.companyPrice : (perfRow ? perfRow.companyPrice : null);
+  const companyPrice = (companyPriceSource !== null && companyPriceSource !== undefined && companyPriceSource !== '')
+    ? Math.abs(Number(companyPriceSource)||0) : '';
+  const salesDeduction = Number(profitCase.salesDeduction) || Math.abs(Number((rec && rec.extra) || (perfRow && perfRow.extra) || 0)) || 0;
+  const salesDeductionNote = profitCase.salesDeductionNote || (rec && rec.note) || (perfRow && perfRow.extraNote) || (perfRow && perfRow.note) || '';
+  return { corp, agentName, moduleModel, moduleBuy, moduleSell, companyPrice, salesDeduction, salesDeductionNote };
+}
 async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch){
   await loadJSZipLib();
   const zip = await window.JSZip.loadAsync(masterArrayBuffer);
