@@ -7369,7 +7369,7 @@ async function saveInquiryList(){
   try{ await saveFileToStorage(INQUIRY_KEY, JSON.stringify(inquiryState.items)); }catch(e){ console.error(e); }
 }
 function newInquiryItem(){
-  return { id: rid(), date: isoDate(new Date()), sender:'', region:'', question:'', customer:'', phone:'', detail:'', response:'' };
+  return { id: rid(), date: isoDate(new Date()), sender:'', region:'', question:'', customer:'', phone:'', detail:'', response:'', jibunAddr:'', zipNo:'' };
 }
 async function exportInquiryToExcel(items){
   const btn = document.getElementById('inquiryExportBtn');
