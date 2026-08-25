@@ -5857,7 +5857,7 @@ async function runOcrForItem(item, skipSave){
   }
   if(!skipSave) await saveInspectionIndex(inspectionState.items);
   await propagateInspectionDateToPerfList(target || item);
-  renderInspectionMain();
+  if(state.activeTab === 'inspection') renderInspectionMain();
 }
 
 // Re-runs OCR for every uploaded 사용전점검 확인증 one at a time (not in
@@ -5881,14 +5881,14 @@ async function reocrAllInspectionItems(){
   const SAVE_EVERY = 5;
   for(let i=0; i<ids.length; i++){
     inspectionState.reocrProgress = { current: i+1, total: ids.length };
-    renderInspectionMain();
+    if(state.activeTab === 'inspection') renderInspectionMain();
     const item = inspectionState.items.find(it => it.id === ids[i]);
     if(item) await runOcrForItem(item, true);
     if((i+1) % SAVE_EVERY === 0) await saveInspectionIndex(inspectionState.items);
   }
   await saveInspectionIndex(inspectionState.items);
   inspectionState.reocrProgress = null;
-  renderInspectionMain();
+  if(state.activeTab === 'inspection') renderInspectionMain();
 }
 
 let inspectionSub = null;
