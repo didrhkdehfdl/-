@@ -4399,6 +4399,7 @@ async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch
   });
 
   zip.file(sheetPath, serializer.serializeToString(sheetDoc));
+  if(wasNewRow) expandLedgerNamedRange(wbDoc, PROFIT_LEDGER_SHEET, targetRow.getAttribute('r'));
 
   let calcPr = wbDoc.getElementsByTagName('calcPr')[0];
   if(!calcPr){
