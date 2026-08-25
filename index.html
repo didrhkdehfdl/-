@@ -4648,10 +4648,12 @@ async function writeProfitCasesToLedger(masterArrayBuffer, items){
       }
     });
 
+    if(wasNewRow) maxNewRowNum = Math.max(maxNewRowNum, Number(targetRow.getAttribute('r')));
     results.push({ customer:customerName, wasNewRow, rowNum: targetRow.getAttribute('r') });
   }
 
   zip.file(sheetPath, serializer.serializeToString(sheetDoc));
+  if(maxNewRowNum > 0) expandLedgerNamedRange(wbDoc, PROFIT_LEDGER_SHEET, maxNewRowNum);
 
   let calcPr = wbDoc.getElementsByTagName('calcPr')[0];
   if(!calcPr){
