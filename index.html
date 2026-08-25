@@ -4116,6 +4116,22 @@ const LEDGER_FORMULA_TEMPLATES = {
   AX: n => `AW${n}-AV${n}`,
   AY: n => `AX${n}/M${n}`,
 };
+// "단일갑지(정산)" 같은 인쇄용 시트들은 VLOOKUP(고객명, 정산데이터, ...)처럼
+// "정산데이터"라는 이름정의(defined name, 예: 정산데이터!$C$6:$AY$92)를 표
+// 범위로 그대로 참조한다 — 새 고객 행을 뒤에 추가해도 이 이름정의 범위가 그
+// 끝 행까지 자동으로 늘어나지 않으면, 그 행은 실제로는 시트에 존재해도
+// VLOOKUP 범위 밖이라 #N/A가 뜬다(실제로 "정산데이터" 시트에 96행까지 고객이
+// 있는데 이름정의가 92행에서 멈춰있어서 93행부터 전부 #N/A가 났던 사례로 발견).
+// 새 행을 추가할 때마다 이 이름정의의 마지막 행 번호를 새 행 번호까지 넓혀준다.
+function expandLedgerNamedRange(wbDoc, name, newRowNum){
+  const dn = Array.from(wbDoc.getElementsByTagName('definedName')).find(el => el.getAttribute('name') === name);
+  if(!dn) return;
+  const text = dn.textContent || '';
+  const m = text.match(/^(.*\$[A-Za-z]+\$)(\d+)$/);
+  if(!m) return;
+  const endRow = parseInt(m[2], 10);
+  if(Number(newRowNum) > endRow) dn.textContent = m[1] + newRowNum;
+}
 // 이윤정산 건에 연결된 영업비 정산 건(salesMatch)이 없거나(고객명이 안 겹치는
 // 경우) 있어도 일부 값이 비어 있으면, 같은 고객명의 사급 실적리스트 행에서
 // 계약회사/영업담당자/회사입금가/영업비공제금/비고를 대신 가져온다 — 실적리스트는
