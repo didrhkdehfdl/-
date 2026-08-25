@@ -7526,6 +7526,14 @@ async function renderInquiryMain(){
       openMapSearch(btn.dataset.provider, regionInp ? regionInp.value : '');
     });
   });
+  main.querySelectorAll('.inquiry-addrcheck-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const item = s.items.find(it=>it.id===btn.dataset.id);
+      const row = btn.closest('tr');
+      const regionInp = row ? row.querySelector('.inquiry-f[data-field="region"]') : null;
+      if(item && regionInp) handleInquiryAddressCheck(item, regionInp);
+    });
+  });
   main.querySelectorAll('.inquiry-f').forEach(el=>{
     el.addEventListener('change', async ()=>{
       const item = s.items.find(it=>it.id===el.dataset.id);
