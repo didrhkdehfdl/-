@@ -4315,12 +4315,12 @@ async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch
     AI: Number(profitCase.inspectionFeeCost)||0,
     AJ: Number(profitCase.constructionCost)||0,
     AK: Number(profitCase.etcAgencyCost)||0,
-    // rec.companyPrice는 앱 내부에서 이미 음수(공제액)로 저장돼 있지만, 이
-    // 시트의 AR 수식(AO-AP-AQ)은 자체적으로 빼는 계산이라 AP엔 양수(금액)가
+    // rec/perfRow의 companyPrice는 앱 내부에서 이미 음수(공제액)로 저장돼 있지만,
+    // 이 시트의 AR 수식(AO-AP-AQ)은 자체적으로 빼는 계산이라 AP엔 양수(금액)가
     // 들어가야 한다 — 그대로 넣으면 부호가 두 번 반영돼 영업비가 부풀려진다.
-    AP: rec ? Math.abs(Number(rec.companyPrice)||0) : '',
-    AQ: Number(profitCase.salesDeduction)||0,
-    AS: profitCase.salesDeductionNote || '',
+    AP: lv.companyPrice,
+    AQ: lv.salesDeduction,
+    AS: lv.salesDeductionNote,
     AU: Number(profitCase.maintenanceCost)||0,
   };
   const dateCols = new Set(['E']);
