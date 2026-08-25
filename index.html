@@ -7446,7 +7446,11 @@ async function renderInquiryMain(){
   let items = q
     ? s.items.filter(it => [it.region,it.question,it.customer,it.phone,it.sender,it.detail,it.response].some(v=>(v||'').includes(q)))
     : s.items;
-  items = items.slice().sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  items = items.slice().sort((a,b)=>{
+    const av = String(a[s.sortKey]||''), bv = String(b[s.sortKey]||'');
+    const cmp = av.localeCompare(bv, 'ko');
+    return s.sortDir==='desc' ? -cmp : cmp;
+  });
   const totalPages = Math.max(1, Math.ceil(items.length / INQUIRY_PAGE_SIZE));
   if(s.page > totalPages) s.page = totalPages;
   if(s.page < 1) s.page = 1;
@@ -7472,8 +7476,8 @@ async function renderInquiryMain(){
     <div class="table-wrap">
       <table style="width:100%; border-collapse:collapse;">
         <thead><tr>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:100px;">접수일</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:180px;">지역</th>
+          <th data-sort-key="date" style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:100px; cursor:pointer; user-select:none;">접수일 ${s.sortKey==='date' ? (s.sortDir==='desc'?'▼':'▲') : ''}</th>
+          <th data-sort-key="region" style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:180px; cursor:pointer; user-select:none;">지역 ${s.sortKey==='region' ? (s.sortDir==='desc'?'▼':'▲') : ''}</th>
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:100px;">지도</th>
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:120px;">고객명</th>
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:130px;">연락처</th>
