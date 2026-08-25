@@ -9561,6 +9561,7 @@ function wirePerfRowEvents(){
 
   tbody.querySelectorAll('.perf-del-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
+      if(!confirm('이 행을 삭제할까요?')) return;
       const id = btn.closest('tr').dataset.id;
       importState.manualRows = importState.manualRows.filter(r=>r.id!==id);
       debouncedSavePerfRows();
