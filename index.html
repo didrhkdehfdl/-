@@ -4497,6 +4497,7 @@ async function writeProfitCasesToLedger(masterArrayBuffer, items){
   const dateCols = new Set(['E']);
   const numericCols = new Set(['K','L','Q','R','S','V','W','X','AA','AB','AC','AE','AG','AH','AI','AJ','AK','AP','AQ','AU']);
   const results = [];
+  let maxNewRowNum = 0;
 
   for(const { profitCase, salesMatch } of items){
     const customerName = String(profitCase.customer||'').trim();
