@@ -2151,21 +2151,30 @@ function findOMListRowByCustomer(name){
 // 글자로 오탐이 나서 최소 길이를 둔다.
 function normalizePhoneDigits(v){ return String(v||'').replace(/\D/g,''); }
 function normalizeNoSpace(v){ return String(v||'').replace(/\s/g,''); }
-function inquiryMatchesSagupPerf(item){
+// 지역/고객명/연락처 중 실제로 어떤 항목이 겹쳤는지까지 알아야 화면에 표시할
+// 수 있어서, 단순 boolean이 아니라 {region,customer,phone} 일치 여부를 각각
+// 돌려준다.
+function getInquirySagupMatchFields(item){
   const rows = [...(importState.rows||[]), ...(importState.manualRows||[])];
-  if(!rows.length) return false;
+  const result = { region:false, customer:false, phone:false };
+  if(!rows.length) return result;
   const custTarget = normalizeNoSpace(item.customer);
   const phoneTarget = normalizePhoneDigits(item.phone);
   const regionTarget = normalizeNoSpace(item.region);
-  return rows.some(row => {
-    if(custTarget.length>=2 && normalizeNoSpace(row.customer)===custTarget) return true;
-    if(phoneTarget.length>=8 && normalizePhoneDigits(row.phone)===phoneTarget) return true;
-    if(regionTarget.length>=4){
+  for(const row of rows){
+    if(!result.customer && custTarget.length>=2 && normalizeNoSpace(row.customer)===custTarget) result.customer = true;
+    if(!result.phone && phoneTarget.length>=8 && normalizePhoneDigits(row.phone)===phoneTarget) result.phone = true;
+    if(!result.region && regionTarget.length>=4){
       const rowAddr = normalizeNoSpace(row.address);
-      if(rowAddr.length>=4 && (rowAddr.includes(regionTarget) || regionTarget.includes(rowAddr))) return true;
+      if(rowAddr.length>=4 && (rowAddr.includes(regionTarget) || regionTarget.includes(rowAddr))) result.region = true;
     }
-    return false;
-  });
+    if(result.region && result.customer && result.phone) break;
+  }
+  return result;
+}
+function inquiryMatchesSagupPerf(item){
+  const m = getInquirySagupMatchFields(item);
+  return m.region || m.customer || m.phone;
 }
 function findMatchingPerfRows(item){
   const tokens = extractNameTokensFromFilename(item.fileName);
