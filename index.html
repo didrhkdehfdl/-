@@ -6563,7 +6563,7 @@ async function ensureAgentDocsLoaded(){
 async function runBizRegOcrForItem(item, targetState){
   targetState = targetState || agentDocsState;
   item.ocrStatus = 'running';
-  renderAgentDocsMain();
+  if(state.activeTab === 'agentDocs' || state.activeTab === 'omTeam') renderAgentDocsMain();
   try{
     const base64 = await loadAgentDocFileData(item.id);
     if(!base64) throw new Error('file data missing');
