@@ -7187,6 +7187,94 @@ function renderModulePricesMain(){
   });
 }
 
+// ---------- 주소 검증 (행정안전부 도로명주소 API) ----------
+// 팝업 API는 결과를 돌려받으려면 우리 쪽에 별도의 "returnUrl" 서버 페이지가
+// 있어야 하는데(POST로 결과를 보내옴), 정적 사이트(GitHub Pages)라 그걸 만들
+// 수 없다. 대신 같은 서비스가 제공하는 JSONP 검색 API(addrLinkApiJsonp.do)를
+// 쓴다 — <script> 태그로 그냥 불러오는 방식이라 CORS 제한이 없고, 팝업/리턴
+// 페이지 없이 그 자리에서 바로 검색 결과(도로명·지번 주소, 우편번호)를 받는다.
+// 이 승인키는 juso.go.kr이 "웹페이지에 그대로 넣어 쓰라"고 발급하는 키라
+// 소스에 그대로 두어도 된다(서버 비밀키가 아니라 카카오/구글 지도 JS키와 같은
+// 성격).
+const JUSO_API_KEY = 'U01TX0FVVEgyMDI2MDgyNTA4NTMyMzEyMDExNTk=';
+let jusoJsonpCounter = 0;
+function jusoSearchAddress(keyword){
+  return new Promise((resolve, reject) => {
+    const cbName = 'jusoCB_' + (++jusoJsonpCounter) + '_' + Date.now();
+    let done = false;
+    const script = document.createElement('script');
+    const cleanup = () => {
+      if(done) return;
+      done = true;
+      clearTimeout(timer);
+      delete window[cbName];
+      if(script.parentNode) script.parentNode.removeChild(script);
+    };
+    const timer = setTimeout(()=>{ cleanup(); reject(new Error('주소 검색 시간이 초과되었습니다.')); }, 10000);
+    window[cbName] = (data) => { cleanup(); resolve(data); };
+    script.src = `https://business.juso.go.kr/addrlink/addrLinkApiJsonp.do?confmKey=${encodeURIComponent(JUSO_API_KEY)}&currentPage=1&countPerPage=20&keyword=${encodeURIComponent(keyword)}&resultType=json&callback=${cbName}`;
+    script.onerror = () => { cleanup(); reject(new Error('주소 검색 요청에 실패했습니다.')); };
+    document.head.appendChild(script);
+  });
+}
+// 검색 결과 중 하나를 고를 수 있게 목록으로 보여준다 — 기존 원문보기/파일보기와
+// 같은 오버레이를 재사용한다. onPick(juso)에서 juso.roadAddr(도로명주소)·
+// juso.jibunAddr(지번주소)·juso.zipNo(우편번호)를 쓸 수 있다.
+function showAddressPickerOverlay(jusoList, onPick){
+  const overlay = document.getElementById('contractPreviewOverlay');
+  const sheet = document.getElementById('contractPreviewSheet');
+  const labelEl = document.getElementById('contractPreviewLabel');
+  labelEl.textContent = `주소 검색 결과 (${jusoList.length}건) — 정확한 주소를 클릭해서 선택하세요`;
+  sheet.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'max-width:700px; margin:0 auto; background:#fff; color:#111;';
+  jusoList.forEach(j => {
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:14px 16px; border-bottom:1px solid #e0e0e0; cursor:pointer;';
+    row.innerHTML = `<div style="font-weight:600; font-size:14px;">${escapeHtml(j.roadAddr)}</div><div style="font-size:12.5px; color:#666; margin-top:3px;">[지번] ${escapeHtml(j.jibunAddr)} · 우편번호 ${escapeHtml(j.zipNo)}</div>`;
+    row.addEventListener('mouseenter', ()=>{ row.style.background = '#f2f6ff'; });
+    row.addEventListener('mouseleave', ()=>{ row.style.background = ''; });
+    row.addEventListener('click', ()=>{
+      onPick(j);
+      overlay.classList.remove('show');
+    });
+    wrap.appendChild(row);
+  });
+  sheet.appendChild(wrap);
+  overlay.classList.add('show');
+  const downloadLink = document.getElementById('contractPreviewDownloadBtn');
+  downloadLink.style.display = 'none';
+}
+// 문의 대응 표의 "주소확인" 버튼 핸들러 — 지금 입력칸에 있는 텍스트로 검색해서,
+// 실제 존재하는 주소인지 확인하고 도로명/지번을 구분해 보여준다.
+async function handleInquiryAddressCheck(item, regionInputEl){
+  const keyword = regionInputEl.value.trim();
+  if(!keyword){ alert('먼저 지역을 입력해주세요.'); return; }
+  try{
+    const data = await jusoSearchAddress(keyword);
+    const results = data && data.results;
+    if(!results || results.common.errorCode !== '0'){
+      alert('주소 검색 중 오류가 발생했습니다: ' + (results ? results.common.errorMessage : '알 수 없는 오류'));
+      return;
+    }
+    if(Number(results.common.totalCount) === 0){
+      alert('실제로 존재하는 주소를 찾지 못했습니다. 검색어를 조금 더 구체적으로 고쳐서 다시 시도해보세요(예: 동/읍/면 + 도로명 또는 지번).');
+      return;
+    }
+    showAddressPickerOverlay(results.juso, async (picked)=>{
+      regionInputEl.value = picked.roadAddr;
+      item.region = picked.roadAddr;
+      item.jibunAddr = picked.jibunAddr;
+      item.zipNo = picked.zipNo;
+      await saveInquiryList();
+      renderInquiryMain();
+    });
+  }catch(err){
+    console.error(err);
+    alert('주소 확인 중 오류가 발생했습니다: ' + err.message);
+  }
+}
+
 // ---------- 문의 대응 (카카오톡 문의 대화 가져오기) ----------
 // "정부사업 전달방" 같은 단체 카카오톡방에서 내보낸 .txt 대화 파일을 올리면,
 // 메시지마다 적혀있는 지역/질문/성함(고객)/연락처를 자동으로 뽑아 표로 만든다.
