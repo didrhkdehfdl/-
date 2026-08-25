@@ -2164,9 +2164,9 @@ function getInquirySagupMatchFields(item){
   for(const row of rows){
     if(!result.customer && custTarget.length>=2 && normalizeNoSpace(row.customer)===custTarget) result.customer = true;
     if(!result.phone && phoneTarget.length>=8 && normalizePhoneDigits(row.phone)===phoneTarget) result.phone = true;
-    if(!result.region && regionTarget.length>=4){
+    if(!result.region && regionTarget.length>=6){
       const rowAddr = normalizeNoSpace(row.address);
-      if(rowAddr.length>=4 && (rowAddr.includes(regionTarget) || regionTarget.includes(rowAddr))) result.region = true;
+      if(rowAddr.length>=6 && (rowAddr.includes(regionTarget) || regionTarget.includes(rowAddr))) result.region = true;
     }
     if(result.region && result.customer && result.phone) break;
   }
