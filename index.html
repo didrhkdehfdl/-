@@ -5746,7 +5746,7 @@ function cropAndUpscaleCanvas(canvas, bbox, scaleFactor){
 // 그럴 땐 true를 넘겨서 저장은 호출하는 쪽이 몇 건 단위로 몰아서 하게 한다.
 async function runOcrForItem(item, skipSave){
   item.ocrStatus = 'running';
-  renderInspectionMain();
+  if(state.activeTab === 'inspection') renderInspectionMain();
   try{
     const base64 = await loadInspectionFileData(item.id);
     if(!base64) throw new Error('file data missing');
