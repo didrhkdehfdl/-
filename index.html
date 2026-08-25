@@ -8297,6 +8297,7 @@ function renderCardReconMain(){
   });
   main.querySelectorAll('.cr-ledger-remove-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
+      if(!confirm('이 관리대장 파일을 목록에서 제거할까요?')) return;
       const idx = Number(btn.dataset.idx);
       s.ledgerWbs.splice(idx, 1);
       s.ledgerFileNames = s.ledgerWbs.map(w=>w.fileName);
