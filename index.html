@@ -4332,6 +4332,11 @@ async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch
   };
   const dateCols = new Set(['E']);
   const numericCols = new Set(['K','L','Q','R','S','V','W','X','AA','AB','AC','AE','AG','AH','AI','AJ','AK','AP','AQ','AU']);
+  // 구매/판매단가는 "와트당 단가*와트수" 수식으로 남겨서 나중에 모듈 단가관리에서
+  // 단가가 바뀌면 이 셀도 다시 계산되게 한다(모델을 못 찾으면 숫자 그대로 둠).
+  const formulaOverrides = {};
+  if(lv.moduleBuyFormula) formulaOverrides.R = lv.moduleBuyFormula;
+  if(lv.moduleSellFormula) formulaOverrides.S = lv.moduleSellFormula;
 
   Object.entries(plainValues).forEach(([col, raw])=>{
     let cEl = findCell(targetRow, col);
@@ -4341,7 +4346,12 @@ async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch
       targetRow.appendChild(cEl);
     }
     while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
-    if(dateCols.has(col) && raw){
+    if(formulaOverrides[col]){
+      cEl.removeAttribute('t');
+      const fEl = sheetDoc.createElementNS(SS_NS,'f');
+      fEl.textContent = formulaOverrides[col];
+      cEl.appendChild(fEl);
+    }else if(dateCols.has(col) && raw){
       // 엑셀 날짜 일련번호로 저장(1900-01-01 기준) — 문자열로 넣으면 날짜 서식이 깨진다.
       const d = new Date(raw);
       const epoch = new Date(Date.UTC(1899,11,30));
