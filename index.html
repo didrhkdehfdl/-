@@ -7482,11 +7482,15 @@ async function renderInquiryMain(){
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:60px;">삭제</th>
         </tr></thead>
         <tbody>
-          ${pageItems.map(it => `
-            <tr data-id="${it.id}" ${inquiryMatchesSagupPerf(it) ? 'style="background: rgba(46,158,91,0.18);"' : ''}>
+          ${pageItems.map(it => {
+            const mf = getInquirySagupMatchFields(it);
+            const matchTag = '<div style="font-size:9.5px; color:#2e9e5b; font-weight:700; margin-top:3px;">✓ 일치</div>';
+            return `
+            <tr data-id="${it.id}" ${(mf.region||mf.customer||mf.phone) ? 'style="background: rgba(46,158,91,0.18);"' : ''}>
               <td style="padding:5px 6px; text-align:center;"><input type="text" class="inquiry-f" data-field="date" data-id="${it.id}" value="${escapeHtml(it.date)}" placeholder="YYYY-MM-DD" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
               <td style="padding:5px 6px; text-align:center;">
-                <input type="text" class="inquiry-f" data-field="region" data-id="${it.id}" value="${escapeHtml(it.region)}" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;">
+                <input type="text" class="inquiry-f" data-field="region" data-id="${it.id}" value="${escapeHtml(it.region)}" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid ${mf.region?'#2e9e5b':'var(--line)'}; border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;">
+                ${mf.region ? matchTag : ''}
                 ${it.jibunAddr ? `<div style="font-size:10px; color:var(--muted); margin-top:3px;">[지번] ${escapeHtml(it.jibunAddr)}${it.zipNo?` · ${escapeHtml(it.zipNo)}`:''}</div>` : ''}
                 <button class="inquiry-addrcheck-btn" data-id="${it.id}" style="margin-top:3px; font-size:10.5px; padding:3px 7px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">주소확인</button>
               </td>
@@ -7494,8 +7498,14 @@ async function renderInquiryMain(){
                 <button class="inquiry-map-btn" data-provider="naver" data-id="${it.id}" title="네이버 지도에서 보기" style="font-size:11px; padding:4px 6px; border-radius:5px; border:1px solid #03c75a; background:transparent; color:#03c75a; cursor:pointer;">네이버</button>
                 <button class="inquiry-map-btn" data-provider="kakao" data-id="${it.id}" title="카카오맵에서 보기" style="font-size:11px; padding:4px 6px; border-radius:5px; border:1px solid #fee500; background:transparent; color:#8d7500; cursor:pointer;">카카오</button>
               </td>
-              <td style="padding:5px 6px; text-align:center;"><input type="text" class="inquiry-f" data-field="customer" data-id="${it.id}" value="${escapeHtml(it.customer)}" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
-              <td style="padding:5px 6px; text-align:center;"><input type="text" class="inquiry-f" data-field="phone" data-id="${it.id}" value="${escapeHtml(it.phone)}" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:5px 6px; text-align:center;">
+                <input type="text" class="inquiry-f" data-field="customer" data-id="${it.id}" value="${escapeHtml(it.customer)}" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid ${mf.customer?'#2e9e5b':'var(--line)'}; border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;">
+                ${mf.customer ? matchTag : ''}
+              </td>
+              <td style="padding:5px 6px; text-align:center;">
+                <input type="text" class="inquiry-f" data-field="phone" data-id="${it.id}" value="${escapeHtml(it.phone)}" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid ${mf.phone?'#2e9e5b':'var(--line)'}; border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;">
+                ${mf.phone ? matchTag : ''}
+              </td>
               <td style="padding:5px 4px; text-align:center;"><textarea class="inquiry-f" data-field="detail" data-id="${it.id}" rows="1" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 5px; color:var(--text); font-size:12px; line-height:1.4; resize:none; overflow:hidden; min-height:30px;">${escapeHtml(it.detail)}</textarea></td>
               <td style="padding:5px 4px; text-align:center;"><textarea class="inquiry-f" data-field="response" data-id="${it.id}" rows="1" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 5px; color:var(--text); font-size:12px; line-height:1.4; resize:none; overflow:hidden; min-height:30px;">${escapeHtml(it.response||'')}</textarea></td>
               <td style="padding:5px 6px; text-align:center;"><button class="inquiry-del-btn" data-id="${it.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button></td>
