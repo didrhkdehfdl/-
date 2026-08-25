@@ -10000,6 +10000,7 @@ function renderRecordRows(){
 
   tbody.querySelectorAll('.del-row-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
+      if(!confirm('이 행을 삭제할까요?')) return;
       const id = btn.closest('tr').dataset.id;
       c.records = c.records.filter(r=>r.id!==id);
       if(c.records.length===0) c.records.push(newRecord(c.defaultCorp));
