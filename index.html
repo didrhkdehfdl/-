@@ -4283,23 +4283,24 @@ async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch
   const rec = salesMatch ? salesMatch.record : null;
   const salesCase = salesMatch ? salesMatch.salesCase : null;
   const structureSell = computeLedgerStructureSell(profitCase, rec);
+  const lv = resolveProfitLedgerValues(profitCase, rec, salesCase);
 
   const plainValues = {
     C: profitCase.customer || '',
     D: profitCase.branch || '',
     E: profitCase.constructionDate ? isoDate(new Date(profitCase.constructionDate)) : '',
     F: '#N/A',
-    G: rec ? (rec.corp||'') : '',
-    H: salesCase ? (salesCase.agentName||'') : '',
+    G: lv.corp,
+    H: lv.agentName,
     I: 'X',
     J: profitCase.teamName || '',
     K: Number(profitCase.capacityKw)||0,
     L: Math.round((Number(profitCase.totalBusinessCost)||0)*1.1),
     O: '사무실',
-    P: profitCase.moduleModel || '',
+    P: lv.moduleModel,
     Q: Number(profitCase.moduleQty)||0,
-    R: Number(profitCase.moduleBuy)||0,
-    S: Number(profitCase.moduleSell)||0,
+    R: lv.moduleBuy,
+    S: lv.moduleSell,
     U: profitCase.inverterModel || '',
     V: Number(profitCase.inverterQty)||0,
     W: Number(profitCase.inverterBuy)||0,
