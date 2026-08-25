@@ -2143,6 +2143,30 @@ function findOMListRowByCustomer(name){
   if(!target) return null;
   return (omListState.rows||[]).find(row => String(row.customer||'').replace(/\s/g,'')===target) || null;
 }
+// 문의 대응 탭에서 "이 문의가 이미 사급 실적리스트에 있는 고객인지" 표시하기
+// 위한 매칭 — 지역/고객명/연락처 중 하나라도 겹치면 일치로 본다. 연락처는
+// 숫자만, 고객명은 공백만 무시하고 정확히 일치해야 하고, 지역은 문의에 적힌
+// 대략적인 지역명이 실적리스트의 상세주소 안에 포함(또는 그 반대)되면
+// 일치로 본다 — 너무 짧은 문자열(1~3자)까지 허용하면 "시"/"동" 같은 흔한
+// 글자로 오탐이 나서 최소 길이를 둔다.
+function normalizePhoneDigits(v){ return String(v||'').replace(/\D/g,''); }
+function normalizeNoSpace(v){ return String(v||'').replace(/\s/g,''); }
+function inquiryMatchesSagupPerf(item){
+  const rows = [...(importState.rows||[]), ...(importState.manualRows||[])];
+  if(!rows.length) return false;
+  const custTarget = normalizeNoSpace(item.customer);
+  const phoneTarget = normalizePhoneDigits(item.phone);
+  const regionTarget = normalizeNoSpace(item.region);
+  return rows.some(row => {
+    if(custTarget.length>=2 && normalizeNoSpace(row.customer)===custTarget) return true;
+    if(phoneTarget.length>=8 && normalizePhoneDigits(row.phone)===phoneTarget) return true;
+    if(regionTarget.length>=4){
+      const rowAddr = normalizeNoSpace(row.address);
+      if(rowAddr.length>=4 && (rowAddr.includes(regionTarget) || regionTarget.includes(rowAddr))) return true;
+    }
+    return false;
+  });
+}
 function findMatchingPerfRows(item){
   const tokens = extractNameTokensFromFilename(item.fileName);
   const nameCandidates = [item.extractedName, ...tokens].filter(Boolean).map(s=>s.replace(/\s/g,''));
