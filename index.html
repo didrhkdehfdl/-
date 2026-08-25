@@ -4124,12 +4124,19 @@ function resolveProfitLedgerValues(profitCase, rec, salesCase){
   const masterPrice = PROFIT_MODULE_PRICES[moduleModel];
   const moduleBuy = masterPrice ? masterPrice.buy : (Number(profitCase.moduleBuy)||0);
   const moduleSell = masterPrice ? masterPrice.sell : (Number(profitCase.moduleSell)||0);
+  // 정산데이터 시트에는 구매/판매단가를 "와트당 단가*와트수" 수식(예: =150*640)
+  // 그대로 남겨서, 나중에 모듈 단가관리에서 와트당 단가가 바뀌면 이 셀도 다시
+  // 계산되게 한다 — 모듈 마스터에 없는(단종) 모델이면 분해할 수 없으니 그냥
+  // 숫자 그대로 쓴다.
+  const masterRow = moduleMaster.find(m=>m.modelCode===moduleModel);
+  const moduleBuyFormula = masterRow ? `${Number(masterRow.materialBuyPerWatt)||0}*${Number(masterRow.watt)||0}` : null;
+  const moduleSellFormula = masterRow ? `${Number(masterRow.materialSellPerWatt)||0}*${Number(masterRow.watt)||0}` : null;
   const companyPriceSource = rec ? rec.companyPrice : (perfRow ? perfRow.companyPrice : null);
   const companyPrice = (companyPriceSource !== null && companyPriceSource !== undefined && companyPriceSource !== '')
     ? Math.abs(Number(companyPriceSource)||0) : '';
   const salesDeduction = Number(profitCase.salesDeduction) || Math.abs(Number((rec && rec.extra) || (perfRow && perfRow.extra) || 0)) || 0;
   const salesDeductionNote = profitCase.salesDeductionNote || (rec && rec.note) || (perfRow && perfRow.extraNote) || (perfRow && perfRow.note) || '';
-  return { corp, agentName, moduleModel, moduleBuy, moduleSell, companyPrice, salesDeduction, salesDeductionNote };
+  return { corp, agentName, moduleModel, moduleBuy, moduleSell, moduleBuyFormula, moduleSellFormula, companyPrice, salesDeduction, salesDeductionNote };
 }
 async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch){
   await loadJSZipLib();
