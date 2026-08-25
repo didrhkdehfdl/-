@@ -9089,26 +9089,151 @@ async function handleOMListFile(e){
   }
   renderOMListMain();
 }
-// 원본과 같은 3줄 머리글(빈 줄/그룹명/실제 항목명) + B~AI열 구성으로 다시
-// 엑셀을 만든다 — 자재비합계(Z열)는 원본처럼 수식 대신, 값을 그대로 계산해 넣는다.
-function exportOMListToExcel(){
-  const header1 = new Array(35).fill('');
-  header1[1] = '사업정보'; header1[15] = '매출정보'; header1[22] = '비용정보';
-  const header2 = new Array(35).fill('');
-  const labelByLetter = {};
-  OM_LIST_COLUMNS.forEach(([f,label], i)=>{ labelByLetter[OM_LIST_COL_LETTERS[i]] = label; });
-  OM_LIST_COL_LETTERS.forEach((letter,i)=>{ header2[colLetterToIndex(letter)] = OM_LIST_COLUMNS[i][1]; });
-  header2[colLetterToIndex('Z')] = '자재비합계';
-  const dataRows = omListState.rows.map(row=>{
-    const arr = new Array(35).fill('');
-    OM_LIST_COLUMNS.forEach(([f], i)=>{ arr[colLetterToIndex(OM_LIST_COL_LETTERS[i])] = row[f]||''; });
-    arr[colLetterToIndex('Z')] = omMaterialTotal(row);
-    return arr;
+// 저장해둔 양식(omListTemplateState.buffer) 파일의 XML을 JSZip으로 직접
+// 고쳐서, 머리글(1~3행: 병합·굵은글씨·색상·테두리 전부 포함)은 원본 그대로
+// 두고 데이터 영역(4행부터)만 지금 화면의 rows로 통째로 다시 채운다.
+// SheetJS로 새로 만드는 방식은 셀 스타일을 못 써서 원본과 모양이 달라지므로,
+// 카드관리/영업비 정산 통합본과 같은 "원본 파일 직접 패치" 방식을 쓴다.
+// 4행에 이미 있던 셀(양식의 첫 데이터 행)의 스타일을 그대로 복제해 모든 새
+// 행에 입히고, 그 행에 있던 수식(No.열의 =ROW()-3, 자재비합계열의 =X*Y)은
+// 값을 덮어쓰지 않고 행 번호만 새로 바꿔서 그대로 살려둔다.
+async function patchOMListTemplate(masterArrayBuffer, rows){
+  await loadJSZipLib();
+  const zip = await window.JSZip.loadAsync(masterArrayBuffer);
+  const parser = new DOMParser();
+  const serializer = new XMLSerializer();
+  const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const SS_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+
+  const wbFile = zip.file('xl/workbook.xml');
+  if(!wbFile) return { error: '엑셀 구조를 인식할 수 없습니다(workbook.xml 없음).' };
+  const wbXmlText = await wbFile.async('string');
+  const wbDoc = parser.parseFromString(wbXmlText, 'application/xml');
+
+  // "2025년도 데이터"보다 "2026년도 데이터"가 최신이듯, 연도가 가장 큰
+  // "○○○○년도 데이터" 시트를 찾는다 — parseOMListWorkbook과 같은 방식이라
+  // 해가 바뀌어 시트 이름이 달라져도 코드를 손보지 않아도 된다.
+  const sheetEls = Array.from(wbDoc.getElementsByTagName('sheet'));
+  const yearSheets = sheetEls
+    .map(el => ({ el, year: parseInt((el.getAttribute('name')||'').match(/(\d{4}).*데이터/)?.[1], 10) }))
+    .filter(x => !isNaN(x.year));
+  const sheetEl = yearSheets.length
+    ? yearSheets.sort((a,b)=>b.year-a.year)[0].el
+    : sheetEls.find(el => (el.getAttribute('name')||'').includes('데이터'));
+  if(!sheetEl) return { error: '양식 파일에서 "○○○○년도 데이터" 시트를 찾을 수 없습니다.' };
+  const rId = sheetEl.getAttributeNS(REL_NS, 'id');
+
+  const relsFile = zip.file('xl/_rels/workbook.xml.rels');
+  if(!relsFile) return { error: '워크북 관계 정보를 찾을 수 없습니다.' };
+  const relsText = await relsFile.async('string');
+  const relsDoc = parser.parseFromString(relsText, 'application/xml');
+  const relEl = Array.from(relsDoc.getElementsByTagName('Relationship')).find(el => el.getAttribute('Id') === rId);
+  if(!relEl) return { error: '시트 경로 정보를 찾을 수 없습니다.' };
+  let target = (relEl.getAttribute('Target')||'').replace(/^\.?\//,'');
+  const sheetPath = target.startsWith('xl/') ? target : ('xl/' + target);
+  const sheetFile = zip.file(sheetPath);
+  if(!sheetFile) return { error: `시트 파일(${sheetPath})을 찾을 수 없습니다.` };
+
+  const sheetXmlText = await sheetFile.async('string');
+  const sheetDoc = parser.parseFromString(sheetXmlText, 'application/xml');
+  const sheetDataEl = sheetDoc.getElementsByTagName('sheetData')[0];
+  if(!sheetDataEl) return { error: '시트 데이터 영역을 찾을 수 없습니다.' };
+
+  const allRows = Array.from(sheetDataEl.getElementsByTagName('row'));
+  const dataRowEls = allRows.filter(r => Number(r.getAttribute('r')) >= 4)
+    .sort((a,b)=> Number(a.getAttribute('r')) - Number(b.getAttribute('r')));
+  if(!dataRowEls.length){
+    return { error: '양식 파일의 4행부터에 스타일을 복제할 샘플 데이터 행이 하나도 없습니다. 원본처럼 최소 1개 행은 남겨둔 채로 양식을 올려주세요.' };
+  }
+  const styleTemplateRow = dataRowEls[0];
+  const oldRowNum = styleTemplateRow.getAttribute('r');
+  dataRowEls.forEach(r => r.parentNode.removeChild(r));
+
+  const fieldByLetter = {};
+  OM_LIST_COLUMNS.forEach(([f], i)=>{ fieldByLetter[OM_LIST_COL_LETTERS[i]] = f; });
+  const dateFields = new Set(['receivedDate','processedDate','invoiceDate']);
+
+  let insertAfter = null; // 마지막으로 끼워넣은 행(없으면 머리글 뒤 맨 앞) 뒤에 순서대로 이어 붙인다
+  rows.forEach((row, idx) => {
+    const newRowNum = String(4 + idx);
+    const cloned = styleTemplateRow.cloneNode(true);
+    cloned.setAttribute('r', newRowNum);
+    Array.from(cloned.getElementsByTagName('c')).forEach(c => {
+      const ref = c.getAttribute('r') || '';
+      const col = ref.replace(/\d+$/, '');
+      c.setAttribute('r', col + newRowNum);
+      const fEls = Array.from(c.getElementsByTagName('f'));
+      if(fEls.length){
+        // No.열의 =ROW()-3, 자재비합계열의 =X{n}*Y{n} 같은 수식 — 원본 행
+        // 번호를 새 행 번호로 바꿔서 그대로 되살린다(ROW()-3처럼 행 번호가
+        // 아예 없는 수식은 바꿀 게 없어 그대로 유지된다).
+        fEls.forEach(fEl=>{
+          fEl.removeAttribute('t'); fEl.removeAttribute('ref'); fEl.removeAttribute('si');
+          const re = new RegExp('([A-Z]{1,3})' + oldRowNum + '(?!\\d)', 'g');
+          fEl.textContent = fEl.textContent.replace(re, '$1'+newRowNum);
+        });
+        return;
+      }
+      const field = fieldByLetter[col];
+      if(!field) return; // 처리자 3/4번째 칸처럼 매핑이 없는 칸은 양식 그대로 둔다
+      const raw = row[field];
+      while(c.firstChild) c.removeChild(c.firstChild);
+      if(dateFields.has(field) && raw){
+        const d = new Date(raw);
+        const epoch = new Date(Date.UTC(1899,11,30));
+        const days = Math.round((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()) - epoch.getTime())/86400000);
+        c.removeAttribute('t');
+        const vEl = sheetDoc.createElementNS(SS_NS,'v');
+        vEl.textContent = String(days);
+        c.appendChild(vEl);
+      } else if(OM_LIST_NUMBER_FIELDS.includes(field)){
+        c.removeAttribute('t');
+        const vEl = sheetDoc.createElementNS(SS_NS,'v');
+        vEl.textContent = String(Number(raw)||0);
+        c.appendChild(vEl);
+      } else {
+        c.setAttribute('t','inlineStr');
+        const isEl = sheetDoc.createElementNS(SS_NS,'is');
+        const tEl = sheetDoc.createElementNS(SS_NS,'t');
+        tEl.textContent = String(raw||'');
+        isEl.appendChild(tEl);
+        c.appendChild(isEl);
+      }
+    });
+    if(insertAfter){ insertAfter.parentNode.insertBefore(cloned, insertAfter.nextSibling); }
+    else { sheetDataEl.appendChild(cloned); }
+    insertAfter = cloned;
   });
-  const ws = XLSX.utils.aoa_to_sheet([header1, header2, [], ...dataRows]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '2026년도 데이터');
-  XLSX.writeFile(wb, `OM_리스트_${isoDate(new Date())}.xlsx`);
+
+  zip.file(sheetPath, serializer.serializeToString(sheetDoc));
+
+  let calcPr = wbDoc.getElementsByTagName('calcPr')[0];
+  if(!calcPr){
+    calcPr = wbDoc.createElementNS(SS_NS, 'calcPr');
+    wbDoc.documentElement.appendChild(calcPr);
+  }
+  calcPr.setAttribute('fullCalcOnLoad','1');
+  zip.file('xl/workbook.xml', serializer.serializeToString(wbDoc));
+
+  const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
+  return { blob };
+}
+async function exportOMListToExcel(){
+  if(!omListTemplateState.buffer){
+    alert('먼저 원본 "독립채산제(AS,타부서지원)" 엑셀 파일을 양식으로 한 번 올려주세요 — "엑셀로 내보내기" 옆의 양식 업로드 칸을 이용하시면 됩니다.');
+    return;
+  }
+  const result = await patchOMListTemplate(omListTemplateState.buffer, omListState.rows);
+  if(result.error){
+    alert('엑셀을 만들지 못했습니다: ' + result.error);
+    return;
+  }
+  const url = URL.createObjectURL(result.blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `OM_리스트_${isoDate(new Date())}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 // 연락처(배우자 번호 등 두 줄)·접수내역·조치내역·비고는 줄바꿈이 있는 값이
 // 흔해서, 입력칸이 내용 줄 수에 맞춰 자동으로 늘어나는 여러 줄 입력칸으로 둔다.
