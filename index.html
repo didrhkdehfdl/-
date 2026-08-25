@@ -7314,7 +7314,7 @@ async function handleInquiryAddressCheck(item, regionInputEl){
 // 식 번호매기기와 "성함 :" 식 라벨이 섞여 있어 최대한 관대하게 파싱한다 —
 // 자동 인식이 틀린 항목은 표에서 바로 고칠 수 있다.
 const INQUIRY_KEY = 'inquiry-list';
-let inquiryState = { items:[], loaded:false, loading:false, search:'', page:1, importMsg:'', sortKey:'date', sortDir:'desc' };
+let inquiryState = { items:[], loaded:false, loading:false, search:'', page:1, importMsg:'', sortKey:'date', sortDir:'desc', matchFirst:false };
 const INQUIRY_PAGE_SIZE = 50;
 const INQUIRY_DATE_RE = /^-+\s*(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/;
 const INQUIRY_HEADER_RE = /^\[(.+?)\]\s*\[((?:오전|오후)\s*\d{1,2}:\d{2})\]\s*(.*)$/;
@@ -7533,6 +7533,20 @@ async function renderInquiryMain(){
     `}
   `;
 
+  main.querySelectorAll('th[data-sort-key]').forEach(th=>{
+    th.addEventListener('click', ()=>{
+      const key = th.dataset.sortKey;
+      if(s.sortKey === key) s.sortDir = s.sortDir==='asc' ? 'desc' : 'asc';
+      else { s.sortKey = key; s.sortDir = 'asc'; }
+      renderInquiryMain();
+    });
+  });
+  const matchFirstBtn = document.getElementById('inquiryMatchFirstBtn');
+  if(matchFirstBtn) matchFirstBtn.addEventListener('click', ()=>{
+    s.matchFirst = !s.matchFirst;
+    s.page = 1;
+    renderInquiryMain();
+  });
   const importInput = document.getElementById('inquiryImportInput');
   if(importInput) importInput.addEventListener('change', async (e)=>{
     const file = e.target.files[0];
