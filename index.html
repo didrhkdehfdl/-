@@ -7447,6 +7447,11 @@ async function renderInquiryMain(){
     ? s.items.filter(it => [it.region,it.question,it.customer,it.phone,it.sender,it.detail,it.response].some(v=>(v||'').includes(q)))
     : s.items;
   items = items.slice().sort((a,b)=>{
+    if(s.matchFirst){
+      const am = inquiryMatchesSagupPerf(a) ? 1 : 0;
+      const bm = inquiryMatchesSagupPerf(b) ? 1 : 0;
+      if(am !== bm) return bm - am;
+    }
     const av = String(a[s.sortKey]||''), bv = String(b[s.sortKey]||'');
     const cmp = av.localeCompare(bv, 'ko');
     return s.sortDir==='desc' ? -cmp : cmp;
@@ -7467,7 +7472,7 @@ async function renderInquiryMain(){
       <input type="file" id="inquiryImportInput" accept=".txt" style="font-size:13px; color:var(--muted);">
       <input id="inquirySearch" placeholder="지역/질문/고객명/연락처 검색" value="${escapeHtml(s.search)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; min-width:220px;">
       <button id="inquiryAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 문의 추가</button>
-      <span style="font-size:12px; color:#2e9e5b; font-weight:600;">사급 ${sagupMatchCount}건 일치</span>
+      <button id="inquiryMatchFirstBtn" title="일치하는 문의만 위로 모아 보기" style="font-size:12px; padding:8px 12px; border-radius:7px; border:1px solid #2e9e5b; background:${s.matchFirst?'rgba(46,158,91,.22)':'transparent'}; color:#2e9e5b; font-weight:600; cursor:pointer;">사급 ${sagupMatchCount}건 일치</button>
       <button id="inquiryExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
       <span style="font-size:12px; color:var(--muted);">총 ${items.length}건</span>
     </div>
