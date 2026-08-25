@@ -7762,10 +7762,15 @@ function cardParts(full){
   if(!m) return null;
   return { p1:m[1], p2:m[2], p3:m[3], p4:m[4] };
 }
+// 3번째 그룹(가운데 4자리)은 카드사에 따라 "****"처럼 마스킹돼서 올 수 있어
+// \S{4}로 느슨하게 받아들이지만, 실제 일치 여부는 앞 8자리(마스킹되지 않는
+// 부분)와 뒷 4자리를 모두 비교해야 한다 — 뒷 4자리만 비교하면 카드를 여러 장
+// 한꺼번에 대사할 때(reconcileAllLedgerCards) 뒷자리가 우연히 같은 다른
+// 카드의 승인내역이 서로 뒤섞일 수 있다.
 function approvalRowMatchesCard(cardNoStr, parts){
   const m = String(cardNoStr||'').trim().match(/^(\d{4})-(\d{4})-(\S{4})-(\d{4})$/);
   if(!m) return false;
-  return m[4]===parts.p4;
+  return m[1]===parts.p1 && m[2]===parts.p2 && m[4]===parts.p4;
 }
 function reconcileCardEntries(ledgerEntries, approvalEntries){
   const used = new Array(approvalEntries.length).fill(false);
