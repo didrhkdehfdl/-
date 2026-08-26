@@ -6387,6 +6387,16 @@ async function renderAdminApprovalList(){
         ${permsHtml}
       </div>`;
     }).join('');
+    listEl.querySelectorAll('.admin2-name-input').forEach(inp=>{
+      inp.addEventListener('change', async ()=>{
+        try{
+          await fbDb.collection('users').doc(inp.dataset.id).update({ name: inp.value.trim() });
+        }catch(err){
+          console.error(err);
+          alert('이름을 저장하지 못했습니다: ' + (err.message || err));
+        }
+      });
+    });
     listEl.querySelectorAll('.admin2-savetabs-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         const id = btn.dataset.id;
