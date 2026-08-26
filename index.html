@@ -9636,9 +9636,15 @@ async function handleCorpCardAdd(){
       const wb = XLSX.read(buf, { type:'array', cellDates:true });
       const meta = parseCorpCardWorkbookMeta(wb);
       if(meta.error){ alert(meta.error); return; }
-      const id = rid();
+      // 같은 카드번호로 이미 등록되어 있으면(같은 카드 파일을 다시 올린 경우)
+      // 새 카드로 중복 추가하지 않고 기존 카드를 그대로 갱신한다 — 안 그러면
+      // 올릴 때마다 똑같은 카드가 여러 개 쌓이고, 예전에 잘못 파싱됐던
+      // 카드도 다시 올려서 고칠 방법이 없어진다.
+      const existing = corpCardState.cards.find(c => c.cardNumber === meta.cardNumber);
+      const id = existing ? existing.id : rid();
       const last4 = (meta.cardNumber.match(/(\d{4})\D*$/)||[])[1] || meta.cardNumber;
-      corpCardState.cards.push({ id, cardNumber: meta.cardNumber, label: last4 });
+      if(existing){ existing.label = last4; }
+      else { corpCardState.cards.push({ id, cardNumber: meta.cardNumber, label: last4 }); }
       corpCardState.rowsByCard[id] = {};
       meta.months.forEach(monthName => {
         corpCardState.rowsByCard[id][monthName] = parseCorpCardMonthRows(wb.Sheets[monthName]);
