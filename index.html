@@ -9413,9 +9413,9 @@ async function renderOMListMain(){
           <th style="padding:6px 4px; color:var(--muted);">삭제</th>
         </tr></thead>
         <tbody>
-          ${filtered.map((row,i)=>`
+          ${pageRows.map((row,i)=>`
             <tr data-id="${row.id}">
-              <td style="padding:5px 4px; text-align:center; position:sticky; left:0; background:var(--panel-2);">${i+1}</td>
+              <td style="padding:5px 4px; text-align:center; position:sticky; left:0; background:var(--panel-2);">${(s.page-1)*OM_LIST_PAGE_SIZE+i+1}</td>
               ${OM_LIST_COLUMNS.map(([f])=>`<td style="padding:3px 4px;">${omListCellHtml(row,f)}</td>`).join('')}
               <td style="padding:5px 4px; text-align:center;"><button class="om-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button></td>
             </tr>
@@ -9423,11 +9423,22 @@ async function renderOMListMain(){
         </tbody>
       </table>
     </div>
+    ${totalPages>1 ? `
+    <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
+      <button id="omListPrevPageBtn" ${s.page<=1?'disabled':''} style="font-size:12px; padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--text); cursor:pointer;">◀ 이전</button>
+      <span style="font-size:12.5px; color:var(--muted);">${s.page} / ${totalPages} 페이지</span>
+      <button id="omListNextPageBtn" ${s.page>=totalPages?'disabled':''} style="font-size:12px; padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--text); cursor:pointer;">다음 ▶</button>
+    </div>
+    ` : ''}
     `}
   `;
 
   document.getElementById('omListFile').addEventListener('change', handleOMListFile);
-  document.getElementById('omListSearch').addEventListener('input', (e)=>{ omListState.search = e.target.value; renderOMListMain(); });
+  document.getElementById('omListSearch').addEventListener('input', (e)=>{ omListState.search = e.target.value; omListState.page = 1; renderOMListMain(); });
+  const omListPrevBtn = document.getElementById('omListPrevPageBtn');
+  if(omListPrevBtn) omListPrevBtn.addEventListener('click', ()=>{ omListState.page -= 1; renderOMListMain(); });
+  const omListNextBtn = document.getElementById('omListNextPageBtn');
+  if(omListNextBtn) omListNextBtn.addEventListener('click', ()=>{ omListState.page += 1; renderOMListMain(); });
   document.getElementById('omListAddRowBtn').addEventListener('click', async ()=>{
     omListState.rows.push(newOMListRow());
     await saveOMListRows();
