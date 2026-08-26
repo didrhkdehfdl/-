@@ -11014,9 +11014,12 @@ function initResizableTable(table){
     try{ localStorage.setItem(key, JSON.stringify(widths)); }catch(e){}
   }
 
+  // 여기도 위와 같은 이유로 읽기(getComputedStyle)와 쓰기(style.position)를
+  // 열마다 번갈아 하지 않고 전부 읽은 다음에 전부 쓴다.
+  const needsRelative = leafCells.map(({el}) => getComputedStyle(el).position === 'static');
+  leafCells.forEach(({el}, i) => { if(needsRelative[i]) el.style.position = 'relative'; });
   leafCells.forEach(({el, colStart, colSpan}) => {
     const targetCol = cols[colStart + colSpan - 1];
-    if(getComputedStyle(el).position === 'static') el.style.position = 'relative';
     const handle = document.createElement('div');
     handle.className = 'col-resize-handle';
     handle.addEventListener('mousedown', (e)=>{
