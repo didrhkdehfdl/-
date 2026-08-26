@@ -2157,26 +2157,44 @@ function normalizeNoSpace(v){ return String(v||'').replace(/\s/g,''); }
 // 지역/고객명/연락처 중 실제로 어떤 항목이 겹쳤는지까지 알아야 화면에 표시할
 // 수 있어서, 단순 boolean이 아니라 {region,customer,phone} 일치 여부를 각각
 // 돌려준다.
-function getInquirySagupMatchFields(item){
+// 문의가 최대 900건대, 사급 실적리스트도 수백 건이라 문의마다 실적리스트를
+// 처음부터 훑으면(문의 수 × 실적 수) 매번 수십만 번 비교가 돌아 렌더링이
+// 눈에 띄게 느려진다(실측 300ms대) — 특히 고객명/연락처는 정확히 일치해야만
+// 하므로 애초에 O(1) 조회가 가능한 Set으로 미리 만들어두면 충분하다. 지역만
+// 부분 포함 여부를 봐야 해서 목록 하나는 그대로 두되, 정규화(공백/숫자만
+// 남기기)를 실적리스트 쪽에서 매번 다시 하지 않도록 한 번만 정규화해서
+// 캐시해둔다. 렌더링 한 번에 한 번만 만들어서 문의 건마다 재사용해야 효과가
+// 있으므로, 호출부(renderInquiryMain)에서 만들어 넘겨준다.
+function buildPerfMatchIndex(){
   const rows = [...(importState.rows||[]), ...(importState.manualRows||[])];
+  const customerSet = new Set();
+  const phoneSet = new Set();
+  const addrList = [];
+  rows.forEach(row => {
+    const c = normalizeNoSpace(row.customer);
+    if(c.length>=2) customerSet.add(c);
+    const p = normalizePhoneDigits(row.phone);
+    if(p.length>=8) phoneSet.add(p);
+    const a = normalizeNoSpace(row.address);
+    if(a.length>=8) addrList.push(a);
+  });
+  return { customerSet, phoneSet, addrList };
+}
+function getInquirySagupMatchFields(item, index){
+  const idx = index || buildPerfMatchIndex();
   const result = { region:false, customer:false, phone:false };
-  if(!rows.length) return result;
   const custTarget = normalizeNoSpace(item.customer);
   const phoneTarget = normalizePhoneDigits(item.phone);
   const regionTarget = normalizeNoSpace(item.region);
-  for(const row of rows){
-    if(!result.customer && custTarget.length>=2 && normalizeNoSpace(row.customer)===custTarget) result.customer = true;
-    if(!result.phone && phoneTarget.length>=8 && normalizePhoneDigits(row.phone)===phoneTarget) result.phone = true;
-    if(!result.region && regionTarget.length>=8){
-      const rowAddr = normalizeNoSpace(row.address);
-      if(rowAddr.length>=8 && (rowAddr.includes(regionTarget) || regionTarget.includes(rowAddr))) result.region = true;
-    }
-    if(result.region && result.customer && result.phone) break;
+  if(custTarget.length>=2 && idx.customerSet.has(custTarget)) result.customer = true;
+  if(phoneTarget.length>=8 && idx.phoneSet.has(phoneTarget)) result.phone = true;
+  if(regionTarget.length>=8){
+    result.region = idx.addrList.some(addr => addr.includes(regionTarget) || regionTarget.includes(addr));
   }
   return result;
 }
-function inquiryMatchesSagupPerf(item){
-  const m = getInquirySagupMatchFields(item);
+function inquiryMatchesSagupPerf(item, index){
+  const m = getInquirySagupMatchFields(item, index);
   return m.region || m.customer || m.phone;
 }
 function findMatchingPerfRows(item){
