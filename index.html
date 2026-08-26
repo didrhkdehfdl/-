@@ -398,6 +398,9 @@
       <button class="tab-btn" data-tab="cardrecon" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">🔄</span> 카드관리
       </button>
+      <button class="tab-btn" data-tab="corpCard" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
+        <span style="width:18px; text-align:center;">💳</span> 법인카드
+      </button>
       <button class="tab-btn" data-tab="omTeam" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">🛠️</span> O&M팀
       </button>
@@ -2256,7 +2259,7 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
+  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
@@ -2275,6 +2278,8 @@ function renderSidebar(){
               ? '<div class="empty-side">모듈 단가 마스터를 관리하는 화면입니다.<br>여기서 수정한 단가는 새로 만드는 정산 건부터 적용됩니다.</div>'
               : state.activeTab === 'cardrecon'
                 ? '<div class="empty-side">법인카드 관리대장·승인내역·통합본을 올리면<br>카드 대사와 통합본 자동 업데이트를 진행합니다.</div>'
+                : state.activeTab === 'corpCard'
+                  ? '<div class="empty-side">카드별 법인카드 사용 관리대장을 올리면<br>여기가 아닌 법인카드 화면에서 월별로 관리할 수 있습니다.</div>'
                 : state.activeTab === 'invoiceprep'
                   ? '<div class="empty-side">실적리스트에서 아직 발행 안 된 건을 찾아<br>세금계산서·현금영수증 업로드 파일을 만듭니다.</div>'
                   : state.activeTab === 'inquiry'
@@ -3033,6 +3038,10 @@ function renderMain(loading){
   }
   if(state.activeTab === 'cardrecon'){
     renderCardReconMain();
+    return;
+  }
+  if(state.activeTab === 'corpCard'){
+    renderCorpCardMain();
     return;
   }
   if(state.activeTab === 'invoiceprep'){
@@ -6293,6 +6302,7 @@ const ALL_TABS = [
   { key:'agentDocs', label:'영업자용' },
   { key:'moduleprices', label:'모듈 단가 관리' },
   { key:'cardrecon', label:'카드관리' },
+  { key:'corpCard', label:'법인카드' },
   { key:'omTeam', label:'O&M팀' },
   { key:'omList', label:'O&M 리스트' },
   { key:'invoiceprep', label:'세금계산서/현금영수증' },
@@ -9408,6 +9418,447 @@ async function renderOMListMain(){
       renderOMListMain();
     });
   });
+}
+
+// ---------- 법인카드 (카드별 "법인카드 사용 관리대장" 엑셀을 그대로 관리) ----------
+// 법인카드가 여러 장이라 카드마다 파일이 따로 있고, 파일 하나 안에 월별 시트("1 월"~
+// "12 월")가 들어있다 — 화면도 카드 선택 → 월 선택 순으로 들어가서 그 달 사용내역만
+// 표로 보여준다. 엑셀로 내보낼 때는 카드마다 한 번 올려둔 원본 파일(양식)의 해당 월
+// 시트에서 머리글·서식·결재란·수식은 그대로 두고, 이미 서식이 갖춰진 데이터 칸
+// (14행부터 "총 사용금액 합계" 행 바로 위까지)에 값만 새로 채운다 — O&M 리스트
+// 내보내기와 같은 방식(JSZip으로 원본 XML을 직접 고침).
+const CORP_CARD_LIST_KEY = 'corp-card-list';
+const CORP_CARD_COLUMNS = [
+  ['date','날짜',100], ['dept','부서',90], ['name','성명',80], ['corp','법인',80],
+  ['bizCategory','사업분류',90], ['project','프로젝트',90], ['plantName','발전소명',120],
+  ['place','사용처',140], ['workDetail','업무내용',160], ['expenseType','지출내역',110],
+  ['amount','금액',100], ['hipass','하이패스\n사용여부',70], ['carNo','차량번호\n(끝4자리)',90], ['note','비고',160],
+];
+// 원본 시트의 실제 열 순서(B~Q, 공급가액·부가세 열은 금액에서 자동 계산되는 수식이라
+// 앱에서 직접 쓰지 않고 원본 수식을 그대로 둔다).
+const CORP_CARD_COL_LETTERS = ['B','C','D','E','F','G','H','I','J','K','N','O','P','Q'];
+let corpCardState = { cards:[], activeCardId:'', activeMonth:'', rowsByCard:{}, loaded:false, loading:false };
+let corpCardTemplates = {}; // cardId -> { buffer, fileName, savedAt, months }
+
+function newCorpCardRow(){
+  const row = { id: rid() };
+  CORP_CARD_COLUMNS.forEach(([f])=>{ row[f] = f==='amount' ? 0 : ''; });
+  return row;
+}
+// 원본의 공급가액/부가세 수식(L=IF(M=0,N,N/1.1), M=N/11)과 똑같이 화면에도 참고용으로
+// 보여준다 — 실제로는 엑셀 쪽 수식이 계산하므로 이 값은 저장하지 않는다.
+function corpCardSupplyVat(amount){
+  const n = Number(amount)||0;
+  const vat = Math.round(n/11);
+  const supply = vat===0 ? n : Math.round(n - vat);
+  return { supply, vat };
+}
+async function ensureCorpCardLoaded(){
+  if(corpCardState.loaded || corpCardState.loading) return;
+  corpCardState.loading = true;
+  try{
+    const listText = await loadFileFromStorage(CORP_CARD_LIST_KEY);
+    const saved = listText ? JSON.parse(listText) : null;
+    corpCardState.cards = (saved && saved.cards) || [];
+    corpCardState.activeCardId = (saved && saved.activeCardId) || (corpCardState.cards[0] ? corpCardState.cards[0].id : '');
+    for(const card of corpCardState.cards){
+      const rowsText = await loadFileFromStorage('corp-card-rows:'+card.id);
+      corpCardState.rowsByCard[card.id] = rowsText ? JSON.parse(rowsText) : {};
+      try{
+        const metaText = await loadFileFromStorage('corp-card-template-meta:'+card.id);
+        const meta = metaText ? JSON.parse(metaText) : null;
+        if(meta){
+          const b64 = await loadFileFromStorage('corp-card-template-b64:'+card.id, 30000);
+          if(b64) corpCardTemplates[card.id] = { buffer: base64ToArrayBuffer(b64), fileName: meta.fileName, savedAt: meta.savedAt, months: meta.months||[] };
+        }
+      }catch(e){ console.error('법인카드 양식 복원 실패', e); }
+    }
+    const activeCard = corpCardState.cards.find(c=>c.id===corpCardState.activeCardId);
+    if(activeCard){
+      const tmpl = corpCardTemplates[activeCard.id];
+      if(!corpCardState.activeMonth) corpCardState.activeMonth = (tmpl && tmpl.months[0]) || '';
+    }
+  }catch(e){ console.error('법인카드 목록 불러오기 실패', e); }
+  corpCardState.loaded = true;
+  corpCardState.loading = false;
+}
+async function saveCorpCardList(){
+  await saveFileToStorage(CORP_CARD_LIST_KEY, JSON.stringify({ cards: corpCardState.cards, activeCardId: corpCardState.activeCardId }));
+}
+async function saveCorpCardRows(cardId){
+  await saveFileToStorage('corp-card-rows:'+cardId, JSON.stringify(corpCardState.rowsByCard[cardId]||{}));
+}
+async function saveCorpCardTemplate(cardId, buffer, fileName, months){
+  const savedAt = new Date().toISOString();
+  await saveFileToStorage('corp-card-template-b64:'+cardId, arrayBufferToBase64(buffer), 30000);
+  await saveFileToStorage('corp-card-template-meta:'+cardId, JSON.stringify({ fileName, savedAt, months }));
+  corpCardTemplates[cardId] = { buffer, fileName, savedAt, months };
+}
+// 업로드한 카드 파일에서 카드번호(B9)와 월 시트 목록("1 월"~"12 월", 숫자 순 정렬)을 찾는다.
+function parseCorpCardWorkbookMeta(wb){
+  const monthSheets = wb.SheetNames
+    .map(n => ({ n, month: parseInt((n.match(/^(\d{1,2})\s*월/)||[])[1], 10) }))
+    .filter(x => !isNaN(x.month))
+    .sort((a,b)=>a.month-b.month);
+  if(!monthSheets.length) return { error: '월별 시트("1 월"~"12 월")를 찾지 못했습니다.' };
+  const firstWs = wb.Sheets[monthSheets[0].n];
+  const cardCell = firstWs['B9'];
+  const cardNumber = cardCell ? String(cardCell.v||'').trim() : '';
+  if(!cardNumber) return { error: '카드번호(B9)를 찾지 못했습니다.' };
+  return { cardNumber, months: monthSheets.map(x=>x.n) };
+}
+async function handleCorpCardAdd(){
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.xlsx,.xls';
+  input.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      await loadXlsxLib();
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:'array', cellDates:true });
+      const meta = parseCorpCardWorkbookMeta(wb);
+      if(meta.error){ alert(meta.error); return; }
+      const id = rid();
+      const last4 = (meta.cardNumber.match(/(\d{4})\D*$/)||[])[1] || meta.cardNumber;
+      corpCardState.cards.push({ id, cardNumber: meta.cardNumber, label: last4 });
+      corpCardState.rowsByCard[id] = {};
+      corpCardState.activeCardId = id;
+      corpCardState.activeMonth = meta.months[0] || '';
+      await saveCorpCardTemplate(id, buf, file.name, meta.months);
+      await saveCorpCardList();
+      renderCorpCardMain();
+    }catch(err){
+      console.error(err);
+      alert('파일을 읽지 못했습니다. "N 월" 형식의 월별 시트가 있는 법인카드 관리대장 파일인지 확인해주세요.');
+    }
+  });
+  input.click();
+}
+async function renderCorpCardMain(){
+  const main = document.getElementById('main');
+  if(!corpCardState.loaded){
+    main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+    await ensureCorpCardLoaded();
+    if(state.activeTab !== 'corpCard') return;
+  }
+  const s = corpCardState;
+  const activeCard = s.cards.find(c=>c.id===s.activeCardId);
+  const tmpl = activeCard ? corpCardTemplates[activeCard.id] : null;
+  const months = tmpl ? tmpl.months : [];
+  const rows = (activeCard && s.rowsByCard[activeCard.id] && s.rowsByCard[activeCard.id][s.activeMonth]) || [];
+
+  main.innerHTML = `
+    <h2 class="section-title">법인카드</h2>
+    <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
+      카드마다 "법인카드 사용 관리대장" 엑셀을 양식으로 한 번 올려두면, 월을 골라 그 달 사용내역만 입력할 수 있고 같은 모양으로 다시 엑셀로 내보낼 수 있습니다.
+    </p>
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+      ${s.cards.map(c => `<button class="corpcard-tab-btn" data-id="${c.id}" style="padding:8px 14px; border-radius:7px; border:1px solid ${c.id===s.activeCardId?'var(--gold)':'var(--line)'}; background:${c.id===s.activeCardId?'rgba(224,163,57,.12)':'transparent'}; color:${c.id===s.activeCardId?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12.5px;">💳 ${escapeHtml(c.label||c.cardNumber)}</button>`).join('')}
+      <button id="corpCardAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12.5px;">+ 카드 추가</button>
+      ${activeCard ? `<button id="corpCardDelBtn" style="margin-left:auto; padding:8px 14px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">이 카드 목록에서 제거</button>` : ''}
+    </div>
+    ${!activeCard ? `<div class="empty-side">등록된 카드가 없습니다. "+ 카드 추가"로 카드별 관리대장 엑셀을 올려주세요.</div>` : !tmpl ? `<div class="empty-side">이 카드의 양식 파일을 다시 올려주세요.</div>` : `
+    <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">카드번호: ${escapeHtml(activeCard.cardNumber)} · 양식 파일: ${escapeHtml(tmpl.fileName)}</div>
+    <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
+      ${months.map(m => `<button class="corpcard-month-btn" data-month="${escapeHtml(m)}" style="padding:7px 12px; border-radius:6px; border:1px solid ${m===s.activeMonth?'var(--gold)':'var(--line)'}; background:${m===s.activeMonth?'rgba(224,163,57,.12)':'transparent'}; color:${m===s.activeMonth?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12px;">${escapeHtml(m)}</button>`).join('')}
+    </div>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+      <button id="corpCardAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
+      <button id="corpCardExportBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
+    </div>
+    <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">${escapeHtml(s.activeMonth)} · 총 ${rows.length}건 · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다</div>
+    <div class="table-wrap table-wrap-frozen">
+      <table style="border-collapse:collapse; min-width:1900px; font-size:12px;">
+        <thead><tr>
+          <th style="padding:6px 4px; color:var(--muted); position:sticky; left:0; background:var(--panel-2);">순번</th>
+          <th style="padding:6px 4px; color:var(--muted); width:100px;">날짜</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">부서</th>
+          <th style="padding:6px 4px; color:var(--muted); width:80px;">성명</th>
+          <th style="padding:6px 4px; color:var(--muted); width:80px;">법인</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">사업분류</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">프로젝트</th>
+          <th style="padding:6px 4px; color:var(--muted); width:120px;">발전소명</th>
+          <th style="padding:6px 4px; color:var(--muted); width:140px;">사용처</th>
+          <th style="padding:6px 4px; color:var(--muted); width:160px;">업무내용</th>
+          <th style="padding:6px 4px; color:var(--muted); width:110px;">지출내역</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">공급가액</th>
+          <th style="padding:6px 4px; color:var(--muted); width:80px;">부가세</th>
+          <th style="padding:6px 4px; color:var(--muted); width:100px;">금액</th>
+          <th style="padding:6px 4px; color:var(--muted); width:70px;">하이패스<br>사용여부</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">차량번호<br>(끝4자리)</th>
+          <th style="padding:6px 4px; color:var(--muted); width:160px;">비고</th>
+          <th style="padding:6px 4px; color:var(--muted);">삭제</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((row,i)=>{
+            const sv = corpCardSupplyVat(row.amount);
+            return `
+            <tr data-id="${row.id}">
+              <td style="padding:5px 4px; text-align:center; position:sticky; left:0; background:var(--panel-2);">${i+1}</td>
+              <td style="padding:3px 4px;"><input type="date" class="corpcard-f" data-id="${row.id}" data-field="date" value="${escapeHtml(row.date)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="name" value="${escapeHtml(row.name)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="corp" value="${escapeHtml(row.corp)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="bizCategory" value="${escapeHtml(row.bizCategory)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="project" value="${escapeHtml(row.project)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="plantName" value="${escapeHtml(row.plantName)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="place" value="${escapeHtml(row.place)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="workDetail" value="${escapeHtml(row.workDetail)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="expenseType" value="${escapeHtml(row.expenseType)}" style="width:100%;"></td>
+              <td style="padding:5px 4px; text-align:right; color:var(--muted);">${sv.supply?fmtNum(sv.supply):''}</td>
+              <td style="padding:5px 4px; text-align:right; color:var(--muted);">${sv.vat?fmtNum(sv.vat):''}</td>
+              <td style="padding:3px 4px;"><input type="text" inputmode="numeric" class="corpcard-f corpcard-money" data-id="${row.id}" data-field="amount" value="${row.amount?Number(row.amount).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="hipass" value="${escapeHtml(row.hipass)}" style="width:100%; text-align:center;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="carNo" value="${escapeHtml(row.carNo)}" style="width:100%; text-align:center;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" style="width:100%;"></td>
+              <td style="padding:5px 4px; text-align:center;"><button class="corpcard-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button></td>
+            </tr>
+          `;}).join('')}
+        </tbody>
+      </table>
+    </div>
+    `}
+  `;
+
+  main.querySelectorAll('.corpcard-tab-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      s.activeCardId = btn.dataset.id;
+      const tmpl2 = corpCardTemplates[s.activeCardId];
+      s.activeMonth = (tmpl2 && tmpl2.months[0]) || '';
+      await saveCorpCardList();
+      renderCorpCardMain();
+    });
+  });
+  main.querySelectorAll('.corpcard-month-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ s.activeMonth = btn.dataset.month; renderCorpCardMain(); });
+  });
+  const addCardBtn = document.getElementById('corpCardAddBtn');
+  if(addCardBtn) addCardBtn.addEventListener('click', handleCorpCardAdd);
+  const delCardBtn = document.getElementById('corpCardDelBtn');
+  if(delCardBtn) delCardBtn.addEventListener('click', async ()=>{
+    if(!confirm(`"${activeCard.label||activeCard.cardNumber}" 카드를 목록에서 제거할까요? (원본 엑셀 파일이 지워지는 건 아니고, 앱에 입력해둔 내역만 함께 사라집니다)`)) return;
+    s.cards = s.cards.filter(c=>c.id!==activeCard.id);
+    delete s.rowsByCard[activeCard.id];
+    delete corpCardTemplates[activeCard.id];
+    s.activeCardId = s.cards[0] ? s.cards[0].id : '';
+    s.activeMonth = '';
+    await saveCorpCardList();
+    renderCorpCardMain();
+  });
+  if(!activeCard || !tmpl) return;
+  const addRowBtn = document.getElementById('corpCardAddRowBtn');
+  if(addRowBtn) addRowBtn.addEventListener('click', async ()=>{
+    s.rowsByCard[activeCard.id] = s.rowsByCard[activeCard.id] || {};
+    s.rowsByCard[activeCard.id][s.activeMonth] = s.rowsByCard[activeCard.id][s.activeMonth] || [];
+    s.rowsByCard[activeCard.id][s.activeMonth].push(newCorpCardRow());
+    await saveCorpCardRows(activeCard.id);
+    renderCorpCardMain();
+  });
+  const exportBtn = document.getElementById('corpCardExportBtn');
+  if(exportBtn) exportBtn.addEventListener('click', async ()=>{ await exportCorpCardToExcel(activeCard.id); });
+  main.querySelectorAll('.corpcard-f').forEach(el=>{
+    el.addEventListener('change', async ()=>{
+      const row = rows.find(r=>r.id===el.dataset.id);
+      if(!row) return;
+      const field = el.dataset.field;
+      if(el.classList.contains('corpcard-money')){
+        const n = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
+        row[field] = n;
+        renderCorpCardMain();
+      } else {
+        row[field] = el.value.trim();
+      }
+      await saveCorpCardRows(activeCard.id);
+    });
+  });
+  main.querySelectorAll('.corpcard-del-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 행을 삭제할까요?')) return;
+      s.rowsByCard[activeCard.id][s.activeMonth] = rows.filter(r=>r.id!==btn.dataset.id);
+      await saveCorpCardRows(activeCard.id);
+      renderCorpCardMain();
+    });
+  });
+}
+async function exportCorpCardToExcel(cardId){
+  const tmpl = corpCardTemplates[cardId];
+  if(!tmpl){ alert('이 카드의 양식 파일이 없습니다.'); return; }
+  const rowsByMonth = corpCardState.rowsByCard[cardId] || {};
+  const monthsWithData = Object.keys(rowsByMonth).filter(m => (rowsByMonth[m]||[]).length>0);
+  if(!monthsWithData.length){ alert('입력된 내역이 없습니다.'); return; }
+  const result = await patchCorpCardTemplate(tmpl.buffer, monthsWithData, rowsByMonth);
+  if(result.error){ alert('엑셀을 만들지 못했습니다: ' + result.error); return; }
+  const url = URL.createObjectURL(result.blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = tmpl.fileName || `법인카드_${isoDate(new Date())}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+// 카드 양식 파일의 월 시트마다, 이미 서식이 갖춰진 데이터 칸(14행 ~ "총 사용금액
+// 합계" 행 바로 위)을 지금 입력된 내역으로 통째로 다시 채운다. 공급가액/부가세
+// 열은 원본 수식을 그대로 두고(엑셀이 알아서 계산), 사용건수(COUNT)·합계(SUM)
+// 수식의 범위만 서식이 갖춰진 전체 칸 기준으로 맞춰준다 — 빈 칸은 COUNT/SUM에서
+// 자동으로 무시되니 항상 이 범위로 둬도 안전하다.
+async function patchCorpCardTemplate(masterArrayBuffer, months, rowsByMonth){
+  await loadJSZipLib();
+  const zip = await window.JSZip.loadAsync(masterArrayBuffer);
+  const parser = new DOMParser();
+  const serializer = new XMLSerializer();
+  const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const SS_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+
+  const wbFile = zip.file('xl/workbook.xml');
+  if(!wbFile) return { error: '엑셀 구조를 인식할 수 없습니다(workbook.xml 없음).' };
+  const wbXmlText = await wbFile.async('string');
+  const wbDoc = parser.parseFromString(wbXmlText, 'application/xml');
+  const relsFile = zip.file('xl/_rels/workbook.xml.rels');
+  if(!relsFile) return { error: '워크북 관계 정보를 찾을 수 없습니다.' };
+  const relsText = await relsFile.async('string');
+  const relsDoc = parser.parseFromString(relsText, 'application/xml');
+
+  const fieldByLetter = {};
+  CORP_CARD_COLUMNS.forEach(([f], i)=>{ fieldByLetter[CORP_CARD_COL_LETTERS[i]] = f; });
+  const dateFields = new Set(['date']);
+
+  // 원본 파일은 SheetJS로 새로 만든 파일과 달리 텍스트를 대부분 공유
+  // 문자열(sharedStrings.xml)로 저장하므로, "총 사용금액 합계" 같은 라벨을
+  // 찾으려면 이것도 같이 읽어야 한다(inlineStr만 처리하면 못 찾는다).
+  let sharedStrings = [];
+  const ssFile = zip.file('xl/sharedStrings.xml');
+  if(ssFile){
+    const ssText = await ssFile.async('string');
+    const ssDoc = parser.parseFromString(ssText, 'application/xml');
+    sharedStrings = Array.from(ssDoc.getElementsByTagName('si')).map(si =>
+      Array.from(si.getElementsByTagName('t')).map(t=>t.textContent).join('')
+    );
+  }
+
+  for(const monthName of months){
+    const rows = rowsByMonth[monthName] || [];
+    const sheetEl = Array.from(wbDoc.getElementsByTagName('sheet')).find(el => el.getAttribute('name') === monthName);
+    if(!sheetEl) return { error: `"${monthName}" 시트를 찾을 수 없습니다.` };
+    const rId = sheetEl.getAttributeNS(REL_NS, 'id');
+    const relEl = Array.from(relsDoc.getElementsByTagName('Relationship')).find(el => el.getAttribute('Id') === rId);
+    if(!relEl) return { error: `"${monthName}" 시트 경로 정보를 찾을 수 없습니다.` };
+    let target = (relEl.getAttribute('Target')||'').replace(/^\.?\//,'');
+    const sheetPath = target.startsWith('xl/') ? target : ('xl/' + target);
+    const sheetFile = zip.file(sheetPath);
+    if(!sheetFile) return { error: `시트 파일(${sheetPath})을 찾을 수 없습니다.` };
+    const sheetXmlText = await sheetFile.async('string');
+    const sheetDoc = parser.parseFromString(sheetXmlText, 'application/xml');
+    const sheetDataEl = sheetDoc.getElementsByTagName('sheetData')[0];
+    if(!sheetDataEl) return { error: `"${monthName}" 시트 데이터 영역을 찾을 수 없습니다.` };
+
+    const findCell = (rowEl, colLetter) => {
+      const rowNum = rowEl.getAttribute('r');
+      return Array.from(rowEl.getElementsByTagName('c')).find(el => el.getAttribute('r') === colLetter+rowNum) || null;
+    };
+    const cellText = (rowEl, colLetter) => {
+      const c = findCell(rowEl, colLetter);
+      if(!c) return '';
+      const t = c.getAttribute('t');
+      if(t === 's'){
+        const vEl = c.getElementsByTagName('v')[0];
+        const idx = vEl ? parseInt(vEl.textContent,10) : -1;
+        return sharedStrings[idx] || '';
+      }
+      if(t === 'inlineStr'){
+        const isEl = c.getElementsByTagName('is')[0];
+        return isEl ? Array.from(isEl.getElementsByTagName('t')).map(t=>t.textContent).join('') : '';
+      }
+      const vEl = c.getElementsByTagName('v')[0];
+      return vEl ? vEl.textContent : '';
+    };
+
+    const allRows = Array.from(sheetDataEl.getElementsByTagName('row'));
+    const totalRowEl = allRows.find(r => cellText(r,'B').trim() === '총 사용금액 합계');
+    if(!totalRowEl) return { error: `"${monthName}" 시트에서 "총 사용금액 합계" 행을 찾지 못해 안전하게 처리할 수 없습니다.` };
+    const totalRowNum = Number(totalRowEl.getAttribute('r'));
+    const lastDataRow = totalRowNum - 1;
+    const capacity = lastDataRow - 14 + 1;
+    if(rows.length > capacity){
+      return { error: `"${monthName}" 입력 건수(${rows.length}건)가 이 양식에 이미 서식이 갖춰진 칸(${capacity}행)보다 많습니다. 원본 엑셀에서 14~${lastDataRow}행 아래로 서식을 더 늘려서 다시 올려주세요.` };
+    }
+
+    for(let i=0; i<capacity; i++){
+      const targetRowNum = String(14+i);
+      let rowEl = allRows.find(r => r.getAttribute('r')===targetRowNum);
+      if(!rowEl){
+        rowEl = sheetDoc.createElementNS(SS_NS, 'row');
+        rowEl.setAttribute('r', targetRowNum);
+        totalRowEl.parentNode.insertBefore(rowEl, totalRowEl);
+      }
+      const row = rows[i] || null;
+      CORP_CARD_COL_LETTERS.forEach(col => {
+        const field = fieldByLetter[col];
+        let cEl = findCell(rowEl, col);
+        if(!cEl){
+          cEl = sheetDoc.createElementNS(SS_NS,'c');
+          cEl.setAttribute('r', col+targetRowNum);
+          rowEl.appendChild(cEl);
+        }
+        while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
+        const raw = row ? row[field] : '';
+        if(dateFields.has(field) && raw){
+          const d = new Date(raw);
+          const epoch = new Date(Date.UTC(1899,11,30));
+          const days = Math.round((Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()) - epoch.getTime())/86400000);
+          cEl.removeAttribute('t');
+          const vEl = sheetDoc.createElementNS(SS_NS,'v');
+          vEl.textContent = String(days);
+          cEl.appendChild(vEl);
+        } else if(field === 'amount' && row){
+          // row가 없는(입력이 아직 없는) 칸은 0을 써넣지 않고 완전히 비워둔다 —
+          // 0도 숫자라서 그대로 두면 COUNT(N14:N57) 같은 사용건수 수식이 빈 칸까지
+          // 건수로 세어버린다.
+          cEl.removeAttribute('t');
+          const vEl = sheetDoc.createElementNS(SS_NS,'v');
+          vEl.textContent = String(Number(raw)||0);
+          cEl.appendChild(vEl);
+        } else if(raw){
+          cEl.setAttribute('t','inlineStr');
+          const isEl = sheetDoc.createElementNS(SS_NS,'is');
+          const tEl = sheetDoc.createElementNS(SS_NS,'t');
+          tEl.textContent = String(raw);
+          isEl.appendChild(tEl);
+          cEl.appendChild(isEl);
+        } else {
+          cEl.removeAttribute('t');
+        }
+      });
+    }
+
+    const headerRows = allRows.filter(r => Number(r.getAttribute('r')) <= 11);
+    headerRows.forEach(r => {
+      Array.from(r.getElementsByTagName('c')).forEach(c => {
+        const fEl = c.getElementsByTagName('f')[0];
+        if(!fEl) return;
+        if(/^COUNT\(N14:N\d+\)$/.test(fEl.textContent)) fEl.textContent = `COUNT(N14:N${lastDataRow})`;
+        else if(/^SUM\(N14:N\d+\)$/.test(fEl.textContent)) fEl.textContent = `SUM(N14:N${lastDataRow})`;
+      });
+    });
+    ['L','M','N'].forEach(col => {
+      const cEl = findCell(totalRowEl, col);
+      const fEl = cEl ? cEl.getElementsByTagName('f')[0] : null;
+      if(fEl) fEl.textContent = `SUM(${col}14:${col}${lastDataRow})`;
+    });
+
+    zip.file(sheetPath, serializer.serializeToString(sheetDoc));
+  }
+
+  let calcPr = wbDoc.getElementsByTagName('calcPr')[0];
+  if(!calcPr){
+    calcPr = wbDoc.createElementNS(SS_NS, 'calcPr');
+    wbDoc.documentElement.appendChild(calcPr);
+  }
+  calcPr.setAttribute('fullCalcOnLoad','1');
+  zip.file('xl/workbook.xml', serializer.serializeToString(wbDoc));
+
+  const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
+  return { blob };
 }
 
 function renderImportMain(){
