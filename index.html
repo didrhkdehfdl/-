@@ -9381,6 +9381,10 @@ async function renderOMListMain(){
   const filtered = s.search
     ? s.rows.filter(r => (r.customer||'').includes(s.search) || (r.plantName||'').includes(s.search) || (r.requester||'').includes(s.search))
     : s.rows;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / OM_LIST_PAGE_SIZE));
+  if(s.page > totalPages) s.page = totalPages;
+  if(s.page < 1) s.page = 1;
+  const pageRows = filtered.slice((s.page-1)*OM_LIST_PAGE_SIZE, s.page*OM_LIST_PAGE_SIZE);
 
   main.innerHTML = `
     <h2 class="section-title">O&M 리스트</h2>
