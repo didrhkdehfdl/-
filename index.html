@@ -7625,7 +7625,7 @@ async function renderInquiryMain(){
         </tr></thead>
         <tbody>
           ${pageItems.map(it => {
-            const mf = getInquirySagupMatchFields(it);
+            const mf = getInquirySagupMatchFields(it, perfIndex);
             const matchTag = '<div style="font-size:9.5px; color:#2e9e5b; font-weight:700; margin-top:3px;">✓ 일치</div>';
             return `
             <tr data-id="${it.id}" ${(mf.region||mf.customer||mf.phone) ? 'style="background: rgba(46,158,91,0.18);"' : ''}>
