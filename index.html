@@ -9690,8 +9690,13 @@ async function renderCorpCardMain(){
     <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
       ${months.map(m => `<button class="corpcard-month-btn" data-month="${escapeHtml(m)}" style="padding:7px 12px; border-radius:6px; border:1px solid ${m===s.activeMonth?'var(--gold)':'var(--line)'}; background:${m===s.activeMonth?'rgba(224,163,57,.12)':'transparent'}; color:${m===s.activeMonth?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12px;">${escapeHtml(m)}</button>`).join('')}
     </div>
-    <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
       <button id="corpCardAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
+      <div style="display:flex; align-items:center; gap:4px; padding:3px; border-radius:7px; border:1px solid var(--line);">
+        <button class="corpcard-namemode-btn" data-mode="fixed" style="padding:5px 10px; border-radius:5px; border:none; background:${s.nameMode==='fixed'?'var(--gold)':'transparent'}; color:${s.nameMode==='fixed'?'#1a1a1a':'var(--muted)'}; font-size:12px; cursor:pointer;">고정</button>
+        <button class="corpcard-namemode-btn" data-mode="variable" style="padding:5px 10px; border-radius:5px; border:none; background:${s.nameMode==='variable'?'var(--gold)':'transparent'}; color:${s.nameMode==='variable'?'#1a1a1a':'var(--muted)'}; font-size:12px; cursor:pointer;">변동</button>
+      </div>
+      ${s.nameMode==='fixed' ? `<input type="text" id="corpCardFixedNameInput" placeholder="성명 고정값" value="${escapeHtml(s.fixedName)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
       <button id="corpCardExportBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
     </div>
     <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">${escapeHtml(s.activeMonth)} · 총 ${rows.length}건 · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다</div>
