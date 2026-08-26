@@ -6340,6 +6340,7 @@ async function renderAdminApprovalList(){
             <button class="admin2-approve-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">승인하기</button>
             <button class="admin2-reject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--neg); background:transparent; color:var(--neg); cursor:pointer; margin-left:6px;">거절하기</button>`;
         }
+        actionsHtml += `<button class="admin2-delete-btn" data-id="${doc.id}" data-email="${escapeHtml(d.email||'')}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--neg); background:rgba(255,80,80,0.1); color:var(--neg); cursor:pointer; margin-left:6px;">완전 삭제</button>`;
       }
       // No allowedTabs field yet on this account = unrestricted (every tab checked).
       const permsHtml = isAdmin ? '' : `
