@@ -6408,8 +6408,13 @@ async function renderAdminApprovalList(){
         // 나중에 다시 로그인하면 "가입 신청 대기" 상태로 다시 뜬다(승인 이력이
         // 사라졌을 뿐, 로그인 자체를 영구히 막는 기능은 아니라는 뜻).
         if(!confirm(`"${btn.dataset.email}" 계정의 가입 기록을 완전히 삭제할까요?\n\n계정 자체(로그인 정보)는 지워지지 않고, 이 사람이 다시 로그인하면 "승인 대기" 상태로 새로 뜹니다. 목록에서 이 기록만 지우고 싶을 때 사용하세요.`)) return;
-        await fbDb.collection('users').doc(btn.dataset.id).delete();
-        renderAdminApprovalList();
+        try{
+          await fbDb.collection('users').doc(btn.dataset.id).delete();
+          renderAdminApprovalList();
+        }catch(err){
+          console.error(err);
+          alert('삭제하지 못했습니다: ' + (err.message || err));
+        }
       });
     });
   }catch(e){
