@@ -7575,10 +7575,14 @@ async function renderInquiryMain(){
   let items = q
     ? s.items.filter(it => [it.region,it.question,it.customer,it.phone,it.sender,it.detail,it.response].some(v=>(v||'').includes(q)))
     : s.items;
+  // 사급 실적리스트 대조는 문의 건마다 매번 처음부터 훑으면 느려지므로
+  // (문의 수백~천 건 × 실적 수백 건), 렌더링 한 번에 한 번만 색인을 만들어
+  // 재사용한다 — buildPerfMatchIndex 주석 참고.
+  const perfIndex = buildPerfMatchIndex();
   items = items.slice().sort((a,b)=>{
     if(s.matchFirst){
-      const am = inquiryMatchesSagupPerf(a) ? 1 : 0;
-      const bm = inquiryMatchesSagupPerf(b) ? 1 : 0;
+      const am = inquiryMatchesSagupPerf(a, perfIndex) ? 1 : 0;
+      const bm = inquiryMatchesSagupPerf(b, perfIndex) ? 1 : 0;
       if(am !== bm) return bm - am;
     }
     const av = String(a[s.sortKey]||''), bv = String(b[s.sortKey]||'');
@@ -7589,7 +7593,7 @@ async function renderInquiryMain(){
   if(s.page > totalPages) s.page = totalPages;
   if(s.page < 1) s.page = 1;
   const pageItems = items.slice((s.page-1)*INQUIRY_PAGE_SIZE, s.page*INQUIRY_PAGE_SIZE);
-  const sagupMatchCount = items.filter(inquiryMatchesSagupPerf).length;
+  const sagupMatchCount = items.filter(it => inquiryMatchesSagupPerf(it, perfIndex)).length;
 
   main.innerHTML = `
     <h2 class="section-title">문의 대응</h2>
