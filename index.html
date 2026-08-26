@@ -10995,11 +10995,17 @@ function initResizableTable(table){
   try{ saved = JSON.parse(localStorage.getItem(key)||'null'); }catch(e){}
 
   // 처음엔 지금 화면에 실제로 그려진 너비를 그대로 넣어서(colgroup을 붙여도
-  // 화면이 안 튀게) 시작하고, 저장된 너비가 있으면 그걸로 덮어쓴다.
-  leafCells.forEach(({el, colStart, colSpan}) => {
+  // 화면이 안 튀게) 시작하고, 저장된 너비가 있으면 그걸로 덮어쓴다. 열이 많은
+  // 표(O&M 리스트 32열 등)에서 읽기(getBoundingClientRect)와 쓰기(style.width)를
+  // 열마다 번갈아 하면 열 개수만큼 강제 리플로우가 반복돼 눈에 띄게 느려지므로
+  // (실측 O&M 리스트에서 이 함수 하나가 약 50ms), 전부 읽은 다음에 전부 쓴다.
+  const widths = leafCells.map(({el, colStart, colSpan}) => {
+    if(colSpan !== 1) return null;
+    return (saved && saved[colStart]) ? saved[colStart] : Math.max(30, Math.round(el.getBoundingClientRect().width));
+  });
+  leafCells.forEach(({colStart, colSpan}, i) => {
     if(colSpan !== 1) return;
-    const w = (saved && saved[colStart]) ? saved[colStart] : Math.max(30, Math.round(el.getBoundingClientRect().width));
-    cols[colStart].style.width = w + 'px';
+    cols[colStart].style.width = widths[i] + 'px';
   });
   table.style.tableLayout = 'fixed';
 
