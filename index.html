@@ -6376,7 +6376,10 @@ async function renderAdminApprovalList(){
       <div style="display:flex; flex-direction:column; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:var(--panel);">
         <div style="display:flex; align-items:center; justify-content:space-between;">
           <div>
-            <div style="font-size:13.5px;">${escapeHtml(d.email||'(이메일 없음)')}${isAdmin ? ' <span style="color:var(--gold); font-size:11px;">(관리자)</span>' : ''}</div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-size:13.5px;">${escapeHtml(d.email||'(이메일 없음)')}${isAdmin ? ' <span style="color:var(--gold); font-size:11px;">(관리자)</span>' : ''}</span>
+              <input type="text" class="admin2-name-input" data-id="${doc.id}" placeholder="이름" value="${escapeHtml(d.name||'')}" style="font-size:12px; padding:4px 8px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); width:90px;">
+            </div>
             <div style="font-size:11px; color:${statusColor};">${statusLabel}</div>
           </div>
           <div>${actionsHtml}</div>
