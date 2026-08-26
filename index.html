@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- sync-test-2 --><!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
@@ -5099,7 +5099,15 @@ function redactRRN(s){
 }
 
 function excelDateToIso(v){
-  if(v instanceof Date) return isoDate(v);
+  // XLSX.read(..., {cellDates:true})가 만들어주는 Date 객체는 부동소수점
+  // 오차 때문에 정확히 자정이 아니라 몇 시간 어긋난 시각(예: 전날 23:59)이 될
+  // 때가 있다 — 원본 XML엔 깨끗한 정수 일련번호(예: 46244)가 들어있는데도
+  // 그렇다. 그대로 getDate()를 쓰면 날짜가 하루 밀리므로, UTC 자정 기준으로
+  // 가장 가까운 날짜에 반올림해서 순수한 날짜만 취한다.
+  if(v instanceof Date){
+    const rounded = new Date(Math.round(v.getTime()/86400000)*86400000);
+    return `${rounded.getUTCFullYear()}-${String(rounded.getUTCMonth()+1).padStart(2,'0')}-${String(rounded.getUTCDate()).padStart(2,'0')}`;
+  }
   if(v===null || v===undefined || v==='') return '';
   // Some date cells come through as a raw Excel serial number (days since
   // 1899-12-30) rather than a Date object or formatted string.
@@ -9507,6 +9515,41 @@ function parseCorpCardWorkbookMeta(wb){
   if(!cardNumber) return { error: '카드번호(B9)를 찾지 못했습니다.' };
   return { cardNumber, months: monthSheets.map(x=>x.n) };
 }
+// 월 시트에 이미 적혀있는 사용내역(14행부터 "총 사용금액 합계" 행 바로 위까지)을
+// 읽어서 앱 표에 그대로 가져온다 — 날짜/부서 기본값만 채워져 있고 실제 내역이
+// 없는 예비 칸(원본에 흔함)까지 가져오면 안 되니, 날짜나 금액 둘 중 하나라도
+// 있는 행만 진짜 내역으로 본다.
+function parseCorpCardMonthRows(ws){
+  if(!ws || !ws['!ref']) return [];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  let totalExcelRow = null;
+  for(let r=14; r<=range.e.r+1; r++){
+    const bCell = ws['B'+r];
+    if(bCell && String(bCell.v||'').trim()==='총 사용금액 합계'){ totalExcelRow = r; break; }
+  }
+  const lastDataRow = totalExcelRow ? totalExcelRow-1 : range.e.r+1;
+  const fieldByLetter = {};
+  CORP_CARD_COLUMNS.forEach(([f], i)=>{ fieldByLetter[CORP_CARD_COL_LETTERS[i]] = f; });
+  const rows = [];
+  for(let excelRow=14; excelRow<=lastDataRow; excelRow++){
+    const get = (col) => { const c = ws[col+excelRow]; return c ? c.v : undefined; };
+    const dateVal = get('B');
+    const amountVal = get('N');
+    const hasDate = dateVal!==undefined && dateVal!=='';
+    const hasAmount = amountVal!==undefined && amountVal!=='' && Number(amountVal)!==0;
+    if(!hasDate && !hasAmount) continue;
+    const row = { id: rid() };
+    CORP_CARD_COL_LETTERS.forEach(col => {
+      const field = fieldByLetter[col];
+      const v = get(col);
+      if(field==='date') row.date = v ? excelDateToIso(v) : '';
+      else if(field==='amount') row.amount = parseExcelNumber(v);
+      else row[field] = v!==undefined && v!==null ? String(v).trim() : '';
+    });
+    rows.push(row);
+  }
+  return rows;
+}
 async function handleCorpCardAdd(){
   const input = document.createElement('input');
   input.type = 'file';
@@ -9524,10 +9567,14 @@ async function handleCorpCardAdd(){
       const last4 = (meta.cardNumber.match(/(\d{4})\D*$/)||[])[1] || meta.cardNumber;
       corpCardState.cards.push({ id, cardNumber: meta.cardNumber, label: last4 });
       corpCardState.rowsByCard[id] = {};
+      meta.months.forEach(monthName => {
+        corpCardState.rowsByCard[id][monthName] = parseCorpCardMonthRows(wb.Sheets[monthName]);
+      });
       corpCardState.activeCardId = id;
       corpCardState.activeMonth = meta.months[0] || '';
       await saveCorpCardTemplate(id, buf, file.name, meta.months);
       await saveCorpCardList();
+      await saveCorpCardRows(id);
       renderCorpCardMain();
     }catch(err){
       console.error(err);
