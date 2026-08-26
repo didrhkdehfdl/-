@@ -3,3 +3,7 @@ stdout.log
 stderr.log
 test-parse.ps1
 .claude/
+node_modules/
+.firebase/
+firebase-debug.log
+functions/node_modules/
