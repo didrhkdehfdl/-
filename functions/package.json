@@ -1,0 +1,13 @@
+{
+  "name": "functions",
+  "description": "새 가입 신청 / 새 문의 접수를 감지해서 관리자에게 푸시 알림을 보내는 서버 코드",
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^6.0.1"
+  },
+  "private": true
+}
