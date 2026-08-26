@@ -9779,11 +9779,21 @@ async function renderCorpCardMain(){
     renderCorpCardMain();
   });
   if(!activeCard || !tmpl) return;
+  main.querySelectorAll('.corpcard-namemode-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ s.nameMode = btn.dataset.mode; renderCorpCardMain(); });
+  });
+  const fixedNameInp = document.getElementById('corpCardFixedNameInput');
+  if(fixedNameInp) fixedNameInp.addEventListener('input', (e)=>{ s.fixedName = e.target.value; });
   const addRowBtn = document.getElementById('corpCardAddRowBtn');
   if(addRowBtn) addRowBtn.addEventListener('click', async ()=>{
     s.rowsByCard[activeCard.id] = s.rowsByCard[activeCard.id] || {};
     s.rowsByCard[activeCard.id][s.activeMonth] = s.rowsByCard[activeCard.id][s.activeMonth] || [];
-    s.rowsByCard[activeCard.id][s.activeMonth].push(newCorpCardRow());
+    const newRow = newCorpCardRow();
+    // "고정" 모드면 매번 성명을 새로 안 쳐도 되게, 방금 입력해둔 이름을 그대로
+    // 채워서 행을 만든다 — 원본 엑셀도 같은 사람이 쓰는 행이 이어질 땐
+    // 성명·부서 등을 미리 채워두는 방식이라 이걸 그대로 흉내낸 것.
+    if(s.nameMode === 'fixed' && s.fixedName.trim()) newRow.name = s.fixedName.trim();
+    s.rowsByCard[activeCard.id][s.activeMonth].push(newRow);
     await saveCorpCardRows(activeCard.id);
     renderCorpCardMain();
   });
