@@ -11599,6 +11599,7 @@ fbAuth.onAuthStateChanged(async (user) => {
     isAdminUser = true;
     document.getElementById('adminApprovalTabBtn').style.display = 'flex';
     startApp();
+    setupAdminPushNotifications();
     return;
   }
   try{
