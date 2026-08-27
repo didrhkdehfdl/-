@@ -9514,9 +9514,11 @@ async function renderCorpCardMain(){
             const rowTitle = Object.values(issues).join(' / ');
             const errBorder = 'border-color:var(--neg) !important;';
             const note = f => issues[f] ? `<div style="font-size:10px; color:var(--neg); margin-top:2px;">${escapeHtml(issues[f])}</div>` : '';
+            const checked = corpCardSelectedIds.has(row.id);
             return `
             <tr data-id="${row.id}" ${isMismatch?`title="${escapeHtml(rowTitle)}"`:''} style="${isMismatch?'background:rgba(220,53,69,.18);':''}">
-              <td class="corpcard-seq-cell" draggable="true" data-id="${row.id}" title="눌러서 드래그하면 순서를 바꿀 수 있습니다" style="padding:5px 4px; text-align:center; position:sticky; left:0; background:${isMismatch?'rgba(220,53,69,.18)':'var(--panel-2)'}; cursor:grab; user-select:none;">${i+1}</td>
+              <td style="padding:5px 2px; text-align:center; position:sticky; left:0; background:${isMismatch?'rgba(220,53,69,.18)':'var(--panel-2)'};"><input type="checkbox" class="corpcard-select-box" data-id="${row.id}" ${checked?'checked':''}></td>
+              <td class="corpcard-seq-cell" draggable="true" data-id="${row.id}" title="눌러서 드래그하면 순서를 바꿀 수 있습니다" style="padding:5px 4px; text-align:center; position:sticky; left:26px; background:${isMismatch?'rgba(220,53,69,.18)':'var(--panel-2)'}; cursor:grab; user-select:none;">${i+1}</td>
               <td style="padding:3px 4px;">
                 <input type="date" class="corpcard-f" data-id="${row.id}" data-field="date" value="${escapeHtml(row.date)}" style="width:100%; ${issues.date?errBorder:''}">
                 ${note('date')}
