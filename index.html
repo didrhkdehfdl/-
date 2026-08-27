@@ -11044,7 +11044,7 @@ async function savePdf(){
     }
 
     const c = activeCase;
-    const fname = c ? (c.caseType==='profit' ? `사업정산내역서_${c.customer||'무제'}` : `영업비정산_${(c.title||'무제').replace(/[\\/:*?"<>|]/g,'')}`) : '정산문서';
+    const fname = pdfFilenameOverride || (c ? (c.caseType==='profit' ? `사업정산내역서_${c.customer||'무제'}` : `영업비정산_${(c.title||'무제').replace(/[\\/:*?"<>|]/g,'')}`) : '정산문서');
     pdf.save(`${fname}.pdf`);
   }catch(err){
     console.error(err);
