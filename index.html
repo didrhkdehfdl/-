@@ -9638,7 +9638,7 @@ async function handleCorpCardAdd(){
       const id = existing ? existing.id : rid();
       const last4 = (meta.cardNumber.match(/(\d{4})\D*$/)||[])[1] || meta.cardNumber;
       if(existing){ existing.label = last4; }
-      else { corpCardState.cards.push({ id, cardNumber: meta.cardNumber, label: last4, category: CORP_CARD_SHARED_LAST4.includes(last4) ? 'shared' : 'personal' }); }
+      else { corpCardState.cards.push({ id, cardNumber: meta.cardNumber, label: last4, category: corpCardDefaultCategory(last4) }); }
       corpCardState.rowsByCard[id] = {};
       meta.months.forEach(monthName => {
         corpCardState.rowsByCard[id][monthName] = parseCorpCardMonthRows(wb.Sheets[monthName]);
