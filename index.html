@@ -9866,8 +9866,23 @@ async function patchCorpCardTemplate(masterArrayBuffer, months, rowsByMonth){
 
   for(const monthName of months){
     const rows = rowsByMonth[monthName] || [];
-    const sheetEl = Array.from(wbDoc.getElementsByTagName('sheet')).find(el => el.getAttribute('name') === monthName);
-    if(!sheetEl) return { error: `"${monthName}" 시트를 찾을 수 없습니다.` };
+    let sheetEl = Array.from(wbDoc.getElementsByTagName('sheet')).find(el => el.getAttribute('name') === monthName);
+    if(!sheetEl){
+      // 이 달 시트가 원래 양식에 없으면(법인카드 탭에서 새로 추가한 달), 실제로
+      // 존재하는 월 시트 중 바로 이전 달(없으면 가장 가까운 달)을 그대로
+      // 복제해서 서식을 그대로 물려받은 새 시트를 만든다.
+      const targetNum = monthNumFromLabel(monthName);
+      const existingMonthSheets = Array.from(wbDoc.getElementsByTagName('sheet'))
+        .map(el=>({ el, name: el.getAttribute('name'), num: monthNumFromLabel(el.getAttribute('name')) }))
+        .filter(x=>x.num!=null);
+      const source = existingMonthSheets.filter(x=>x.num<targetNum).sort((a,b)=>b.num-a.num)[0]
+                  || existingMonthSheets.sort((a,b)=>a.num-b.num)[0];
+      if(!source) return { error: `"${monthName}" 시트가 없고, 복제할 기존 월 시트도 찾지 못했습니다.` };
+      const cloneResult = await cloneCorpCardMonthSheet(zip, wbDoc, relsDoc, parser, serializer, source.name, monthName);
+      if(cloneResult.error) return { error: cloneResult.error };
+      sheetEl = Array.from(wbDoc.getElementsByTagName('sheet')).find(el => el.getAttribute('name') === monthName);
+      if(!sheetEl) return { error: `"${monthName}" 시트 복제에 실패했습니다.` };
+    }
     const rId = sheetEl.getAttributeNS(REL_NS, 'id');
     const relEl = Array.from(relsDoc.getElementsByTagName('Relationship')).find(el => el.getAttribute('Id') === rId);
     if(!relEl) return { error: `"${monthName}" 시트 경로 정보를 찾을 수 없습니다.` };
