@@ -267,6 +267,10 @@
      입력할 수 있게 한다. 글자 크기도 15px 이상으로 키워서 iOS에서 입력칸을
      누를 때 화면이 확대되지 않게 한다. */
   @media (max-width: 760px){
+    /* 차량 선택 버튼도 13칸 고정 격자라 휴대폰에서는 글자가 안 보일 만큼
+       찌그러졌다 — 버튼 하나가 최소 96px은 되도록 칸 수를 화면 너비에 맞게
+       자동으로 줄인다. */
+    .vehicle-plate-grid{ grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)) !important; }
     #vehicleTableWrap{ max-height:none; overflow-y:visible; }
     #vehicleStickyScroll{ display:none; }
     .vehicle-table{ display:block; width:100% !important; min-width:0 !important; }
