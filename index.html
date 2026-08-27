@@ -9816,6 +9816,8 @@ async function renderCorpCardMain(){
     if(!selectedRows.length) return;
     openCorpCardUsageDocPrint(selectedRows, activeCard);
   });
+  const monthPdfBtn = document.getElementById('corpCardMonthPdfBtn');
+  if(monthPdfBtn) monthPdfBtn.addEventListener('click', ()=> openCorpCardMonthPrintPreview(activeCard, s.activeMonth, rows));
   const selectAllBox = document.getElementById('corpCardSelectAllBox');
   if(selectAllBox){
     selectAllBox.checked = rows.length>0 && rows.every(r=>corpCardSelectedIds.has(r.id));
