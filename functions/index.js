@@ -182,12 +182,37 @@ exports.onNotificationQueued = onDocumentWritten("app_data/notification-queue", 
 // 깨어나서 "마지막으로 보낸 지 설정된 시간이 지났는지"만 확인하는 방식으로
 // 클라이언트가 고른 주기(1/3/6/12/24시간)를 구현한다.
 const VEHICLE_REQUIRED_FIELDS = ["date", "kmBefore", "kmAfter", "purpose", "driver", "fuelCost", "hipass"];
-function vehicleRowHasIssue(row) {
-  return VEHICLE_REQUIRED_FIELDS.some((f) => {
+const VEHICLE_FIELD_LABELS = {
+  date: "운행일자", kmBefore: "운행전(Km)", kmAfter: "운행후(Km)",
+  purpose: "방문업체 및 운행목적", driver: "운행자", fuelCost: "주유비", hipass: "하이패스 통행여부",
+};
+function vehicleRowIssueFields(row) {
+  return VEHICLE_REQUIRED_FIELDS.filter((f) => {
     if (f === "fuelCost") return row.fuelCost !== "X" && (!row.fuelCost || Number(row.fuelCost) === 0);
     if (f === "kmBefore" || f === "kmAfter") return !row[f] || Number(row[f]) === 0;
     return !String(row[f] || "").trim();
   });
+}
+function vehicleRowHasIssue(row) {
+  return vehicleRowIssueFields(row).length > 0;
+}
+// 앱 화면(index.html)의 vehicleGuessDateRange와 같은 로직 — 날짜만 빈칸이고
+// km은 적혀있는 행을 자동 알림에도 "18~27일 사이"처럼 짐작해서 보여준다.
+function guessVehicleDateRange(rows, idx) {
+  const parseYmd = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || "") ? d : null);
+  let before = null, after = null;
+  for (let i = idx - 1; i >= 0; i--) { const d = parseYmd(rows[i].date); if (d) { before = d; break; } }
+  for (let i = idx + 1; i < rows.length; i++) { const d = parseYmd(rows[i].date); if (d) { after = d; break; } }
+  if (!before && !after) return null;
+  if (before && after) {
+    const [, bm, bd] = before.split("-");
+    const [, am, ad] = after.split("-");
+    if (bm === am) return `${Number(bm)}월 ${Number(bd)}~${Number(ad)}일 사이`;
+    return `${Number(bm)}월 ${Number(bd)}일 ~ ${Number(am)}월 ${Number(ad)}일 사이`;
+  }
+  if (before) { const [, bm, bd] = before.split("-"); return `${Number(bm)}월 ${Number(bd)}일 이후`; }
+  const [, am, ad] = after.split("-");
+  return `${Number(am)}월 ${Number(ad)}일 이전`;
 }
 
 exports.checkVehicleBlanksHourly = onSchedule(
