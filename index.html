@@ -9556,9 +9556,29 @@ async function renderCorpCardMain(){
       renderCorpCardMain();
     });
   });
-  main.querySelectorAll('.corpcard-move-btn').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      if(!moveCorpCardRow(activeCard.id, s.activeMonth, btn.dataset.id, btn.dataset.dir)) return;
+  main.querySelectorAll('.corpcard-seq-cell').forEach(cell=>{
+    cell.addEventListener('dragstart', (e)=>{
+      corpCardDragId = cell.dataset.id;
+      cell.style.cursor = 'grabbing';
+      e.dataTransfer.effectAllowed = 'move';
+      try{ e.dataTransfer.setData('text/plain', cell.dataset.id); }catch(err){}
+    });
+    cell.addEventListener('dragend', ()=>{
+      cell.style.cursor = 'grab';
+      corpCardDragId = null;
+    });
+  });
+  main.querySelectorAll('tbody tr[data-id]').forEach(tr=>{
+    tr.addEventListener('dragover', (e)=>{
+      if(!corpCardDragId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    tr.addEventListener('drop', async (e)=>{
+      e.preventDefault();
+      if(!corpCardDragId) return;
+      if(!reorderCorpCardRow(activeCard.id, s.activeMonth, corpCardDragId, tr.dataset.id)) return;
+      corpCardDragId = null;
       await saveCorpCardRows(activeCard.id);
       renderCorpCardMain();
     });
