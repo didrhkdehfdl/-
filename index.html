@@ -9065,16 +9065,18 @@ function corpCardRowIssues(row, mm){
   }
   return issues;
 }
-// 순번 칸의 ▲▼를 눌러 그 행을 바로 위/아래 행과 자리를 바꾼다(정렬 기준 없이
-// 화면에 보이는 순서를 사용자가 직접 손으로 조정할 수 있게).
-function moveCorpCardRow(cardId, month, rowId, dir){
+// 순번 칸을 누른 채로 끌어서(드래그 앤 드롭) 그 행을 원하는 위치로 옮긴다
+// (정렬 기준 없이 화면에 보이는 순서를 사용자가 직접 손으로 조정할 수 있게).
+let corpCardDragId = null;
+function reorderCorpCardRow(cardId, month, draggedId, targetId){
+  if(draggedId===targetId) return false;
   const arr = corpCardState.rowsByCard[cardId] && corpCardState.rowsByCard[cardId][month];
   if(!arr) return false;
-  const idx = arr.findIndex(r=>r.id===rowId);
-  if(idx<0) return false;
-  const swapIdx = dir==='up' ? idx-1 : idx+1;
-  if(swapIdx<0 || swapIdx>=arr.length) return false;
-  [arr[idx], arr[swapIdx]] = [arr[swapIdx], arr[idx]];
+  const fromIdx = arr.findIndex(r=>r.id===draggedId);
+  const toIdx = arr.findIndex(r=>r.id===targetId);
+  if(fromIdx<0 || toIdx<0) return false;
+  const [moved] = arr.splice(fromIdx,1);
+  arr.splice(toIdx,0,moved);
   return true;
 }
 // 원본 엑셀을 불러올 때 연도가 2025로 잘못 인식된 행이 있으면(파싱 문제인지
