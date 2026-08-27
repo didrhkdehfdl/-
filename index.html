@@ -9910,18 +9910,21 @@ async function renderCorpCardMain(){
     ` : ''}
     <div style="margin-bottom:10px;">
       ${(() => {
-        const cardBtnHtml = c => `<button class="corpcard-tab-btn" data-id="${c.id}" style="padding:8px 6px; border-radius:7px; border:1px solid ${c.id===s.activeCardId?'var(--gold)':'var(--line)'}; background:${c.id===s.activeCardId?'rgba(224,163,57,.12)':'transparent'}; color:${c.id===s.activeCardId?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">💳 ${escapeHtml(c.label||c.cardNumber)}</button>`;
-        const shared = s.cards.filter(c=>c.category==='shared');
-        const personal = s.cards.filter(c=>c.category!=='shared');
-        const group = (label, list) => !list.length ? '' : `
-          <div style="font-size:11.5px; color:var(--muted); font-weight:600; margin:${list===shared?'0':'12px'} 0 6px;">${label} (${list.length})</div>
+        const cardBtnHtml = c => `<button class="corpcard-tab-btn" data-id="${c.id}" style="padding:8px 6px; border-radius:7px; border:1px solid ${c.id===s.activeCardId?'var(--gold)':'var(--line)'}; background:${c.id===s.activeCardId?'rgba(224,163,57,.12)':'transparent'}; color:${c.id===s.activeCardId?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">💳 ${escapeHtml(c.label||c.cardNumber)}${(c.assignedTo&&c.assignedTo.length) ? `<br><span style="font-size:10.5px; opacity:.8;">${escapeHtml(c.assignedTo.join('·'))}</span>` : ''}</button>`;
+        return CORP_CARD_CATEGORY_ORDER.map((key, i) => {
+          const list = visibleCards.filter(c=>c.category===key);
+          if(!list.length) return '';
+          return `
+          <div style="font-size:11.5px; color:var(--muted); font-weight:600; margin:${i===0?'0':'12px'} 0 6px;">${CORP_CARD_CATEGORY_LABELS[key]} (${list.length})</div>
           <div style="display:grid; grid-template-columns:repeat(13, minmax(0,1fr)); gap:8px;">${list.map(cardBtnHtml).join('')}</div>`;
-        return group('🔓 공용카드', shared) + group('🔒 개인불출카드', personal);
+        }).join('');
       })()}
       <div style="display:flex; align-items:center; gap:8px; margin-top:12px;">
-        <button id="corpCardAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12.5px;">+ 카드 추가</button>
-        ${activeCard ? `
-          <button id="corpCardToggleCategoryBtn" style="padding:8px 14px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--sky); cursor:pointer; font-size:12px;">${activeCard.category==='shared' ? '개인불출카드로 이동' : '공용카드로 이동'}</button>
+        ${isAdminUser ? `<button id="corpCardAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12.5px;">+ 카드 추가</button>` : ''}
+        ${activeCard && isAdminUser ? `
+          <select id="corpCardCategorySelect" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--sky); cursor:pointer; font-size:12px;">
+            ${CORP_CARD_CATEGORY_ORDER.map(key => `<option value="${key}" ${activeCard.category===key?'selected':''}>${CORP_CARD_CATEGORY_LABELS[key]}로 이동</option>`).join('')}
+          </select>
           <button id="corpCardDelBtn" style="margin-left:auto; padding:8px 14px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">이 카드 목록에서 제거</button>
         ` : ''}
       </div>
