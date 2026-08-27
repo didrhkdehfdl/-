@@ -9268,20 +9268,42 @@ async function renderOMListMain(){
 // 내보내기와 같은 방식(JSZip으로 원본 XML을 직접 고침).
 const CORP_CARD_LIST_KEY = 'corp-card-list';
 // 카드 끝 4자리 기준으로 처음 분류해둘 종류 — 여기 없는 카드는 전부
-// "개인불출카드"로 본다. 사용자가 직접 지정한 최초 분류이고, 카드마다
-// 나중에 화면의 종류 선택 칸으로 바꿀 수도 있다.
+// "개인불출카드"로 본다. "경기지사 법인카드 수불부" 표를 그대로 옮겨온
+// 최초 분류이고, 카드마다 나중에 화면의 종류 선택 칸으로 바꿀 수도 있다.
 const CORP_CARD_CATEGORY_LAST4 = {
   shared: ['8992','9901','5967','4996','5979'],
   safety: ['0966','0949','0931'],
+  supplies: ['5927'],
+  office: ['0905'],
+  offset: ['9916'],
 };
-const CORP_CARD_CATEGORY_LABELS = { shared:'🔓 공용카드', safety:'🦺 안전카드', personal:'🔒 개인불출카드' };
-const CORP_CARD_CATEGORY_ORDER = ['shared','safety','personal'];
+const CORP_CARD_CATEGORY_LABELS = {
+  personal:'🔒 개인불출카드', shared:'🔓 공용카드', safety:'🦺 안전카드',
+  supplies:'🧴 소모품카드', office:'🏢 사무실카드', offset:'🔁 상계카드',
+};
+const CORP_CARD_CATEGORY_ORDER = ['personal','shared','safety','supplies','office','offset'];
 function corpCardDefaultCategory(last4){
   for(const key of Object.keys(CORP_CARD_CATEGORY_LAST4)){
     if(CORP_CARD_CATEGORY_LAST4[key].includes(last4)) return key;
   }
   return 'personal';
 }
+// "경기지사 법인카드 수불부" 표의 카드번호 → 사용인원(담당자) 매핑. 승인관리
+// 탭에서 사용자 이름을 이 이름과 똑같이 적어두면, 그 사람이 법인카드 탭을
+// 열었을 때 자기 담당 카드가 자동으로 보인다(공용·안전카드는 담당자가 따로
+// 없어 전체 승인 사용자에게 항상 보인다).
+const CORP_CARD_ASSIGNED_NAMES = {
+  '6250-0307-9510-1956': ['김종식'],
+  '4140-0307-8554-0907': ['임범동'],
+  '4140-0307-8554-0915': ['진으뜸'],
+  '5585-0314-2735-9929': ['김동균'],
+  '6264-1511-9912-3976': ['이승열','김태형'],
+  '5585-0314-2737-8986': ['방관영'],
+  '6250-0307-9510-0982': ['진재혁'],
+  '6250-0320-7757-4967': ['최지석'],
+  '6250-0320-7753-5927': ['김호현'],
+  '5585-0314-2730-9916': ['이수연'],
+};
 const CORP_CARD_COLUMNS = [
   ['date','날짜',100], ['dept','부서',90], ['name','성명',80], ['corp','법인',80],
   ['bizCategory','사업분류',90], ['project','프로젝트',90], ['plantName','발전소명',120],
