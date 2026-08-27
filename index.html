@@ -4860,6 +4860,8 @@ function renderProfitMain(){
 
   document.getElementById('deleteCaseBtn').addEventListener('click', removeActiveCase);
   document.getElementById('caseHistoryBtn').addEventListener('click', ()=> openCaseHistoryOverlay(p.id));
+  const notifyBtn = document.getElementById('notifySendBtn');
+  if(notifyBtn) notifyBtn.addEventListener('click', ()=> openNotifySendOverlay(p));
   document.getElementById('ledgerWriteToggleBtn').addEventListener('click', ()=>{
     profitLedgerState.open = !profitLedgerState.open;
     renderProfitMain();
