@@ -9093,11 +9093,21 @@ function corpCardRowIssues(row, mm){
     const empty = f==='amount' ? (!row.amount || Number(row.amount)===0) : !String(row[f]||'').trim();
     if(empty) issues[f] = '빈칸을 채워주세요';
   });
-  // 비고는 지출내역이 "식대"일 때만 필수로 본다(그 외 지출내역은 비어있어도 된다).
-  if(String(row.expenseType||'').trim()==='식대' && !String(row.note||'').trim()) issues.note = '빈칸을 채워주세요';
+  // 비고는 지출내역이 "식대"일 때만 필수로 본다. 반대로 식대가 아닌데 비고에
+  // 뭔가 적혀있으면, 그 내용은 보통 업무내용 칸에 적어야 할 내용이라 옮겨 적으라고 안내한다.
+  const isMealAllowance = String(row.expenseType||'').trim()==='식대';
+  if(isMealAllowance){
+    if(!String(row.note||'').trim()) issues.note = '빈칸을 채워주세요';
+  } else if(String(row.note||'').trim()){
+    issues.note = '업무내용에 적어주세요';
+  }
   if(!issues.expenseType && String(row.expenseType||'').trim()==='점심') issues.expenseType = '"식대"로 수정해주세요';
   if(mm){
-    if(mm.reason==='no_match'){
+    if(mm.reason==='date'){
+      issues.date = issues.date || `날짜가 잘못된 것 같습니다 (승인내역: ${mm.approvalDate})`;
+    } else if(mm.reason==='amount'){
+      issues.amount = issues.amount || `금액이 잘못된 것 같습니다 (승인내역: ${fmtNum(mm.approvalAmount)}원)`;
+    } else if(mm.reason==='no_match'){
       issues.date = issues.date || '승인내역 없음(날짜·금액 확인)';
       issues.amount = issues.amount || '승인내역 없음(날짜·금액 확인)';
     } else if(mm.reason==='place'){
