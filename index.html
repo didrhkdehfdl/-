@@ -11865,6 +11865,13 @@ function applyTabPermissions(allowedTabs){
 function startApp(allowedTabs){
   document.getElementById('authOverlay').style.display = 'none';
   document.getElementById('app').classList.add('show');
+  // 로그인하자마자 항상 "영업비 정산"부터 보여주는 대신, 이 브라우저에서 마지막
+  // 으로 보던 탭을 그대로 이어서 보여준다(권한이 바뀌어 그 탭을 더 못 보면
+  // applyTabPermissions가 알아서 허용된 첫 탭으로 되돌린다).
+  try{
+    const lastTab = localStorage.getItem('lastActiveTab');
+    if(lastTab) state.activeTab = lastTab;
+  }catch(e){}
   applyTabPermissions(isAdminUser ? null : allowedTabs);
   renderSidebar();
   renderMain();
