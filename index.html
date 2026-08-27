@@ -9043,6 +9043,33 @@ function newCorpCardRow(){
   CORP_CARD_COLUMNS.forEach(([f])=>{ row[f] = f==='amount' ? 0 : (f==='date' ? isoDate(new Date()) : ''); });
   return row;
 }
+// 원본 엑셀을 불러올 때 연도가 2025로 잘못 인식된 행이 있으면(파싱 문제인지
+// 원본 데이터 자체 문제인지는 확실치 않지만, 이미 들어온 데이터는 되돌릴 방법이
+// 없으므로) 사용자가 직접 확인하고 눌렀을 때만 2026년으로 한꺼번에 옮겨준다.
+function countCorpCard2025Dates(){
+  let count = 0;
+  Object.values(corpCardState.rowsByCard).forEach(rowsByMonth=>{
+    Object.values(rowsByMonth||{}).forEach(rows=>{
+      (rows||[]).forEach(r=>{ if(r.date && r.date.startsWith('2025-')) count++; });
+    });
+  });
+  return count;
+}
+async function fixCorpCard2025Dates(){
+  const affectedCardIds = new Set();
+  corpCardState.cards.forEach(card=>{
+    const rowsByMonth = corpCardState.rowsByCard[card.id]||{};
+    let changed = false;
+    Object.values(rowsByMonth).forEach(rows=>{
+      (rows||[]).forEach(r=>{
+        if(r.date && r.date.startsWith('2025-')){ r.date = '2026-'+r.date.slice(5); changed = true; }
+      });
+    });
+    if(changed) affectedCardIds.add(card.id);
+  });
+  for(const id of affectedCardIds) await saveCorpCardRows(id);
+  recomputeCorpCardMismatches();
+}
 // 원본의 공급가액/부가세 수식(L=IF(M=0,N,N/1.1), M=N/11)과 똑같이 화면에도 참고용으로
 // 보여준다 — 실제로는 엑셀 쪽 수식이 계산하므로 이 값은 저장하지 않는다.
 function corpCardSupplyVat(amount){
