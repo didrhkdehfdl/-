@@ -9264,13 +9264,24 @@ function placesSimilar(a, b){
   return max / Math.min(p1.length, p2.length) >= 0.6;
 }
 // 법인카드 탭에 입력된 내역(날짜+금액이 같은 것)을 승인내역과 짝지어 보고,
-// 짝을 못 찾았으면(날짜·금액이 다름) reason:'no_match', 짝은 찾았는데 사용처가
-// 서로 다르면(비슷하지 않으면) reason:'place'로 표시한 Map(rowId -> 사유)을 만든다.
+// 짝을 못 찾았을 때는 그냥 "안 맞음"으로 끝내지 않고 좀 더 자세히 짚어준다:
+// 금액은 같은데 날짜만 다른 승인내역이 있으면 날짜가 잘못 적힌 것으로
+// (reason:'date'), 날짜는 같은데 금액만 다르면 금액이 잘못 적힌 것으로
+// (reason:'amount') 보고 맞는 값을 같이 알려준다. 그마저도 없으면 reason:
+// 'no_match'. 짝은 찾았는데 사용처가 서로 다르면(비슷하지 않으면) reason:
+// 'place'로 표시한다. 반환값은 Map(rowId -> 사유 정보).
 function reconcileCorpCardWithApproval(ledgerRows, approvalEntries){
   const result = reconcileCardEntries(ledgerRows, approvalEntries);
   const mismatchMap = new Map();
   result.rows.forEach(r=>{
-    if(r.status !== 'match'){ mismatchMap.set(r.id, { reason:'no_match' }); return; }
+    if(r.status !== 'match'){
+      const sameAmount = approvalEntries.find(a=>a.amount===r.amount && a.isoDate!==r.isoDate);
+      const sameDate = approvalEntries.find(a=>a.isoDate===r.isoDate && a.amount!==r.amount);
+      if(sameAmount){ mismatchMap.set(r.id, { reason:'date', approvalDate: sameAmount.isoDate }); }
+      else if(sameDate){ mismatchMap.set(r.id, { reason:'amount', approvalAmount: sameDate.amount }); }
+      else { mismatchMap.set(r.id, { reason:'no_match' }); }
+      return;
+    }
     const ae = approvalEntries.find(a=>a.isoDate===r.isoDate && a.amount===r.amount);
     if(ae && !placesSimilar(r.place, ae.place)){
       mismatchMap.set(r.id, { reason:'place', approvalPlace: ae.place });
