@@ -3,6 +3,7 @@
 // "어느 기기로 보낼지"(FCM 토큰)만 app_data/fcm-admin-tokens에 등록해두고,
 // "언제·무엇을 보낼지" 판단과 실제 발송은 여기서 전부 처리한다.
 const { onDocumentCreated, onDocumentUpdated, onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
