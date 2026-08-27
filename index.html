@@ -8008,7 +8008,7 @@ async function regenerateCardMasterAndDownload(tmplId){
     for(const card of corpCardState.cards){
       const parts = cardParts(card.cardNumber);
       if(!parts) continue;
-      const matchMonth = ensureCorpCardMonthExists(card, mnum);
+      const matchMonth = await ensureCorpCardMonthExists(card, mnum);
       if(!matchMonth) continue;
       const rows = (corpCardState.rowsByCard[card.id][matchMonth]||[]).filter(r=>r.date);
       if(!rows.length) continue;
