@@ -12641,6 +12641,9 @@ async function renderAdminList(){
 document.getElementById('appLogoutBtn').addEventListener('click', ()=>fbAuth.signOut());
 
 let isAdminUser = false;
+// 승인관리 탭에서 등록된 내 이름 — 법인카드 탭에서 "이 사람 담당 카드만
+// 보여주기"를 판단할 때 CORP_CARD_ASSIGNED_NAMES와 이 값을 비교한다.
+let currentUserName = '';
 
 fbAuth.onAuthStateChanged(async (user) => {
   if(!user){
