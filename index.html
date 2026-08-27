@@ -9139,6 +9139,7 @@ async function ensureCorpCardLoaded(){
     }
     const approvalText = await loadFileFromStorage(CORP_CARD_APPROVAL_KEY, 30000);
     corpCardState.approvalEntries = approvalText ? JSON.parse(approvalText) : [];
+    await fixCorpCard2025Dates();
     recomputeCorpCardMismatches();
   }catch(e){ console.error('법인카드 목록 불러오기 실패', e); }
   corpCardState.loaded = true;
