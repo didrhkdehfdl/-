@@ -9296,13 +9296,18 @@ function corpCardRowIssues(row, mm){
     const empty = f==='amount' ? (!row.amount || Number(row.amount)===0) : !String(row[f]||'').trim();
     if(empty) issues[f] = '빈칸을 채워주세요';
   });
-  // 비고는 지출내역이 "식대"일 때만 필수로 본다. 반대로 식대가 아닌데 비고에
-  // 뭔가 적혀있으면, 그 내용은 보통 업무내용 칸에 적어야 할 내용이라 옮겨 적으라고 안내한다.
-  // "-"만 적힌 건 "내용 없음"이라는 뜻으로 보고 두 경우 다 경고하지 않는다.
+  // 비고는 지출내역이 "식대"일 때만 필수로 본다. 접대비는 "성명 // 상대방
+  // (업체)" 형식(구분자 "//"와 업체를 담은 괄호)을 지켰는지 확인한다. 그 외
+  // 지출내역인데 비고에 뭔가 적혀있으면, 그 내용은 보통 업무내용 칸에 적어야
+  // 할 내용이라 옮겨 적으라고 안내한다. "-"만 적힌 건 "내용 없음"이라는
+  // 뜻으로 보고 세 경우 다 경고하지 않는다.
   const isMealAllowance = String(row.expenseType||'').trim()==='식대';
+  const isEntertainment = String(row.expenseType||'').trim()==='접대비';
   const noteHasContent = /[^\s\-–—]/.test(row.note||'');
   if(isMealAllowance){
     if(!noteHasContent) issues.note = '빈칸을 채워주세요';
+  } else if(isEntertainment){
+    if(!/^.+\/\/.+\(.+\)\s*$/.test(String(row.note||'').trim())) issues.note = '"성명 // 상대방 (업체)" 형식으로 적어주세요';
   } else if(noteHasContent){
     issues.note = '업무내용에 적어주세요';
   }
