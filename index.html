@@ -9099,20 +9099,38 @@ function mergeApprovalEntries(existing, incoming){
   });
   return merged;
 }
+// 사용처 이름은 카드 전표 표기와 사람이 직접 입력한 표기가 완전히 똑같지
+// 않을 때가 많다(가맹점 앞뒤에 지점명·기호가 붙거나 띄어쓰기가 다른 경우 등).
+// 한쪽이 다른 쪽을 포함하면 당연히 같은 곳으로 보고, 그렇지 않더라도 공통으로
+// 겹치는 글자가 더 짧은 쪽 길이의 60% 이상이면 "비슷한 곳"으로 보고 일치 처리한다.
+function placesSimilar(a, b){
+  const norm = s => String(s||'').replace(/\s/g,'').replace(/\(주\)|\(유\)|㈜/g,'');
+  const p1 = norm(a), p2 = norm(b);
+  if(!p1 || !p2) return false;
+  if(p1===p2 || p1.includes(p2) || p2.includes(p1)) return true;
+  let max = 0;
+  const dp = Array.from({length:p1.length+1}, ()=>new Array(p2.length+1).fill(0));
+  for(let i=1;i<=p1.length;i++){
+    for(let j=1;j<=p2.length;j++){
+      if(p1[i-1]===p2[j-1]){ dp[i][j] = dp[i-1][j-1]+1; if(dp[i][j]>max) max = dp[i][j]; }
+    }
+  }
+  return max / Math.min(p1.length, p2.length) >= 0.6;
+}
 // 법인카드 탭에 입력된 내역(날짜+금액이 같은 것)을 승인내역과 짝지어 보고,
-// 짝을 못 찾았거나(금액 불일치) 짝은 찾았는데 사용처가 서로 딴판이면 그 행의
-// id를 "불일치"로 표시한다.
+// 짝을 못 찾았으면(날짜·금액이 다름) reason:'no_match', 짝은 찾았는데 사용처가
+// 서로 다르면(비슷하지 않으면) reason:'place'로 표시한 Map(rowId -> 사유)을 만든다.
 function reconcileCorpCardWithApproval(ledgerRows, approvalEntries){
   const result = reconcileCardEntries(ledgerRows, approvalEntries);
-  const mismatchIds = new Set();
+  const mismatchMap = new Map();
   result.rows.forEach(r=>{
-    if(r.status !== 'match'){ mismatchIds.add(r.id); return; }
+    if(r.status !== 'match'){ mismatchMap.set(r.id, { reason:'no_match' }); return; }
     const ae = approvalEntries.find(a=>a.isoDate===r.isoDate && a.amount===r.amount);
-    const p1 = String(r.place||'').replace(/\s/g,'');
-    const p2 = String((ae&&ae.place)||'').replace(/\s/g,'');
-    if(p1 && p2 && !(p1.includes(p2) || p2.includes(p1))) mismatchIds.add(r.id);
+    if(ae && !placesSimilar(r.place, ae.place)){
+      mismatchMap.set(r.id, { reason:'place', approvalPlace: ae.place });
+    }
   });
-  return mismatchIds;
+  return mismatchMap;
 }
 function recomputeCorpCardMismatches(){
   const s = corpCardState;
