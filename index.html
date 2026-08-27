@@ -9562,12 +9562,13 @@ async function renderCorpCardMain(){
       s.activeCardId = btn.dataset.id;
       const tmpl2 = corpCardTemplates[s.activeCardId];
       s.activeMonth = pickDefaultCorpCardMonth(tmpl2 && tmpl2.months);
+      corpCardSelectedIds.clear();
       await saveCorpCardList();
       renderCorpCardMain();
     });
   });
   main.querySelectorAll('.corpcard-month-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{ s.activeMonth = btn.dataset.month; renderCorpCardMain(); });
+    btn.addEventListener('click', ()=>{ s.activeMonth = btn.dataset.month; corpCardSelectedIds.clear(); renderCorpCardMain(); });
   });
   const addCardBtn = document.getElementById('corpCardAddBtn');
   if(addCardBtn) addCardBtn.addEventListener('click', handleCorpCardAdd);
