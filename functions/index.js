@@ -2,7 +2,7 @@
 // PC 브라우저)로 푸시 알림을 보내는 서버 코드. 클라이언트(index.html)는
 // "어느 기기로 보낼지"(FCM 토큰)만 app_data/fcm-admin-tokens에 등록해두고,
 // "언제·무엇을 보낼지" 판단과 실제 발송은 여기서 전부 처리한다.
-const { onDocumentCreated, onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentUpdated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
