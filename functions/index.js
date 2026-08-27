@@ -175,3 +175,61 @@ exports.onNotificationQueued = onDocumentWritten("app_data/notification-queue", 
     );
   }
 });
+
+// ---------- 차량관리 빈칸 자동 알림(정해둔 시간마다) ----------
+// Cloud Scheduler는 배포 시점에 고정된 주기로만 실행되므로(사용자가 앱에서
+// 매번 주기를 바꿀 수 있게 하려고 재배포할 수는 없다), 실제로는 매시간
+// 깨어나서 "마지막으로 보낸 지 설정된 시간이 지났는지"만 확인하는 방식으로
+// 클라이언트가 고른 주기(1/3/6/12/24시간)를 구현한다.
+const VEHICLE_REQUIRED_FIELDS = ["date", "kmBefore", "kmAfter", "purpose", "driver", "fuelCost", "hipass"];
+function vehicleRowHasIssue(row) {
+  return VEHICLE_REQUIRED_FIELDS.some((f) => {
+    if (f === "fuelCost") return row.fuelCost !== "X" && (!row.fuelCost || Number(row.fuelCost) === 0);
+    if (f === "kmBefore" || f === "kmAfter") return !row[f] || Number(row[f]) === 0;
+    return !String(row[f] || "").trim();
+  });
+}
+
+exports.checkVehicleBlanksHourly = onSchedule(
+  { schedule: "every 60 minutes", timeZone: "Asia/Seoul", region: "asia-northeast3" },
+  async () => {
+    const configText = await readAppData("vehicle-alert-config");
+    const config = configText ? JSON.parse(configText) : null;
+    if (!config || !config.toUids || !config.toUids.length || !config.intervalHours) return;
+
+    const lastText = await readAppData("vehicle-alert-last-sent");
+    const lastSentAt = lastText ? (JSON.parse(lastText).at || 0) : 0;
+    const now = Date.now();
+    if (now - lastSentAt < config.intervalHours * 3600 * 1000) return; // 아직 설정한 주기가 안 지남
+
+    const vehicleListText = await readAppData("vehicle-list");
+    const vehicleList = vehicleListText ? JSON.parse(vehicleListText) : null;
+    const vehicles = (vehicleList && vehicleList.vehicles) || [];
+    if (!vehicles.length) return;
+
+    let totalIssueCount = 0;
+    const perVehicleSummary = [];
+    for (const v of vehicles) {
+      const rowsText = await readAppData("vehicle-rows:" + v.id);
+      const rows = rowsText ? JSON.parse(rowsText) : [];
+      const count = rows.filter(vehicleRowHasIssue).length;
+      if (count > 0) {
+        totalIssueCount += count;
+        perVehicleSummary.push(`${v.plate} ${count}건`);
+      }
+    }
+    if (!totalIssueCount) return;
+
+    const title = "차량운행일지 빈칸 확인 필요";
+    const body = `빈칸이 있는 운행기록이 총 ${totalIssueCount}건 있습니다. (${perVehicleSummary.join(", ")})`;
+    for (const uid of config.toUids) {
+      await sendToUserTokens(uid, title, body, { type: "vehicle-blank-alert", tab: "vehicle" });
+    }
+
+    await db.collection("app_data").doc("vehicle-alert-last-sent").set({
+      storedIn: "firestore",
+      value: JSON.stringify({ at: now }),
+      updatedAt: new Date(),
+    });
+  }
+);
