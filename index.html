@@ -9420,15 +9420,20 @@ async function ensureCorpCardLoaded(){
     const saved = listText ? JSON.parse(listText) : null;
     corpCardState.cards = (saved && saved.cards) || [];
     corpCardState.activeCardId = (saved && saved.activeCardId) || (corpCardState.cards[0] ? corpCardState.cards[0].id : '');
-    // 종류가 아직 없거나, 끝 4자리가 지정 목록(공용/안전)에 있는데 실제
-    // 분류가 그와 다르면(예: 안전카드 목록이 나중에 추가된 경우) 다시
-    // 맞춰준다 — 그 외 카드는 이미 정해둔 종류를 그대로 둔다.
+    // 종류가 아직 없거나, 끝 4자리가 지정 목록(공용/안전/소모품/사무실/상계)에
+    // 있는데 실제 분류가 그와 다르면(예: 새 목록이 나중에 추가된 경우) 다시
+    // 맞춰준다 — 그 외 카드는 이미 정해둔 종류를 그대로 둔다. 담당자(assignedTo)도
+    // 아직 없으면 카드번호로 CORP_CARD_ASSIGNED_NAMES에서 채워준다.
     let categoryChanged = false;
     corpCardState.cards.forEach(card=>{
       const expected = corpCardDefaultCategory(card.label);
       const shouldFix = !card.category || (expected!=='personal' && card.category!==expected);
       if(shouldFix){
         card.category = expected;
+        categoryChanged = true;
+      }
+      if(!card.assignedTo && CORP_CARD_ASSIGNED_NAMES[card.cardNumber]){
+        card.assignedTo = CORP_CARD_ASSIGNED_NAMES[card.cardNumber];
         categoryChanged = true;
       }
     });
