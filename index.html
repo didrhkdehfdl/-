@@ -7757,15 +7757,22 @@ function cardParts(full){
   if(!m) return null;
   return { p1:m[1], p2:m[2], p3:m[3], p4:m[4] };
 }
-// 3번째 그룹(가운데 4자리)은 카드사에 따라 "****"처럼 마스킹돼서 올 수 있어
-// \S{4}로 느슨하게 받아들이지만, 실제 일치 여부는 앞 8자리(마스킹되지 않는
-// 부분)와 뒷 4자리를 모두 비교해야 한다 — 뒷 4자리만 비교하면 카드를 여러 장
-// 한꺼번에 대사할 때 뒷자리가 우연히 같은 다른
-// 카드의 승인내역이 서로 뒤섞일 수 있다.
+// 카드사마다 승인내역에서 마스킹하는 자리가 다르다(3번째 그룹을 가리는 곳이
+// 많지만, 2번째 그룹을 "****"로 가리는 카드사도 있다) — 그래서 특정 자리가
+// 마스킹됐다고 가정하지 않고, 4자리 숫자로 온전히 보이는 그룹만 실제 카드
+// 번호와 비교한다. 최소 2개 그룹은 보여야 하고, 보이는 그룹은 전부 일치해야
+// 같은 카드로 본다(보이는 자리가 너무 적으면 다른 카드와 우연히 헷갈릴 수 있다).
 function approvalRowMatchesCard(cardNoStr, parts){
-  const m = String(cardNoStr||'').trim().match(/^(\d{4})-(\d{4})-(\S{4})-(\d{4})$/);
+  const m = String(cardNoStr||'').trim().match(/^(\S{4})-(\S{4})-(\S{4})-(\S{4})$/);
   if(!m) return false;
-  return m[1]===parts.p1 && m[2]===parts.p2 && m[4]===parts.p4;
+  const target = [parts.p1, parts.p2, parts.p3, parts.p4];
+  let visible = 0, matched = 0;
+  for(let i=0;i<4;i++){
+    if(!/^\d{4}$/.test(m[i+1])) continue; // 마스킹된 자리는 비교하지 않고 건너뜀
+    visible++;
+    if(m[i+1] === target[i]) matched++;
+  }
+  return visible >= 2 && matched === visible;
 }
 function reconcileCardEntries(ledgerEntries, approvalEntries){
   const used = new Array(approvalEntries.length).fill(false);
