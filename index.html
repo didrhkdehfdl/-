@@ -9446,6 +9446,13 @@ async function renderCorpCardMain(){
   });
   const addCardBtn = document.getElementById('corpCardAddBtn');
   if(addCardBtn) addCardBtn.addEventListener('click', handleCorpCardAdd);
+  const fix2025Btn = document.getElementById('corpCardFix2025Btn');
+  if(fix2025Btn) fix2025Btn.addEventListener('click', async ()=>{
+    const n = countCorpCard2025Dates();
+    if(!confirm(`2025년으로 표시된 ${n}건을 전부 2026년으로 바꿀까요? (연도만 바뀌고 월/일은 그대로 유지됩니다)`)) return;
+    await fixCorpCard2025Dates();
+    renderCorpCardMain();
+  });
   const delCardBtn = document.getElementById('corpCardDelBtn');
   if(delCardBtn) delCardBtn.addEventListener('click', async ()=>{
     if(!confirm(`"${activeCard.label||activeCard.cardNumber}" 카드를 목록에서 제거할까요? (원본 엑셀 파일이 지워지는 건 아니고, 앱에 입력해둔 내역만 함께 사라집니다)`)) return;
