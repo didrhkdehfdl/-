@@ -10092,6 +10092,12 @@ async function renderCorpCardMain(){
     await saveCorpCardList();
     renderCorpCardMain();
   });
+  const categorySelect = document.getElementById('corpCardCategorySelect');
+  if(categorySelect) categorySelect.addEventListener('change', async ()=>{
+    activeCard.category = categorySelect.value;
+    await saveCorpCardList();
+    renderCorpCardMain();
+  });
   if(!activeCard || !tmpl) return;
   setupStickyHScroll('corpCardTableWrap', 'corpCardStickyScroll');
   main.querySelectorAll('.corpcard-namemode-btn').forEach(btn=>{
