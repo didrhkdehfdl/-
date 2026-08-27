@@ -8012,8 +8012,20 @@ async function renderCardReconMain(){
       여러 카드가 한 파일에 들어있는 "기존 통합본"을 한 번만 올려두면, 왼쪽 <b>법인카드</b> 탭에 입력해둔 최신 내역으로
       해당 카드 블록(B~Q열)만 자동으로 채워서 다시 다운로드할 수 있습니다. 다른 카드 블록·다른 시트·외부 링크는 전혀 건드리지 않습니다.
       카드별 관리대장을 별도로 올릴 필요는 없습니다 — 법인카드 탭 데이터를 그대로 사용합니다.
-      카드사 승인내역과의 사용처·금액 대사는 <b>법인카드</b> 탭에서 승인내역을 업로드해 확인하세요(불일치 항목이 빨간줄로 표시됩니다).
     </p>
+
+    <div class="table-wrap" style="padding:14px; margin-bottom:16px;">
+      <div style="font-size:12.5px; font-weight:600; margin-bottom:8px;">카드사 승인내역 업로드(대사)</div>
+      <div style="font-size:11.5px; color:var(--muted); line-height:1.6; margin-bottom:10px;">
+        올리면 카드번호로 <b>법인카드</b> 탭의 카드를 찾아, 이미 입력된 내역과 날짜·금액을 대조합니다.
+        사용처 또는 금액이 다르면 법인카드 탭에서 해당 행이 빨간줄로 표시됩니다. 업로드한 내역은 계속 누적되며 중복은 자동으로 걸러집니다.
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <input type="file" id="cardApprovalFile2" accept=".xlsx,.xls" style="display:none;">
+        <button id="cardApprovalBtn2" style="padding:8px 14px; border-radius:7px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600; font-size:12.5px;">🧾 승인내역 업로드</button>
+        <span style="font-size:12px; color:var(--muted);">${corpCardState.approvalEntries.length ? `누적 ${fmtNum(corpCardState.approvalEntries.length)}건` : '업로드된 내역 없음'}</span>
+      </div>
+    </div>
 
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
       <input type="file" id="cardMasterAddFile" accept=".xlsx,.xls" style="font-size:11.5px;">
@@ -8034,6 +8046,20 @@ async function renderCardReconMain(){
     </div>
   `;
 
+  document.getElementById('cardApprovalBtn2').addEventListener('click', ()=> document.getElementById('cardApprovalFile2').click());
+  document.getElementById('cardApprovalFile2').addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const btn = document.getElementById('cardApprovalBtn2');
+    btn.disabled = true; btn.textContent = '처리중…';
+    try{
+      await handleCorpCardApprovalUpload(file);
+    }catch(err){
+      alert('승인내역 파일을 읽지 못했습니다: '+err.message);
+    }
+    e.target.value = '';
+    renderCardReconMain();
+  });
   document.getElementById('cardMasterAddBtn').addEventListener('click', ()=> document.getElementById('cardMasterAddFile').click());
   document.getElementById('cardMasterAddFile').addEventListener('change', async (e)=>{
     const file = e.target.files[0];
