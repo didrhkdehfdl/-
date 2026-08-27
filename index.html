@@ -8006,7 +8006,7 @@ function corpCardRowToBlock(row){
   const sv = corpCardSupplyVat(row.amount);
   return [dayNum, row.dept, row.name, row.corp, row.bizCategory, row.project, row.plantName, row.place, row.workDetail, row.expenseType, sv.supply||0, sv.vat||0, Number(row.amount)||0, row.hipass, row.carNo, row.note];
 }
-async function regenerateCardMasterAndDownload(tmplId){
+async function regenerateCardMasterAndDownload(tmplId, onProgress){
   const tmpl = corpCardMasterTemplates.find(t=>t.id===tmplId);
   if(!tmpl) return;
   await loadXlsxLib(); await loadJSZipLib();
@@ -8020,9 +8020,13 @@ async function regenerateCardMasterAndDownload(tmplId){
   const wb = XLSX.read(buf, { type:'array' });
   const monthSheets = wb.SheetNames.filter(n=>/\d{1,2}\s*월/.test(n));
   const applied = []; const skipped = [];
+  const totalSteps = monthSheets.length * corpCardState.cards.length;
+  let doneSteps = 0;
   for(const sheetLabel of monthSheets){
     const mnum = monthNumFromLabel(sheetLabel);
     for(const card of corpCardState.cards){
+      doneSteps++;
+      if(onProgress) onProgress(doneSteps, totalSteps);
       const parts = cardParts(card.cardNumber);
       if(!parts) continue;
       const matchMonth = await ensureCorpCardMonthExists(card, mnum);
