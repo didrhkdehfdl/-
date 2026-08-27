@@ -1331,21 +1331,25 @@ function closeCaseHistoryOverlay(){
 // (새 문의 접수 알림과 완전히 같은 방식 — onNewInquiry 참고).
 let notifySendTargetCase = null;
 const NOTIFICATION_QUEUE_KEY = 'notification-queue';
-async function openNotifySendOverlay(caseObj){
+async function openNotifySendOverlay(caseObj, defaultMessage){
   notifySendTargetCase = caseObj;
   const caseLabel = (caseObj && (caseObj.title || caseObj.docNo)) || '이 건';
   document.getElementById('notifySendCaseLabel').textContent = `건: ${caseLabel}`;
-  document.getElementById('notifySendMessage').value = '';
+  document.getElementById('notifySendMessage').value = defaultMessage || '';
   document.getElementById('notifySendStatus').textContent = '사용자 목록 불러오는 중…';
   document.getElementById('notifySendOverlay').style.display = 'flex';
   try{
     const snap = await fbDb.collection('users').where('approved','==',true).get();
     const me = fbAuth.currentUser;
     const users = snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(u=>u.id!==(me&&me.uid));
-    const sel = document.getElementById('notifySendRecipient');
-    sel.innerHTML = users.length
-      ? users.map(u=>`<option value="${u.id}">${escapeHtml(u.name||u.email||u.id)}</option>`).join('')
-      : `<option value="">알림 보낼 수 있는 다른 사용자가 없습니다</option>`;
+    const list = document.getElementById('notifySendRecipientList');
+    list.innerHTML = users.length
+      ? users.map(u=>`
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">
+            <input type="checkbox" class="notify-recipient-box" value="${u.id}">
+            ${escapeHtml(u.name||u.email||u.id)}
+          </label>`).join('')
+      : `<div style="font-size:12.5px; color:var(--muted);">알림 보낼 수 있는 다른 사용자가 없습니다</div>`;
     document.getElementById('notifySendStatus').textContent = '';
   }catch(err){
     document.getElementById('notifySendStatus').textContent = '사용자 목록을 불러오지 못했습니다: '+err.message;
@@ -1357,10 +1361,9 @@ function closeNotifySendOverlay(){
 }
 document.getElementById('notifySendCloseBtn').addEventListener('click', closeNotifySendOverlay);
 document.getElementById('notifySendSubmitBtn').addEventListener('click', async ()=>{
-  const sel = document.getElementById('notifySendRecipient');
-  const toUid = sel.value;
+  const toUids = [...document.querySelectorAll('.notify-recipient-box:checked')].map(el=>el.value);
   const statusEl = document.getElementById('notifySendStatus');
-  if(!toUid){ statusEl.textContent = '받을 사람을 선택해주세요.'; return; }
+  if(!toUids.length){ statusEl.textContent = '받을 사람을 한 명 이상 선택해주세요.'; return; }
   const msg = document.getElementById('notifySendMessage').value.trim();
   const btn = document.getElementById('notifySendSubmitBtn');
   btn.disabled = true; btn.textContent = '보내는 중…';
@@ -1369,19 +1372,22 @@ document.getElementById('notifySendSubmitBtn').addEventListener('click', async (
     const caseLabel = (c && (c.title || c.docNo)) || '건';
     const listText = await loadFileFromStorage(NOTIFICATION_QUEUE_KEY);
     const queue = listText ? JSON.parse(listText) : [];
-    queue.push({
-      id: rid(),
-      toUid,
-      fromEmail: (fbAuth.currentUser && fbAuth.currentUser.email) || '',
-      title: '알림: ' + caseLabel,
-      body: msg || `${caseLabel} 건을 확인해주세요.`,
-      caseId: c ? c.id : null,
-      createdAt: Date.now(),
+    const fromEmail = (fbAuth.currentUser && fbAuth.currentUser.email) || '';
+    toUids.forEach(toUid=>{
+      queue.push({
+        id: rid(),
+        toUid,
+        fromEmail,
+        title: '알림: ' + caseLabel,
+        body: msg || `${caseLabel} 건을 확인해주세요.`,
+        caseId: c ? c.id : null,
+        createdAt: Date.now(),
+      });
     });
     while(queue.length > 200) queue.shift(); // 오래된 항목은 계속 쌓아두지 않음
     await saveFileToStorage(NOTIFICATION_QUEUE_KEY, JSON.stringify(queue));
     statusEl.style.color = '#2e9e5b';
-    statusEl.textContent = '알림을 보냈습니다.';
+    statusEl.textContent = `${toUids.length}명에게 알림을 보냈습니다.`;
     setTimeout(closeNotifySendOverlay, 900);
   }catch(err){
     statusEl.style.color = 'var(--neg)';
