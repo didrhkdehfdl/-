@@ -10695,7 +10695,13 @@ async function renderVehicleMain(){
       if(!row) return;
       const field = el.dataset.field;
       if(el.classList.contains('vehicle-num')){
-        row[field] = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
+        // 주유비는 "주유 안 함"을 표시하려고 숫자 대신 X를 적는 경우가 있어
+        // 숫자 칸이지만 예외로 허용한다.
+        if(field==='fuelCost' && /^x$/i.test(el.value.trim())){
+          row[field] = 'X';
+        } else {
+          row[field] = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
+        }
         // 운행후(Km)를 고치면, 바로 다음 행의 운행전(Km)도 같이 이어서 채운다.
         if(field==='kmAfter'){
           const idx = rows.findIndex(r=>r.id===row.id);
