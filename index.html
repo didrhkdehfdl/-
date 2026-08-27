@@ -7915,374 +7915,155 @@ async function readWorkbookFromFile(file){
   return { wb, buf };
 }
 
-function renderCardReconMain(){
-  const s = cardReconState;
+// "③ 기존 통합본"(여러 카드가 한 파일에 블록으로 들어있는 파일)을 매번 새로
+// 올리는 대신 한 번만 저장해두고, 왼쪽 "법인카드" 탭에 입력해둔 최신 내역으로
+// 해당 카드 블록(B~Q열)만 자동으로 채워서 다시 다운로드할 수 있게 한다.
+// 카드별 관리대장을 별도로 올릴 필요가 없다 — 법인카드 탭 데이터가 곧 관리대장.
+const CORP_CARD_MASTER_LIST_KEY = 'corp-card-master-list';
+let corpCardMasterTemplates = []; // [{id, label, fileName, buffer(선택적, 캐시)}]
+let corpCardMasterLoaded = false;
+async function ensureCardMasterLoaded(){
+  if(corpCardMasterLoaded) return;
+  const raw = await loadFileFromStorage(CORP_CARD_MASTER_LIST_KEY);
+  corpCardMasterTemplates = raw ? JSON.parse(raw) : [];
+  corpCardMasterLoaded = true;
+}
+async function saveCardMasterList(){
+  await saveFileToStorage(CORP_CARD_MASTER_LIST_KEY, JSON.stringify(corpCardMasterTemplates.map(t=>({ id:t.id, label:t.label, fileName:t.fileName }))));
+}
+async function handleCardMasterAdd(file){
+  const { buf } = await readWorkbookFromFile(file);
+  const id = rid();
+  await saveFileToStorage('corp-card-master-buf:'+id, arrayBufferToBase64(buf), 30000);
+  corpCardMasterTemplates.push({ id, label:file.name.replace(/\.xlsx$/i,''), fileName:file.name, buffer:buf });
+  await saveCardMasterList();
+}
+// "7월"이든 "2026-01월"이든 뒤에 붙은 "N월"의 월 숫자만 뽑아서, 법인카드 탭의
+// 월 라벨과 통합본 시트 이름의 표기 방식이 달라도 같은 달끼리 짝지을 수 있다.
+function monthNumFromLabel(label){
+  const m = String(label||'').match(/(\d{1,2})\s*월/);
+  return m ? parseInt(m[1],10) : null;
+}
+// 법인카드 탭의 행 하나를 통합본 카드 블록의 B~Q열 16칸 값으로 변환한다
+// (CORP_CARD_COLUMNS 순서 = CARD_BLOCK_COLS 순서와 정확히 같다).
+function corpCardRowToBlock(row){
+  const dayNum = row.date ? parseInt(String(row.date).split('-')[2],10)||'' : '';
+  const sv = corpCardSupplyVat(row.amount);
+  return [dayNum, row.dept, row.name, row.corp, row.bizCategory, row.project, row.plantName, row.place, row.workDetail, row.expenseType, sv.supply||0, sv.vat||0, Number(row.amount)||0, row.hipass, row.carNo, row.note];
+}
+async function regenerateCardMasterAndDownload(tmplId){
+  const tmpl = corpCardMasterTemplates.find(t=>t.id===tmplId);
+  if(!tmpl) return;
+  await loadXlsxLib(); await loadJSZipLib();
+  let buf = tmpl.buffer;
+  if(!buf){
+    const b64 = await loadFileFromStorage('corp-card-master-buf:'+tmpl.id, 30000);
+    if(!b64){ alert('저장된 통합본 파일을 불러오지 못했습니다.'); return; }
+    buf = base64ToArrayBuffer(b64);
+    tmpl.buffer = buf;
+  }
+  const wb = XLSX.read(buf, { type:'array' });
+  const monthSheets = wb.SheetNames.filter(n=>/\d{1,2}\s*월/.test(n));
+  const applied = []; const skipped = [];
+  for(const sheetLabel of monthSheets){
+    const mnum = monthNumFromLabel(sheetLabel);
+    for(const card of corpCardState.cards){
+      const parts = cardParts(card.cardNumber);
+      if(!parts) continue;
+      const cardMonths = Object.keys(corpCardState.rowsByCard[card.id]||{});
+      const matchMonth = cardMonths.find(m=>monthNumFromLabel(m)===mnum);
+      if(!matchMonth) continue;
+      const rows = (corpCardState.rowsByCard[card.id][matchMonth]||[]).filter(r=>r.date);
+      if(!rows.length) continue;
+      const entryBlocks = rows.map(corpCardRowToBlock);
+      const result = await patchFile3CardBlock(buf, sheetLabel, parts.p4, entryBlocks);
+      if(result.error === 'overflow'){
+        skipped.push(`${sheetLabel} · 카드 ${parts.p4}: 블록 칸(${result.blockSize}행)보다 입력 건수(${result.needed}건)가 더 많음`);
+      } else if(result.error){
+        // 그 시트에 이 카드 블록이 아예 없는 경우 등은 조용히 건너뛴다
+      } else {
+        buf = await result.blob.arrayBuffer();
+        applied.push(`${sheetLabel}·${parts.p4}`);
+      }
+    }
+  }
+  if(!applied.length){
+    alert('갱신할 수 있는 카드 블록을 찾지 못했습니다. (등록된 카드에 입력된 월별 내역이 없거나, 이 통합본에 해당 카드 블록이 없습니다)');
+    return;
+  }
+  const finalBlob = new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(finalBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  const base = (tmpl.fileName||'통합본.xlsx').replace(/\.xlsx$/i,'');
+  a.download = `${base}_갱신_${isoDate(new Date())}.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  if(skipped.length) alert(`${applied.length}개 블록을 반영했습니다. 다만 일부는 반영하지 못했습니다:\n`+skipped.join('\n'));
+}
+async function renderCardReconMain(){
   const main = document.getElementById('main');
-  const mr = s.matchResult;
-  const mismatchCount = mr ? (mr.rows.filter(r=>r.status==='ledger_only').length + mr.extra.length) : 0;
+  await ensureCardMasterLoaded();
+  await ensureCorpCardLoaded();
 
   main.innerHTML = `
-    <h2 class="section-title">카드관리 — 카드 대사·자동갱신</h2>
+    <h2 class="section-title">카드관리 — 통합본 자동 갱신</h2>
     <p style="font-size:12.5px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
-      ① 카드별 관리대장(월 시트가 있는 파일) → ② 카드사 승인내역 → ③ 기존 통합본(여러 카드가 들어있는 파일) 순서로 올리면,
-      같은 카드의 관리대장과 승인내역을 대사한 뒤, 통합본의 <b>해당 카드 블록의 B~Q열만</b> 최신 값으로 채워 넣습니다.
-      다른 카드 블록·다른 시트·외부링크는 전혀 건드리지 않습니다.
-      ①·②는 한 번 올리면 다음에 다시 들어와도 남아있습니다. ③ 통합본은 항상 최신 파일을 새로 올려주세요(여러 사람이 같이 쓰는 파일이라 자동 저장하지 않습니다).
+      여러 카드가 한 파일에 들어있는 "기존 통합본"을 한 번만 올려두면, 왼쪽 <b>법인카드</b> 탭에 입력해둔 최신 내역으로
+      해당 카드 블록(B~Q열)만 자동으로 채워서 다시 다운로드할 수 있습니다. 다른 카드 블록·다른 시트·외부 링크는 전혀 건드리지 않습니다.
+      카드별 관리대장을 별도로 올릴 필요는 없습니다 — 법인카드 탭 데이터를 그대로 사용합니다.
+      카드사 승인내역과의 사용처·금액 대사는 <b>법인카드</b> 탭에서 승인내역을 업로드해 확인하세요(불일치 항목이 빨간줄로 표시됩니다).
     </p>
 
-    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; margin-bottom:16px;">
-      <div class="table-wrap" style="padding:14px;">
-        <div style="font-size:12.5px; font-weight:600; margin-bottom:8px;">① 카드별 관리대장 <span style="font-weight:400; color:var(--muted);">(${s.ledgerWbs.length}개 파일)</span></div>
-        <input type="file" id="crLedgerFile" accept=".xlsx,.xls" multiple style="font-size:11.5px; width:100%;">
-        ${s.ledgerWbs.length ? `
-          <div style="margin-top:8px; max-height:260px; overflow-y:auto;">
-            ${s.ledgerWbs.map((w,i)=>`
-              <div style="margin-bottom:6px; padding:6px; border:1px solid var(--line); border-radius:5px;">
-                <div style="font-size:10.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(w.fileName)}">${escapeHtml(w.fileName)}</div>
-                <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
-                  <select class="cr-ledger-sheet-sel" data-idx="${i}" style="flex:1; padding:4px; font-size:11px; border-radius:4px; border:1px solid var(--line); background:var(--panel-2); color:var(--text);">
-                    ${w.wb.SheetNames.map(n=>`<option value="${escapeHtml(n)}" ${n===w.selectedSheet?'selected':''}>${escapeHtml(n)}</option>`).join('')}
-                  </select>
-                  <button class="cr-ledger-remove-btn" data-idx="${i}" title="파일 제거" style="flex:0 0 auto; background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px;">×</button>
-                </div>
-              </div>
-            `).join('')}
-          </div>` : ''}
-      </div>
-      <div class="table-wrap" style="padding:14px;">
-        <div style="font-size:12.5px; font-weight:600; margin-bottom:8px;">② 카드사 승인내역</div>
-        <input type="file" id="crApprovalFile" accept=".xlsx,.xls" style="font-size:11.5px; width:100%;">
-        ${s.approvalFileName ? `<div style="margin-top:6px; font-size:11px; color:var(--muted);">저장된 파일: ${escapeHtml(s.approvalFileName)}</div>` : ''}
-        ${s.approvalSheetNames.length ? `
-          <div style="margin-top:8px; font-size:11.5px; color:var(--muted);">시트 선택</div>
-          <select id="crApprovalSheet" style="width:100%; margin-top:4px; padding:6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;">
-            ${s.approvalSheetNames.map(n=>`<option value="${escapeHtml(n)}" ${n===s.approvalSheetName?'selected':''}>${escapeHtml(n)}</option>`).join('')}
-          </select>` : ''}
-      </div>
-      <div class="table-wrap" style="padding:14px;">
-        <div style="font-size:12.5px; font-weight:600; margin-bottom:8px;">③ 기존 통합본 <span style="font-weight:400; color:var(--muted);">(매번 새로 업로드)</span></div>
-        <input type="file" id="crMasterFile" accept=".xlsx,.xls" style="font-size:11.5px; width:100%;">
-        ${s.masterFileName ? `<div style="margin-top:6px; font-size:11px; color:var(--muted);">이번에 올린 파일: ${escapeHtml(s.masterFileName)}</div>` : ''}
-        ${s.masterSheetNames.length ? `
-          <div style="margin-top:8px; font-size:11.5px; color:var(--muted);">대상 월 시트</div>
-          <select id="crMasterSheet" style="width:100%; margin-top:4px; padding:6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;">
-            ${s.masterSheetNames.map(n=>`<option value="${escapeHtml(n)}" ${n===s.masterSheetName?'selected':''}>${escapeHtml(n)}</option>`).join('')}
-          </select>` : ''}
-      </div>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+      <input type="file" id="cardMasterAddFile" accept=".xlsx,.xls" style="font-size:11.5px;">
+      <button id="cardMasterAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12.5px;">+ 통합본 파일 추가(한 번만)</button>
     </div>
 
-    <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
-      <label style="font-size:12.5px; color:var(--muted);">카드 전체번호(카드 1개만 확인할 때)</label>
-      <input id="crCardFull" value="${escapeHtml(s.cardFull)}" placeholder="5585-0321-1065-0905" style="padding:7px 9px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:220px;">
-      <button id="crRunBtn" style="padding:9px 16px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:12.5px; font-weight:600; cursor:pointer;" ${s.busy?'disabled':''}>${s.busy?'처리중…':'이 카드만 대사(미리보기)'}</button>
-    </div>
-    <div style="margin-bottom:16px;">
-      <button id="crBatchPreviewBtn" style="padding:9px 16px; border-radius:7px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); font-size:12.5px; font-weight:600; cursor:pointer; margin-right:10px;">올려둔 관리대장 ${s.ledgerWbs.length}개 카드 먼저 비교만 하기 (통합본 불필요)</button>
-      <button id="crBatchRunBtn" style="padding:10px 18px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:13px; font-weight:600; cursor:pointer;" ${s.busy?'disabled':''}>${s.busy?'처리중…':`올려둔 관리대장 ${s.ledgerWbs.length}개 카드 한꺼번에 대사·통합본 갱신`}</button>
-      <div style="font-size:11px; color:var(--muted); margin-top:6px;">각 관리대장 파일에서 카드번호를 자동으로 찾아, 승인내역과 완전히 일치하는 카드만 통합본에 반영합니다. 불일치하는 카드는 건너뛰고 결과에 목록으로 알려드립니다. "먼저 비교만 하기"는 ③ 통합본 없이 ①·②만으로 카드별 일치 현황을 확인합니다.</div>
-    </div>
-
-    ${s.batchPreview ? `
-      <h3 style="font-size:13.5px; margin:0 0 8px;">비교 결과 (통합본 미반영) — 카드 ${s.batchPreview.length}개 중 완전일치 ${s.batchPreview.filter(c=>!c.error && c.mismatchCount===0).length}개</h3>
-      <div class="table-wrap" style="margin-bottom:16px;">
-        <table style="border-collapse:collapse; min-width:700px; font-size:12px;">
-          <thead><tr>
-            <th style="padding:6px; color:var(--muted);">상태</th>
-            <th style="padding:6px; color:var(--muted);">파일명</th>
-            <th style="padding:6px; color:var(--muted);">카드번호</th>
-            <th style="padding:6px; color:var(--muted);">관리대장 건수</th>
-            <th style="padding:6px; color:var(--muted);">일치</th>
-            <th style="padding:6px; color:var(--muted);">불일치</th>
-          </tr></thead>
-          <tbody>
-            ${s.batchPreview.map(c=>`<tr style="${c.error||c.mismatchCount>0?'background:rgba(224,163,57,.12);':''}">
-              <td style="padding:6px; text-align:center;">${c.error?'❌':(c.mismatchCount>0?'⚠️':'✅')}</td>
-              <td style="padding:6px;" title="${escapeHtml(c.fileName)}">${escapeHtml(c.fileName)}</td>
-              <td style="padding:6px;">${escapeHtml(c.cardFull||'-')}</td>
-              <td style="padding:6px; text-align:right;">${c.error?'-':fmtNum(c.totalCount)}</td>
-              <td style="padding:6px; text-align:right;">${c.error?'-':fmtNum(c.matchCount)}</td>
-              <td style="padding:6px; text-align:right;">${c.error?escapeHtml(c.error):fmtNum(c.mismatchCount)}</td>
-            </tr>${(c.mismatchDetails && c.mismatchDetails.length) ? `<tr style="background:rgba(224,163,57,.06);">
-              <td></td>
-              <td colspan="5" style="padding:2px 6px 8px;">
-                <details>
-                  <summary style="cursor:pointer; font-size:11px; color:var(--gold);">불일치 ${c.mismatchDetails.length}건 상세 보기</summary>
-                  <table style="border-collapse:collapse; margin-top:6px; font-size:11px; width:100%;">
-                    <thead><tr>
-                      <th style="padding:4px; color:var(--muted); text-align:left;">구분</th>
-                      <th style="padding:4px; color:var(--muted); text-align:left;">날짜</th>
-                      <th style="padding:4px; color:var(--muted); text-align:right;">금액</th>
-                      <th style="padding:4px; color:var(--muted); text-align:left;">사용처</th>
-                    </tr></thead>
-                    <tbody>
-                      ${c.mismatchDetails.map(d=>`<tr>
-                        <td style="padding:4px;">${d.source==='ledger'?'관리대장에만':'승인내역에만'}</td>
-                        <td style="padding:4px;">${escapeHtml(d.isoDate||'')}</td>
-                        <td style="padding:4px; text-align:right;">${fmtWon(d.amount)}</td>
-                        <td style="padding:4px;">${escapeHtml(String(d.place||''))}</td>
-                      </tr>`).join('')}
-                    </tbody>
-                  </table>
-                </details>
-              </td>
-            </tr>` : ''}`).join('')}
-          </tbody>
-        </table>
-      </div>
-    ` : ''}
-
-    ${s.batchResult ? `
-      <div style="padding:12px 14px; border-radius:8px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12.5px; margin-bottom:10px; white-space:pre-line;">${escapeHtml(s.batchResult.summary)}</div>
-      ${s.batchResult.skipped.length ? `<div style="padding:12px 14px; border-radius:8px; background:rgba(224,163,57,.12); border:1px solid var(--gold-dim); color:var(--gold); font-size:12px; margin-bottom:16px; white-space:pre-line;">건너뛴 카드:\n${s.batchResult.skipped.map(x=>`· ${escapeHtml(x)}`).join('\n')}</div>` : ''}
-    ` : ''}
-
-    ${s.error ? `<div style="padding:12px 14px; border-radius:8px; background:rgba(178,59,46,.1); border:1px solid var(--neg); color:var(--neg); font-size:12.5px; margin-bottom:16px; white-space:pre-line;">${escapeHtml(s.error)}</div>` : ''}
-
-    ${mr ? `
-      <h3 style="font-size:13.5px; margin:0 0 8px;">대사 결과 — 관리대장 ${mr.rows.length}건 중 완전일치 ${mr.rows.filter(r=>r.status==='match').length}건</h3>
-      <div class="table-wrap" style="margin-bottom:14px;">
-        <table style="border-collapse:collapse; min-width:700px; font-size:12px;">
-          <thead><tr>
-            <th style="padding:6px; color:var(--muted);">상태</th>
-            <th style="padding:6px; color:var(--muted);">날짜</th>
-            <th style="padding:6px; color:var(--muted);">성명</th>
-            <th style="padding:6px; color:var(--muted);">사용처</th>
-            <th style="padding:6px; color:var(--muted);">업무내용</th>
-            <th style="padding:6px; color:var(--muted);">금액</th>
-          </tr></thead>
-          <tbody>
-            ${mr.rows.map(r=>`<tr style="${r.status==='ledger_only'?'background:rgba(224,163,57,.12);':''}">
-              <td style="padding:6px; text-align:center;">${r.status==='match'?'✅':'⚠️ 승인내역없음'}</td>
-              <td style="padding:6px;">${escapeHtml(r.display.date)}</td>
-              <td style="padding:6px;">${escapeHtml(String(r.display.name||''))}</td>
-              <td style="padding:6px;">${escapeHtml(String(r.display.place||''))}</td>
-              <td style="padding:6px;">${escapeHtml(String(r.display.work||''))}</td>
-              <td style="padding:6px; text-align:right;">${fmtWon(r.display.amount)}</td>
-            </tr>`).join('')}
-            ${mr.extra.map(r=>`<tr style="background:rgba(178,59,46,.12);">
-              <td style="padding:6px; text-align:center;">❌ 관리대장없음</td>
-              <td style="padding:6px;">${escapeHtml(r.isoDate)}</td>
-              <td style="padding:6px;" colspan="2">${escapeHtml(String(r.place||''))}</td>
-              <td style="padding:6px;">-</td>
-              <td style="padding:6px; text-align:right;">${fmtWon(r.amount)}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
-      ${mismatchCount>0 ? `
-        <div style="padding:12px 14px; border-radius:8px; background:rgba(224,163,57,.12); border:1px solid var(--gold-dim); color:var(--gold); font-size:12.5px; margin-bottom:12px;">
-          불일치 ${mismatchCount}건이 있습니다. 내용을 확인하신 후 아래 체크박스를 눌러야 통합본 업데이트를 진행할 수 있습니다.
+    <div class="table-wrap">
+      ${corpCardMasterTemplates.length ? corpCardMasterTemplates.map(t=>`
+        <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--line);">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:13px; font-weight:600;">${escapeHtml(t.label)}</div>
+            <div style="font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(t.fileName)}">${escapeHtml(t.fileName)}</div>
+          </div>
+          <button class="cardmaster-refresh-btn" data-id="${t.id}" style="padding:8px 14px; border-radius:7px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600; font-size:12.5px;">최신 데이터로 갱신 후 다운로드</button>
+          <button class="cardmaster-remove-btn" data-id="${t.id}" style="padding:8px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">제거</button>
         </div>
-        <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; margin-bottom:14px; cursor:pointer;">
-          <input type="checkbox" id="crAckBox" ${s.ackMismatch?'checked':''}> 불일치 내역을 확인했으며, 그래도 통합본 업데이트를 진행합니다.
-        </label>
-      ` : ''}
-      <button id="crGenerateBtn" style="padding:10px 18px; border-radius:7px; border:none; background:var(--gold); color:#fff; font-size:13px; font-weight:600; cursor:pointer;" ${(mismatchCount>0 && !s.ackMismatch) ? 'disabled' : ''}>통합본 업데이트 파일 생성 · 다운로드</button>
-    ` : ''}
+      `).join('') : `<div class="empty-side">등록된 통합본이 없습니다. "+ 통합본 파일 추가"로 올려주세요.</div>`}
+    </div>
   `;
 
-  document.getElementById('crLedgerFile').addEventListener('change', async (e)=>{
-    const files = [...(e.target.files||[])];
-    if(!files.length) return;
-    s.error='';
+  document.getElementById('cardMasterAddBtn').addEventListener('click', ()=> document.getElementById('cardMasterAddFile').click());
+  document.getElementById('cardMasterAddFile').addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
     try{
-      // 새로 고른 파일들을 기존에 올려둔 파일 목록에 더한다(같은 파일명이면
-      // 최신 내용으로 교체) — ①·②는 "한 번 올리면 남아있다" 방식이라 여기도
-      // 통째로 갈아치우지 않고 누적한다.
-      for(const file of files){
-        const { wb, buf } = await readWorkbookFromFile(file);
-        const b64 = arrayBufferToBase64(buf);
-        const selectedSheet = wb.SheetNames.find(n=>/월/.test(n)) || wb.SheetNames[0];
-        const existingIdx = s.ledgerWbs.findIndex(w=>w.fileName===file.name);
-        const entry = { fileName: file.name, wb, base64: b64, selectedSheet };
-        if(existingIdx>=0) s.ledgerWbs[existingIdx] = entry; else s.ledgerWbs.push(entry);
-      }
-      s.ledgerFileNames = s.ledgerWbs.map(w=>w.fileName);
-      rebuildLedgerSheetNames();
-      if(!s.cardFull && s.ledgerWbs.length){
-        const w0 = s.ledgerWbs[0];
-        const aoa = XLSX.utils.sheet_to_json(w0.wb.Sheets[w0.selectedSheet], { header:1, raw:true, defval:'' });
-        const detected = findCardNumberInAoa(aoa);
-        if(detected) s.cardFull = detected;
-      }
-      await saveFileToStorage(CARDRECON_LEDGER_KEY, JSON.stringify(s.ledgerWbs.map(w=>({ fileName:w.fileName, base64:w.base64, selectedSheet:w.selectedSheet }))), 30000);
-      saveCardReconMeta();
-    }catch(err){ s.error = '관리대장 파일을 읽지 못했습니다: '+err.message; }
+      await handleCardMasterAdd(file);
+    }catch(err){
+      alert('통합본 파일을 읽지 못했습니다: '+err.message);
+    }
     e.target.value = '';
     renderCardReconMain();
   });
-  main.querySelectorAll('.cr-ledger-sheet-sel').forEach(sel=>{
-    sel.addEventListener('change', async (e)=>{
-      const idx = Number(sel.dataset.idx);
-      if(!s.ledgerWbs[idx]) return;
-      s.ledgerWbs[idx].selectedSheet = e.target.value;
-      await saveFileToStorage(CARDRECON_LEDGER_KEY, JSON.stringify(s.ledgerWbs.map(w=>({ fileName:w.fileName, base64:w.base64, selectedSheet:w.selectedSheet }))), 30000);
-    });
-  });
-  main.querySelectorAll('.cr-ledger-remove-btn').forEach(btn=>{
+  main.querySelectorAll('.cardmaster-refresh-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      if(!confirm('이 관리대장 파일을 목록에서 제거할까요?')) return;
-      const idx = Number(btn.dataset.idx);
-      s.ledgerWbs.splice(idx, 1);
-      s.ledgerFileNames = s.ledgerWbs.map(w=>w.fileName);
-      await saveFileToStorage(CARDRECON_LEDGER_KEY, JSON.stringify(s.ledgerWbs.map(w=>({ fileName:w.fileName, base64:w.base64, selectedSheet:w.selectedSheet }))), 30000);
+      btn.disabled = true; btn.textContent = '처리중…';
+      try{
+        await regenerateCardMasterAndDownload(btn.dataset.id);
+      }catch(err){
+        alert('통합본 갱신 중 오류가 발생했습니다: '+err.message);
+      }
       renderCardReconMain();
     });
   });
-
-  document.getElementById('crApprovalFile').addEventListener('change', async (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    s.error='';
-    try{
-      const { wb, buf } = await readWorkbookFromFile(file);
-      s.approvalWb = wb;
-      s.approvalSheetNames = wb.SheetNames;
-      s.approvalSheetName = wb.SheetNames.find(n=>/승인/.test(n)) || wb.SheetNames[0];
-      s.approvalFileName = file.name;
-      saveFileToStorage(CARDRECON_APPROVAL_KEY, arrayBufferToBase64(buf), 30000);
-      saveCardReconMeta();
-    }catch(err){ s.error = '승인내역 파일을 읽지 못했습니다: '+err.message; }
-    renderCardReconMain();
-  });
-  const approvalSheetSel = document.getElementById('crApprovalSheet');
-  if(approvalSheetSel) approvalSheetSel.addEventListener('change', (e)=>{ s.approvalSheetName = e.target.value; debouncedSaveCardReconMeta(); renderCardReconMain(); });
-
-  document.getElementById('crMasterFile').addEventListener('change', async (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    s.error='';
-    try{
-      const buf = await file.arrayBuffer();
-      s.masterBuffer = buf;
-      s.masterFileName = file.name;
-      const wb = XLSX.read(buf, { type:'array' });
-      s.masterSheetNames = wb.SheetNames;
-      const preferred = s.masterSheetName && wb.SheetNames.includes(s.masterSheetName) ? s.masterSheetName : null;
-      s.masterSheetName = preferred || wb.SheetNames.find(n=>/\d{4}-\d{2}월/.test(n)) || wb.SheetNames[wb.SheetNames.length-1];
-      saveCardReconMeta(); // 파일 자체는 저장하지 않고, 마지막에 쓰던 시트 이름만 기억해둔다
-    }catch(err){ s.error = '통합본 파일을 읽지 못했습니다: '+err.message; }
-    renderCardReconMain();
-  });
-  const masterSheetSel = document.getElementById('crMasterSheet');
-  if(masterSheetSel) masterSheetSel.addEventListener('change', (e)=>{ s.masterSheetName = e.target.value; debouncedSaveCardReconMeta(); renderCardReconMain(); });
-
-  document.getElementById('crCardFull').addEventListener('input', (e)=>{ s.cardFull = e.target.value; debouncedSaveCardReconMeta(); });
-
-  document.getElementById('crRunBtn').addEventListener('click', ()=>{
-    s.error=''; s.matchResult=null; s.ackMismatch=false;
-    if(!s.ledgerWbs.length) { s.error='① 관리대장 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
-    if(!s.approvalWb) { s.error='② 승인내역 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
-    const parts = cardParts(s.cardFull);
-    if(!parts){ s.error = '카드 전체번호를 "0000-0000-0000-0000" 형식으로 입력해주세요.'; renderCardReconMain(); return; }
-    const ledgerWb = findLedgerWbForSheet(s.ledgerSheetName);
-    if(!ledgerWb){ s.error = `선택한 시트("${s.ledgerSheetName}")를 가진 관리대장 파일을 찾을 수 없습니다.`; renderCardReconMain(); return; }
-
-    const ledgerAoa = XLSX.utils.sheet_to_json(ledgerWb.Sheets[s.ledgerSheetName], { header:1, raw:true, defval:'' });
-    const parsed = ledgerParseAoa(ledgerAoa);
-    if(parsed.error){ s.error = parsed.error; renderCardReconMain(); return; }
-    const ledgerEntries = parsed.dataRows.map(ledgerRowToEntry);
-
-    const approvalAoa = XLSX.utils.sheet_to_json(s.approvalWb.Sheets[s.approvalSheetName], { header:1, raw:true, defval:'' });
-    const approvalCols = approvalParseAoa(approvalAoa);
-    if(approvalCols.error){ s.error = approvalCols.error; renderCardReconMain(); return; }
-    const approvalEntries = [];
-    for(let i=approvalCols.headerIdx+1;i<approvalAoa.length;i++){
-      const row = approvalAoa[i];
-      if(!row || !row[approvalCols.colCard]) continue;
-      if(!approvalRowMatchesCard(row[approvalCols.colCard], parts)) continue;
-      approvalEntries.push({ isoDate: normalizeDotDate(row[approvalCols.colDate]), amount: Math.round(Number(row[approvalCols.colAmount])||0), place: row[approvalCols.colPlace] });
-    }
-
-    s.matchResult = reconcileCardEntries(ledgerEntries, approvalEntries);
-    s.ledgerEntries = ledgerEntries;
-    renderCardReconMain();
-  });
-
-  const ackBox = document.getElementById('crAckBox');
-  if(ackBox) ackBox.addEventListener('change', (e)=>{ s.ackMismatch = e.target.checked; renderCardReconMain(); });
-
-  const genBtn = document.getElementById('crGenerateBtn');
-  if(genBtn) genBtn.addEventListener('click', async ()=>{
-    if(!s.masterBuffer){ s.error='③ 통합본 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
-    const parts = cardParts(s.cardFull);
-    if(!parts){ s.error = '카드 전체번호가 올바르지 않습니다.'; renderCardReconMain(); return; }
-    s.busy = true; s.error=''; renderCardReconMain();
-    try{
-      const entryBlocks = s.ledgerEntries.map(le=>le.block);
-      const result = await patchFile3CardBlock(s.masterBuffer, s.masterSheetName, parts.p4, entryBlocks);
-      if(result.error === 'overflow'){
-        s.error = `통합본에 마련된 칸(${result.blockSize}행)보다 관리대장 건수(${result.needed}건)가 더 많습니다. 이 부분은 자동 확장을 지원하지 않으니, 통합본에서 해당 카드 블록의 행을 수동으로 늘린 뒤 다시 시도해주세요.`;
-      }else if(result.error){
-        s.error = result.error;
-      }else{
-        const url = URL.createObjectURL(result.blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const base = (s.masterFileName||'통합본.xlsx').replace(/\.xlsx$/i,'');
-        a.download = `${base}_카드${parts.p4}업데이트_${isoDate(new Date())}.xlsx`;
-        document.body.appendChild(a); a.click(); a.remove();
-        URL.revokeObjectURL(url);
-      }
-    }catch(err){
-      s.error = '통합본 업데이트 중 오류가 발생했습니다: '+err.message;
-    }
-    s.busy = false;
-    renderCardReconMain();
-  });
-
-  const batchPreviewBtn = document.getElementById('crBatchPreviewBtn');
-  if(batchPreviewBtn) batchPreviewBtn.addEventListener('click', ()=>{
-    s.error=''; s.batchPreview=null; s.batchResult=null;
-    if(!s.ledgerWbs.length){ s.error='① 관리대장 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
-    if(!s.approvalWb){ s.error='② 승인내역 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
-    try{
-      const { perCard } = reconcileAllLedgerCards(s);
-      s.batchPreview = perCard;
-    }catch(err){
-      s.error = '비교 중 오류가 발생했습니다: '+err.message;
-    }
-    renderCardReconMain();
-  });
-
-  const batchBtn = document.getElementById('crBatchRunBtn');
-  if(batchBtn) batchBtn.addEventListener('click', async ()=>{
-    s.error=''; s.batchResult=null;
-    if(!s.ledgerWbs.length){ s.error='① 관리대장 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
-    if(!s.approvalWb){ s.error='② 승인내역 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
-    if(!s.masterBuffer){ s.error='③ 통합본 파일을 먼저 올려주세요.'; renderCardReconMain(); return; }
-    s.busy = true; renderCardReconMain();
-    try{
-      const { perCard, patches } = reconcileAllLedgerCards(s);
-      const skipped = [];
-      perCard.forEach(c=>{
-        if(c.error){ skipped.push(`${c.fileName}${c.cardFull?` (${c.cardFull})`:''}: ${c.error}`); }
-        else if(c.mismatchCount>0){ skipped.push(`${c.cardFull}: 불일치 ${c.mismatchCount}건(관리대장-승인내역 서로 안 맞음)`); }
-      });
-      if(!patches.length){
-        s.error = '완전히 일치하는 카드가 하나도 없어 통합본을 갱신하지 못했습니다.';
-        s.batchResult = { summary:'', skipped };
-      } else {
-        const result = await patchFile3MultipleCardBlocks(s.masterBuffer, s.masterSheetName, patches);
-        if(result.error){
-          s.error = result.error;
-        } else {
-          (result.failed||[]).forEach(f=>skipped.push(f));
-          const url = URL.createObjectURL(result.blob);
-          const a = document.createElement('a');
-          a.href = url;
-          const base = (s.masterFileName||'통합본.xlsx').replace(/\.xlsx$/i,'');
-          a.download = `${base}_${result.applied.length}개카드업데이트_${isoDate(new Date())}.xlsx`;
-          document.body.appendChild(a); a.click(); a.remove();
-          URL.revokeObjectURL(url);
-          s.batchResult = { summary: `${result.applied.length}개 카드를 통합본에 반영했습니다 (${result.applied.join(', ')}).`, skipped };
-        }
-      }
-    }catch(err){
-      s.error = '일괄 처리 중 오류가 발생했습니다: '+err.message;
-    }
-    s.busy = false;
-    renderCardReconMain();
+  main.querySelectorAll('.cardmaster-remove-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 통합본을 목록에서 제거할까요?')) return;
+      corpCardMasterTemplates = corpCardMasterTemplates.filter(t=>t.id!==btn.dataset.id);
+      await saveCardMasterList();
+      renderCardReconMain();
+    });
   });
 }
 
