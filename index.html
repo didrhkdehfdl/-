@@ -9784,6 +9784,15 @@ async function renderCorpCardMain(){
       renderCorpCardMain();
     });
   });
+  main.querySelectorAll('.corpcard-place-override').forEach(el=>{
+    el.addEventListener('click', async ()=>{
+      const row = rows.find(r=>r.id===el.dataset.id);
+      if(!row) return;
+      row.placeOverride = !row.placeOverride;
+      await saveCorpCardRows(activeCard.id);
+      renderCorpCardMain();
+    });
+  });
   main.querySelectorAll('.corpcard-seq-cell').forEach(cell=>{
     cell.addEventListener('dragstart', (e)=>{
       corpCardDragId = cell.dataset.id;
