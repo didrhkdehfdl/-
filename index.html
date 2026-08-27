@@ -10572,6 +10572,7 @@ async function renderVehicleMain(){
   const s = vehicleState;
   const activeVehicle = s.vehicles.find(v=>v.id===s.activeVehicleId);
   const rows = activeVehicle ? (s.rowsByVehicle[activeVehicle.id]||[]) : [];
+  const vehicleIssueCount = rows.filter(r=>Object.keys(vehicleRowIssues(r)).length>0).length;
 
   main.innerHTML = `
     <h2 class="section-title">차량관리</h2>
