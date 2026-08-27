@@ -9387,6 +9387,16 @@ async function ensureCorpCardLoaded(){
     const saved = listText ? JSON.parse(listText) : null;
     corpCardState.cards = (saved && saved.cards) || [];
     corpCardState.activeCardId = (saved && saved.activeCardId) || (corpCardState.cards[0] ? corpCardState.cards[0].id : '');
+    // 아직 종류(공용/개인불출)가 지정 안 된 카드는 끝 4자리 목록을 기준으로
+    // 한 번만 분류해서 저장해둔다(다음부터는 그대로 유지).
+    let categoryChanged = false;
+    corpCardState.cards.forEach(card=>{
+      if(!card.category){
+        card.category = CORP_CARD_SHARED_LAST4.includes(card.label) ? 'shared' : 'personal';
+        categoryChanged = true;
+      }
+    });
+    if(categoryChanged) await saveCorpCardList();
     for(const card of corpCardState.cards){
       const rowsText = await loadFileFromStorage('corp-card-rows:'+card.id);
       corpCardState.rowsByCard[card.id] = rowsText ? JSON.parse(rowsText) : {};
