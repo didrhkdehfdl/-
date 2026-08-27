@@ -10788,6 +10788,8 @@ async function renderVehicleMain(){
       renderVehicleMain();
     });
   });
+  const alertConfigBtn = document.getElementById('vehicleAlertConfigBtn');
+  if(alertConfigBtn) alertConfigBtn.addEventListener('click', openVehicleAlertConfigOverlay);
   const addBtn = document.getElementById('vehicleAddBtn');
   if(addBtn) addBtn.addEventListener('click', ()=> document.getElementById('vehicleTemplateFile').click());
   const fileInp = document.getElementById('vehicleTemplateFile');
