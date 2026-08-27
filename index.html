@@ -3632,6 +3632,8 @@ function renderSalesMain(){
 
   document.getElementById('deleteCaseBtn').addEventListener('click', removeActiveCase);
   document.getElementById('caseHistoryBtn').addEventListener('click', ()=> openCaseHistoryOverlay(c.id));
+  const notifyBtn = document.getElementById('notifySendBtn');
+  if(notifyBtn) notifyBtn.addEventListener('click', ()=> openNotifySendOverlay(c));
   document.getElementById('salesLedgerToggleBtn').addEventListener('click', ()=>{
     salesLedgerState.open = !salesLedgerState.open;
     renderSalesMain();
