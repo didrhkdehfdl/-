@@ -10866,7 +10866,7 @@ async function renderVehicleMain(){
     </p>
     <div style="margin-bottom:10px;">
       <input type="file" id="vehicleTemplateFile" accept=".xlsx,.xls" style="display:none;">
-      <div style="display:grid; grid-template-columns:repeat(13, minmax(0,1fr)); gap:8px;">
+      <div class="vehicle-plate-grid" style="display:grid; grid-template-columns:repeat(13, minmax(0,1fr)); gap:8px;">
         ${s.vehicles.map(v => `<button class="vehicle-tab-btn" data-id="${v.id}" style="padding:8px 6px; border-radius:7px; border:1px solid ${v.id===s.activeVehicleId?'var(--gold)':'var(--line)'}; background:${v.id===s.activeVehicleId?'rgba(224,163,57,.12)':'transparent'}; color:${v.id===s.activeVehicleId?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🚗 ${escapeHtml(v.plate)}</button>`).join('')}
       </div>
       <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
