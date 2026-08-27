@@ -7982,6 +7982,23 @@ function pickDefaultCorpCardMonth(months){
   const curMonth = new Date().getMonth()+1;
   return months.find(m=>monthNumFromLabel(m)===curMonth) || months[0];
 }
+// 통합본에는 있는 월 시트인데 그 카드의 법인카드 탭에는 아직 그 달 탭이 없으면,
+// 기존 월 이름 표기(예: "8 월"의 띄어쓰기)를 그대로 따라 새 월 탭을 맨 오른쪽에
+// 만들어서 입력할 수 있게 해준다. 양식 파일 자체가 없는 카드는 만들 방법이 없다.
+async function ensureCorpCardMonthExists(card, monthNum){
+  const tmpl = corpCardTemplates[card.id];
+  if(!tmpl) return null;
+  const existing = tmpl.months.find(m=>monthNumFromLabel(m)===monthNum);
+  if(existing) return existing;
+  const sample = tmpl.months[0] || `${monthNum}월`;
+  const label = /\d\s+월/.test(sample) ? `${monthNum} 월` : `${monthNum}월`;
+  tmpl.months.push(label);
+  corpCardState.rowsByCard[card.id] = corpCardState.rowsByCard[card.id] || {};
+  corpCardState.rowsByCard[card.id][label] = [];
+  await saveCorpCardTemplate(card.id, tmpl.buffer, tmpl.fileName, tmpl.months);
+  await saveCorpCardRows(card.id);
+  return label;
+}
 // 법인카드 탭의 행 하나를 통합본 카드 블록의 B~Q열 16칸 값으로 변환한다
 // (CORP_CARD_COLUMNS 순서 = CARD_BLOCK_COLS 순서와 정확히 같다).
 function corpCardRowToBlock(row){
