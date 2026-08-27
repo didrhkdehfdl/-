@@ -9340,6 +9340,7 @@ async function handleCorpCardAdd(){
       await saveCorpCardTemplate(id, buf, file.name, meta.months);
       await saveCorpCardList();
       await saveCorpCardRows(id);
+      await fixCorpCard2025Dates();
       recomputeCorpCardMismatches();
       renderCorpCardMain();
     }catch(err){
