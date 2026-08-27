@@ -12352,6 +12352,7 @@ fbAuth.onAuthStateChanged(async (user) => {
     document.getElementById('adminApprovalTabBtn').style.display = 'flex';
     startApp();
     setupAdminPushNotifications();
+    setupUserPushNotifications(user);
     return;
   }
   try{
@@ -12361,6 +12362,7 @@ fbAuth.onAuthStateChanged(async (user) => {
     const rejected = data.rejected === true;
     if(approved){
       startApp(Array.isArray(data.allowedTabs) ? data.allowedTabs : null);
+      setupUserPushNotifications(user);
     } else {
       document.getElementById('authOverlay').style.display = 'flex';
       if(rejected){
