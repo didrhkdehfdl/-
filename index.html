@@ -7880,10 +7880,12 @@ async function renderInquiryMain(){
   if(nextPageBtn) nextPageBtn.addEventListener('click', ()=>{ s.page += 1; renderInquiryMain(); });
 }
 
-// ---------- 변경 이력 (모든 정산 건을 한 곳에서) ----------
+// ---------- 변경 이력 (영업비 정산/사업 이윤정산 각각 탭으로 분리) ----------
 // 건 각각의 상세 화면에 있던 "🕒 변경 이력" 버튼과 완전히 같은 오버레이
 // (openCaseHistoryOverlay)를 재사용한다 — 여기서는 건을 하나하나 열지 않고도
-// 바로 이력을 확인·복원할 수 있도록 전체 목록만 모아서 보여준다.
+// 바로 이력을 확인·복원할 수 있도록 종류별 목록만 모아서 보여준다. 왼쪽
+// 탭이 historySales/historyProfit로 나뉘어 있고, state.activeTab 값으로
+// 어느 종류를 필터링할지 결정한다.
 async function renderHistoryMain(){
   const main = document.getElementById('main');
   main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
