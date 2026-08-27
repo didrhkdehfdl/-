@@ -7944,6 +7944,13 @@ function monthNumFromLabel(label){
   const m = String(label||'').match(/(\d{1,2})\s*월/);
   return m ? parseInt(m[1],10) : null;
 }
+// 카드를 처음 고르거나 새로 올렸을 때, 무조건 1월이 아니라 오늘 날짜에 해당하는
+// 달의 시트가 있으면 그 달을 기본으로 보여준다(없으면 첫 번째 달로 대체).
+function pickDefaultCorpCardMonth(months){
+  if(!months || !months.length) return '';
+  const curMonth = new Date().getMonth()+1;
+  return months.find(m=>monthNumFromLabel(m)===curMonth) || months[0];
+}
 // 법인카드 탭의 행 하나를 통합본 카드 블록의 B~Q열 16칸 값으로 변환한다
 // (CORP_CARD_COLUMNS 순서 = CARD_BLOCK_COLS 순서와 정확히 같다).
 function corpCardRowToBlock(row){
