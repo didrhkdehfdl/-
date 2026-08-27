@@ -9679,6 +9679,7 @@ async function renderCorpCardMain(){
     renderCorpCardMain();
   });
   if(!activeCard || !tmpl) return;
+  setupStickyHScroll('corpCardTableWrap', 'corpCardStickyScroll');
   main.querySelectorAll('.corpcard-namemode-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{ s.nameMode = btn.dataset.mode; renderCorpCardMain(); });
   });
