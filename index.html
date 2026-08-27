@@ -9403,7 +9403,7 @@ async function ensureCorpCardLoaded(){
     let categoryChanged = false;
     corpCardState.cards.forEach(card=>{
       if(!card.category){
-        card.category = CORP_CARD_SHARED_LAST4.includes(card.label) ? 'shared' : 'personal';
+        card.category = corpCardDefaultCategory(card.label);
         categoryChanged = true;
       }
     });
