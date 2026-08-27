@@ -29,7 +29,7 @@
     --gold-dim: #c99a55;
     --sky: #2b6a80;
     --text: #111111;
-    --muted: #5b6270;
+    --muted: #4a5160;
     --pos: #2f7d5c;
     --neg: #b23b2e;
     --radius: 10px;
@@ -41,9 +41,26 @@
     color:var(--text);
     font-family:'Noto Sans KR', sans-serif;
     min-height:100vh;
+    font-variant-numeric: tabular-nums;
+    -webkit-tap-highlight-color: transparent;
   }
   #app{ position:relative; z-index:1; display:none; min-height:100vh; }
   #app.show{ display:flex; }
+
+  /* ---------- 앱 전체 공통 폴리시: 버튼·입력창 상호작용 피드백 ----------
+     각 화면은 버튼마다 색만 인라인으로 다르게 주고 있어서, hover/active/disabled
+     상태를 여기서 한 번에 통일해 어디서나 "눌리는 느낌"이 일관되게 한다.
+     배경색·테두리 등 기존 인라인 스타일은 그대로 두고 상태 효과만 덧붙인다. */
+  button{ transition: filter .15s ease, transform .05s ease, opacity .15s ease, box-shadow .15s ease; }
+  button:not(:disabled):hover{ filter:brightness(1.07); }
+  button:not(:disabled):active{ transform:translateY(1px); }
+  button:disabled{ opacity:.5; cursor:not-allowed; filter:none; }
+  input, textarea, select{ transition: border-color .15s ease, background-color .15s ease; }
+  ::selection{ background:rgba(224,163,57,.28); }
+  ::-webkit-scrollbar{ width:12px; height:12px; }
+  ::-webkit-scrollbar-track{ background:var(--panel-2); }
+  ::-webkit-scrollbar-thumb{ background:var(--gold-dim); border-radius:8px; border:3px solid var(--panel-2); }
+  ::-webkit-scrollbar-thumb:hover{ background:var(--gold); }
 
   /* ---------- Sidebar ---------- */
   #sidebar{
