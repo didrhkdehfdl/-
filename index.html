@@ -435,8 +435,11 @@
       <button class="tab-btn" data-tab="inquiry" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">💬</span> 문의 대응
       </button>
-      <button class="tab-btn" data-tab="history" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
-        <span style="width:18px; text-align:center;">🕒</span> 변경 이력
+      <button class="tab-btn" data-tab="historySales" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
+        <span style="width:18px; text-align:center;">🕒</span> 영업비 정산 이력
+      </button>
+      <button class="tab-btn" data-tab="historyProfit" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
+        <span style="width:18px; text-align:center;">🕒</span> 이윤정산 이력
       </button>
       <button class="tab-btn" data-tab="adminApproval" id="adminApprovalTabBtn" style="display:none; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">✅</span> 승인관리
@@ -6440,7 +6443,8 @@ const ALL_TABS = [
   { key:'omList', label:'O&M 리스트' },
   { key:'invoiceprep', label:'세금계산서/현금영수증' },
   { key:'inquiry', label:'문의 대응' },
-  { key:'history', label:'변경 이력' },
+  { key:'historySales', label:'영업비 정산 이력' },
+  { key:'historyProfit', label:'이윤정산 이력' },
 ];
 
 async function renderAdminApprovalList(){
