@@ -2226,6 +2226,7 @@ function renderSidebar(){
 }
 function switchTab(tab){
   state.activeTab = tab;
+  try{ localStorage.setItem('lastActiveTab', tab); }catch(e){}
   activeCase = null;
   state.activeId = null;
   renderSidebar();
