@@ -10760,6 +10760,21 @@ async function renderVehicleMain(){
       renderVehicleMain();
     });
   });
+  main.querySelectorAll('.vehicle-notify-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const row = rows.find(r=>r.id===btn.dataset.id);
+      if(!row) return;
+      const issues = vehicleRowIssues(row);
+      const missing = Object.keys(issues).map(f=>{
+        const col = VEHICLE_COLUMNS.find(c=>c[0]===f);
+        return col ? col[1] : f;
+      }).join(', ');
+      openNotifySendOverlay(
+        { title: `${activeVehicle.plate} 운행기록 확인`, id: null },
+        `${activeVehicle.plate} 차량 ${row.date||'날짜 미입력'} 운행기록에 빈칸이 있습니다: ${missing}`
+      );
+    });
+  });
 }
 
 function renderImportMain(){
