@@ -9275,9 +9275,7 @@ async function renderCorpCardMain(){
         <button class="corpcard-namemode-btn" data-mode="variable" style="padding:5px 10px; border-radius:5px; border:none; background:${s.nameMode==='variable'?'var(--gold)':'transparent'}; color:${s.nameMode==='variable'?'#1a1a1a':'var(--muted)'}; font-size:12px; cursor:pointer;">변동</button>
       </div>
       ${s.nameMode==='fixed' ? `<input type="text" id="corpCardFixedNameInput" placeholder="성명 고정값" value="${escapeHtml(s.fixedName)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
-      <input type="file" id="corpCardApprovalFile" accept=".xlsx,.xls" style="display:none;">
-      <button id="corpCardApprovalBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">🧾 승인내역 업로드(대사)</button>
-      <button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
+      <button id="corpCardExportBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
     </div>
     <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">
       ${escapeHtml(s.activeMonth)} · 총 ${rows.length}건 · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다
