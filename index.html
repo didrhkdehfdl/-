@@ -9558,6 +9558,13 @@ async function renderCorpCardMain(){
       renderCorpCardMain();
     });
   });
+  main.querySelectorAll('.corpcard-move-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!moveCorpCardRow(activeCard.id, s.activeMonth, btn.dataset.id, btn.dataset.dir)) return;
+      await saveCorpCardRows(activeCard.id);
+      renderCorpCardMain();
+    });
+  });
 }
 async function exportCorpCardToExcel(cardId){
   const tmpl = corpCardTemplates[cardId];
