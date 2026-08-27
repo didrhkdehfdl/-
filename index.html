@@ -9770,6 +9770,66 @@ async function exportCorpCardToExcel(cardId){
 // 열은 원본 수식을 그대로 두고(엑셀이 알아서 계산), 사용건수(COUNT)·합계(SUM)
 // 수식의 범위만 서식이 갖춰진 전체 칸 기준으로 맞춰준다 — 빈 칸은 COUNT/SUM에서
 // 자동으로 무시되니 항상 이 범위로 둬도 안전하다.
+// 원래 양식 파일에는 없던 달(법인카드 탭에서 새로 추가한 달)을 내보낼 때는,
+// 기존 월 시트 하나를 그대로 복제해서(서식·수식을 그대로 물려받음) 새 시트를
+// 워크북에 끼워 넣는다. workbook.xml(시트 목록)·workbook.xml.rels(경로 연결)·
+// [Content_Types].xml(필요한 경우) 세 곳 모두에 새 시트를 등록해야 엑셀이 그
+// 시트를 실제로 인식한다.
+async function cloneCorpCardMonthSheet(zip, wbDoc, relsDoc, parser, serializer, sourceMonthName, newMonthName){
+  const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const sheets = Array.from(wbDoc.getElementsByTagName('sheet'));
+  const sourceEl = sheets.find(el => el.getAttribute('name') === sourceMonthName);
+  if(!sourceEl) return { error: `복제할 기준 월("${sourceMonthName}") 시트를 찾을 수 없습니다.` };
+  const rId = sourceEl.getAttributeNS(REL_NS, 'id');
+  const relEls = Array.from(relsDoc.getElementsByTagName('Relationship'));
+  const sourceRel = relEls.find(el => el.getAttribute('Id') === rId);
+  if(!sourceRel) return { error: '기준 시트의 경로 정보를 찾을 수 없습니다.' };
+  let target = (sourceRel.getAttribute('Target')||'').replace(/^\.?\//,'');
+  const sourcePath = target.startsWith('xl/') ? target : ('xl/' + target);
+  const sourceFile = zip.file(sourcePath);
+  if(!sourceFile) return { error: `기준 시트 파일(${sourcePath})을 찾을 수 없습니다.` };
+  const sourceXml = await sourceFile.async('string');
+
+  let n = 1;
+  while(zip.file(`xl/worksheets/sheet${n}.xml`)) n++;
+  const newPath = `xl/worksheets/sheet${n}.xml`;
+  zip.file(newPath, sourceXml);
+
+  const usedRids = relEls.map(el => parseInt((el.getAttribute('Id')||'').replace(/^rId/,''),10)).filter(x=>!isNaN(x));
+  const newRid = 'rId' + (Math.max(0,...usedRids) + 1);
+  const newRelEl = relsDoc.createElementNS(relsDoc.documentElement.namespaceURI, 'Relationship');
+  newRelEl.setAttribute('Id', newRid);
+  newRelEl.setAttribute('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet');
+  newRelEl.setAttribute('Target', `worksheets/sheet${n}.xml`);
+  relsDoc.documentElement.appendChild(newRelEl);
+
+  const usedSheetIds = sheets.map(el => parseInt(el.getAttribute('sheetId')||'0',10)).filter(x=>!isNaN(x));
+  const newSheetId = String(Math.max(0,...usedSheetIds) + 1);
+  const sheetsEl = wbDoc.getElementsByTagName('sheets')[0];
+  if(!sheetsEl) return { error: 'workbook.xml에서 시트 목록을 찾을 수 없습니다.' };
+  const newSheetEl = wbDoc.createElementNS(sheetsEl.namespaceURI, 'sheet');
+  newSheetEl.setAttribute('name', newMonthName);
+  newSheetEl.setAttribute('sheetId', newSheetId);
+  newSheetEl.setAttributeNS(REL_NS, 'r:id', newRid);
+  sheetsEl.appendChild(newSheetEl);
+
+  // 시트별로 [Content_Types].xml에 Override가 따로 있는 형식이면 새 시트 것도
+  // 추가한다(전체 xml 확장자를 Default로 커버하는 형식이면 손댈 필요가 없다).
+  const ctFile = zip.file('[Content_Types].xml');
+  if(ctFile){
+    const ctXml = await ctFile.async('string');
+    const ctDoc = parser.parseFromString(ctXml, 'application/xml');
+    const anyOverride = Array.from(ctDoc.getElementsByTagName('Override')).find(el => (el.getAttribute('PartName')||'').includes('/xl/worksheets/'));
+    if(anyOverride){
+      const newOverride = ctDoc.createElementNS(ctDoc.documentElement.namespaceURI, 'Override');
+      newOverride.setAttribute('PartName', `/${newPath}`);
+      newOverride.setAttribute('ContentType', anyOverride.getAttribute('ContentType'));
+      ctDoc.documentElement.appendChild(newOverride);
+      zip.file('[Content_Types].xml', serializer.serializeToString(ctDoc));
+    }
+  }
+  return { ok:true };
+}
 async function patchCorpCardTemplate(masterArrayBuffer, months, rowsByMonth){
   await loadJSZipLib();
   const zip = await window.JSZip.loadAsync(masterArrayBuffer);
