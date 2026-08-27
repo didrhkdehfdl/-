@@ -8003,14 +8003,16 @@ async function regenerateCardMasterAndDownload(tmplId){
   const wb = XLSX.read(buf, { type:'array' });
   const monthSheets = wb.SheetNames.filter(n=>/\d{1,2}\s*월/.test(n));
   const applied = []; const skipped = [];
+  const newlyCreatedCardIds = new Set();
   for(const sheetLabel of monthSheets){
     const mnum = monthNumFromLabel(sheetLabel);
     for(const card of corpCardState.cards){
       const parts = cardParts(card.cardNumber);
       if(!parts) continue;
-      const cardMonths = Object.keys(corpCardState.rowsByCard[card.id]||{});
-      const matchMonth = cardMonths.find(m=>monthNumFromLabel(m)===mnum);
+      let matchMonth = ensureCorpCardMonthExists(card, mnum);
       if(!matchMonth) continue;
+      if(!Object.prototype.hasOwnProperty.call(corpCardState.rowsByCard[card.id], matchMonth)) continue;
+      if(corpCardTemplates[card.id] && !corpCardTemplates[card.id].months.includes(matchMonth)) continue;
       const rows = (corpCardState.rowsByCard[card.id][matchMonth]||[]).filter(r=>r.date);
       if(!rows.length) continue;
       const entryBlocks = rows.map(corpCardRowToBlock);
