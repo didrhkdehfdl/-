@@ -9412,7 +9412,6 @@ function buildCorpCardUsageDocPage(items, card){
   const first = items[0];
   const total = items.reduce((sum,r)=> sum + (Number(r.amount)||0), 0);
   const approvers = ['담 당','부서장','전 무','전 무','대 표'];
-  const corp = (items.find(r=>String(r.corp||'').trim())||{}).corp || '';
   const carNo = (items.find(r=>String(r.carNo||'').trim())||{}).carNo || '';
   const hipass = (items.find(r=>String(r.hipass||'').trim())||{}).hipass || '';
   const note = (items.find(r=>String(r.note||'').trim())||{}).note || '';
