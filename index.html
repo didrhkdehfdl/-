@@ -512,6 +512,39 @@
   </div>
 </div>
 
+<div id="vehicleAlertConfigOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:90; display:none; align-items:center; justify-content:center; padding:20px;">
+  <div style="background:var(--bg); border-radius:12px; width:440px; max-width:100%; display:flex; flex-direction:column; overflow:hidden;">
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line);">
+      <div style="font-family:'Noto Serif KR', serif; font-weight:700; font-size:15px;">⏰ 빈칸 자동 알림 설정</div>
+      <button id="vehicleAlertConfigCloseBtn" style="border:none; background:transparent; font-size:18px; color:var(--muted); cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:18px 20px; display:flex; flex-direction:column; gap:14px;">
+      <div style="font-size:12.5px; color:var(--muted); line-height:1.6;">
+        차량관리 탭 전체(모든 차량)에서 빈칸 있는 운행기록이 있으면, 아래 주기마다 자동으로 확인해서 고른 사람들에게 알림을 보냅니다.
+      </div>
+      <div class="field">
+        <label>알림 받을 사람(여러 명 선택 가능)</label>
+        <div id="vehicleAlertRecipientList" style="background:var(--panel-2); border:1px solid var(--line); border-radius:7px; padding:8px 10px; max-height:180px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+      </div>
+      <div class="field">
+        <label>확인 주기</label>
+        <select id="vehicleAlertInterval" style="background:var(--panel-2); border:1px solid var(--line); border-radius:7px; padding:8px 10px; color:var(--text); font-size:13px; width:100%;">
+          <option value="1">1시간마다</option>
+          <option value="3">3시간마다</option>
+          <option value="6" selected>6시간마다</option>
+          <option value="12">12시간마다</option>
+          <option value="24">24시간마다</option>
+        </select>
+      </div>
+      <div id="vehicleAlertConfigStatus" style="font-size:12px; color:var(--muted); min-height:16px;"></div>
+      <div style="display:flex; gap:8px;">
+        <button id="vehicleAlertDisableBtn" style="flex:1; padding:10px 14px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--neg); font-weight:600; cursor:pointer;">자동 알림 끄기</button>
+        <button id="vehicleAlertSaveBtn" style="flex:1; padding:10px 14px; border-radius:8px; border:none; background:var(--gold); color:#fff; font-weight:600; cursor:pointer;">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="migrateOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:95; display:none; align-items:center; justify-content:center; padding:20px;">
   <div style="background:var(--bg); border-radius:12px; width:520px; max-width:100%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
     <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line);">
