@@ -9968,6 +9968,20 @@ async function renderCorpCardMain(){
     corpCardSelectedIds.clear();
     renderCorpCardMain();
   });
+  const deleteMonthBtn = document.getElementById('corpCardDeleteMonthBtn');
+  if(deleteMonthBtn) deleteMonthBtn.addEventListener('click', async ()=>{
+    const monthToDelete = s.activeMonth;
+    const rowCount = (s.rowsByCard[activeCard.id] && s.rowsByCard[activeCard.id][monthToDelete] || []).length;
+    const warn = rowCount>0 ? `이 탭에는 ${rowCount}건이 입력되어 있습니다. ` : '';
+    if(!confirm(`"${monthToDelete}" 탭을 삭제할까요? ${warn}입력된 내용도 함께 사라집니다.`)) return;
+    tmpl.months = tmpl.months.filter(m=>m!==monthToDelete);
+    delete s.rowsByCard[activeCard.id][monthToDelete];
+    s.activeMonth = pickDefaultCorpCardMonth(tmpl.months);
+    corpCardSelectedIds.clear();
+    await saveCorpCardTemplate(activeCard.id, tmpl.buffer, tmpl.fileName, tmpl.months);
+    await saveCorpCardRows(activeCard.id);
+    renderCorpCardMain();
+  });
   const addCardBtn = document.getElementById('corpCardAddBtn');
   if(addCardBtn) addCardBtn.addEventListener('click', handleCorpCardAdd);
   const fix2025Btn = document.getElementById('corpCardFix2025Btn');
