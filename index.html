@@ -10627,7 +10627,7 @@ async function renderVehicleMain(){
               <td style="padding:5px 4px; text-align:right; color:var(--muted);">${dist?fmtNum(dist):''}</td>
               <td style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="purpose" value="${escapeHtml(row.purpose)}" style="width:100%;"></td>
               <td style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="driver" value="${escapeHtml(row.driver)}" style="width:100%;"></td>
-              <td style="padding:3px 4px;"><input type="text" inputmode="numeric" class="vehicle-f vehicle-num" data-id="${row.id}" data-field="fuelCost" value="${row.fuelCost?Number(row.fuelCost).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="vehicle-f vehicle-num" data-id="${row.id}" data-field="fuelCost" value="${row.fuelCost==='X'?'X':(row.fuelCost?Number(row.fuelCost).toLocaleString('ko-KR'):'')}" style="width:100%; text-align:right;"></td>
               <td style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="hipass" value="${escapeHtml(row.hipass)}" style="width:100%; text-align:center;"></td>
               <td style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" style="width:100%;"></td>
               <td style="padding:5px 4px; text-align:center;"><button class="vehicle-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button></td>
