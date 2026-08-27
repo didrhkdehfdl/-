@@ -9099,10 +9099,12 @@ function corpCardRowIssues(row, mm){
   });
   // 비고는 지출내역이 "식대"일 때만 필수로 본다. 반대로 식대가 아닌데 비고에
   // 뭔가 적혀있으면, 그 내용은 보통 업무내용 칸에 적어야 할 내용이라 옮겨 적으라고 안내한다.
+  // "-"만 적힌 건 "내용 없음"이라는 뜻으로 보고 두 경우 다 경고하지 않는다.
   const isMealAllowance = String(row.expenseType||'').trim()==='식대';
+  const noteHasContent = /[^\s\-–—]/.test(row.note||'');
   if(isMealAllowance){
-    if(!String(row.note||'').trim()) issues.note = '빈칸을 채워주세요';
-  } else if(String(row.note||'').trim()){
+    if(!noteHasContent) issues.note = '빈칸을 채워주세요';
+  } else if(noteHasContent){
     issues.note = '업무내용에 적어주세요';
   }
   if(!issues.expenseType && String(row.expenseType||'').trim()==='점심') issues.expenseType = '"식대"로 수정해주세요';
