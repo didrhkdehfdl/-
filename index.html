@@ -9881,7 +9881,16 @@ async function renderCorpCardMain(){
     if(state.activeTab !== 'corpCard') return;
   }
   const s = corpCardState;
-  const activeCard = s.cards.find(c=>c.id===s.activeCardId);
+  // 관리자는 전체 카드를 보고, 일반 사용자는 담당자가 지정된 카드 중
+  // 자기 이름이 없는 카드는 못 보게 한다(공용·안전처럼 담당자가 아예
+  // 없는 카드는 누구에게나 보인다).
+  const visibleCards = isAdminUser ? s.cards : s.cards.filter(c => !(c.assignedTo && c.assignedTo.length) || c.assignedTo.includes(currentUserName));
+  let activeCard = visibleCards.find(c=>c.id===s.activeCardId);
+  if(!activeCard && visibleCards.length){
+    activeCard = visibleCards[0];
+    s.activeCardId = activeCard.id;
+    s.activeMonth = pickDefaultCorpCardMonth((corpCardTemplates[activeCard.id]||{}).months);
+  }
   const tmpl = activeCard ? corpCardTemplates[activeCard.id] : null;
   const months = tmpl ? tmpl.months : [];
   const rows = (activeCard && s.rowsByCard[activeCard.id] && s.rowsByCard[activeCard.id][s.activeMonth]) || [];
