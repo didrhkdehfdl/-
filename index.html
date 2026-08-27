@@ -1428,6 +1428,71 @@ document.getElementById('notifySendSubmitBtn').addEventListener('click', async (
   }
   btn.disabled = false; btn.textContent = '보내기';
 });
+
+// 차량관리 탭 전체(모든 차량)에서 빈칸이 있으면 정해둔 주기마다 정해둔
+// 사람들에게 알림을 보내는 설정. 실제로 "일정 시간마다" 반복 확인하는 건
+// 브라우저를 계속 켜둬야만 되는 방식이 아니라, 서버(Cloud Functions의
+// 예약 실행)가 담당한다 — 여기서는 "누구에게·몇 시간마다"만 저장해두면 된다.
+const VEHICLE_ALERT_CONFIG_KEY = 'vehicle-alert-config';
+async function openVehicleAlertConfigOverlay(){
+  document.getElementById('vehicleAlertConfigStatus').textContent = '불러오는 중…';
+  document.getElementById('vehicleAlertConfigOverlay').style.display = 'flex';
+  try{
+    const [snap, configText] = await Promise.all([
+      fbDb.collection('users').where('approved','==',true).get(),
+      loadFileFromStorage(VEHICLE_ALERT_CONFIG_KEY),
+    ]);
+    const config = configText ? JSON.parse(configText) : null;
+    const me = fbAuth.currentUser;
+    const users = snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(u=>u.id!==(me&&me.uid));
+    const selected = new Set((config && config.toUids) || []);
+    const list = document.getElementById('vehicleAlertRecipientList');
+    list.innerHTML = users.length
+      ? users.map(u=>`
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">
+            <input type="checkbox" class="vehicle-alert-recipient-box" value="${u.id}" ${selected.has(u.id)?'checked':''}>
+            ${escapeHtml(u.name||u.email||u.id)}
+          </label>`).join('')
+      : `<div style="font-size:12.5px; color:var(--muted);">알림 보낼 수 있는 다른 사용자가 없습니다</div>`;
+    if(config && config.intervalHours) document.getElementById('vehicleAlertInterval').value = String(config.intervalHours);
+    document.getElementById('vehicleAlertConfigStatus').textContent = config && config.toUids && config.toUids.length
+      ? `현재 ${config.intervalHours}시간마다, ${config.toUids.length}명에게 자동 알림이 켜져 있습니다.`
+      : '현재 자동 알림이 꺼져 있습니다.';
+  }catch(err){
+    document.getElementById('vehicleAlertConfigStatus').textContent = '불러오지 못했습니다: '+err.message;
+  }
+}
+function closeVehicleAlertConfigOverlay(){
+  document.getElementById('vehicleAlertConfigOverlay').style.display = 'none';
+}
+document.getElementById('vehicleAlertConfigCloseBtn').addEventListener('click', closeVehicleAlertConfigOverlay);
+document.getElementById('vehicleAlertSaveBtn').addEventListener('click', async ()=>{
+  const toUids = [...document.querySelectorAll('.vehicle-alert-recipient-box:checked')].map(el=>el.value);
+  const statusEl = document.getElementById('vehicleAlertConfigStatus');
+  if(!toUids.length){ statusEl.textContent = '받을 사람을 한 명 이상 선택해주세요.'; return; }
+  const intervalHours = Number(document.getElementById('vehicleAlertInterval').value);
+  try{
+    await saveFileToStorage(VEHICLE_ALERT_CONFIG_KEY, JSON.stringify({ toUids, intervalHours, updatedAt: Date.now() }));
+    statusEl.style.color = '#2e9e5b';
+    statusEl.textContent = `저장했습니다. ${intervalHours}시간마다 ${toUids.length}명에게 확인합니다.`;
+    setTimeout(closeVehicleAlertConfigOverlay, 900);
+  }catch(err){
+    statusEl.style.color = 'var(--neg)';
+    statusEl.textContent = '저장하지 못했습니다: '+err.message;
+  }
+});
+document.getElementById('vehicleAlertDisableBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('vehicleAlertConfigStatus');
+  try{
+    await saveFileToStorage(VEHICLE_ALERT_CONFIG_KEY, JSON.stringify({ toUids: [], intervalHours: 0, updatedAt: Date.now() }));
+    statusEl.style.color = '#2e9e5b';
+    statusEl.textContent = '자동 알림을 껐습니다.';
+    setTimeout(closeVehicleAlertConfigOverlay, 900);
+  }catch(err){
+    statusEl.style.color = 'var(--neg)';
+    statusEl.textContent = '처리하지 못했습니다: '+err.message;
+  }
+});
 async function restoreCaseHistoryEntry(caseId, idx){
   const history = await loadCaseHistory(caseId);
   const entry = history[idx];
