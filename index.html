@@ -10412,7 +10412,7 @@ function buildVehicleLogPrintHtml(vehicle, rows){
       <td class="pt-num">${dist?fmtNum(dist):''}</td>
       <td class="pt-note">${escapeHtml(r.purpose)}</td>
       <td class="pt-center">${escapeHtml(r.driver)}</td>
-      <td class="pt-num">${r.fuelCost?fmtNum(r.fuelCost):''}</td>
+      <td class="pt-num">${r.fuelCost==='X'?'X':(r.fuelCost?fmtNum(r.fuelCost):'')}</td>
       <td class="pt-center">${escapeHtml(r.hipass)}</td>
       <td class="pt-note">${escapeHtml(r.note)}</td>
     </tr>`;
