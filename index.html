@@ -9637,7 +9637,11 @@ async function renderCorpCardMain(){
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="plantName" value="${escapeHtml(row.plantName)}" style="width:100%; ${issues.plantName?errBorder:''}">${note('plantName')}</td>
               <td style="padding:3px 4px;">
                 <input type="text" class="corpcard-f" data-id="${row.id}" data-field="place" value="${escapeHtml(row.place)}" style="width:100%; ${issues.place?errBorder:''}">
-                ${note('place')}
+                ${mm && mm.reason==='place' ? (
+                  row.placeOverride
+                    ? `<div class="corpcard-place-override" data-id="${row.id}" style="font-size:10px; color:#2e9e5b; margin-top:2px; cursor:pointer; text-decoration:underline;">✓ 일치로 처리됨(되돌리기)</div>`
+                    : `<div style="font-size:10px; color:var(--neg); margin-top:2px;">승인내역: ${escapeHtml(mm.approvalPlace)} · <span class="corpcard-place-override" data-id="${row.id}" style="text-decoration:underline; cursor:pointer;">일치로 처리</span></div>`
+                ) : note('place')}
               </td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="workDetail" value="${escapeHtml(row.workDetail)}" style="width:100%; ${issues.workDetail?errBorder:''}">${note('workDetail')}</td>
               <td style="padding:3px 4px;">
