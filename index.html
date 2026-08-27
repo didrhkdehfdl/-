@@ -3507,6 +3507,7 @@ function renderSalesMain(){
       건 정보
       <span>
         <button id="salesLedgerToggleBtn" style="background:transparent; border:1px solid var(--gold-dim); color:var(--gold); border-radius:6px; padding:7px 12px; font-size:12px; cursor:pointer; margin-right:6px;">📊 정산데이터에 기록</button>
+        ${isAdminUser ? `<button id="notifySendBtn" style="background:transparent; border:1px solid var(--line); color:var(--gold); border-radius:6px; padding:7px 12px; font-size:12px; cursor:pointer; margin-right:6px;">🔔 알림 보내기</button>` : ''}
         <button id="caseHistoryBtn" style="background:transparent; border:1px solid var(--line); color:var(--sky); border-radius:6px; padding:7px 12px; font-size:12px; cursor:pointer; margin-right:6px;">🕒 변경 이력</button>
         <button id="deleteCaseBtn">이 건 삭제</button>
       </span>
