@@ -9381,21 +9381,6 @@ async function renderCorpCardMain(){
   });
   const exportBtn = document.getElementById('corpCardExportBtn');
   if(exportBtn) exportBtn.addEventListener('click', async ()=>{ await exportCorpCardToExcel(activeCard.id); });
-  const approvalBtn = document.getElementById('corpCardApprovalBtn');
-  const approvalFileInp = document.getElementById('corpCardApprovalFile');
-  if(approvalBtn) approvalBtn.addEventListener('click', ()=> approvalFileInp.click());
-  if(approvalFileInp) approvalFileInp.addEventListener('change', async (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    approvalBtn.disabled = true; approvalBtn.textContent = '처리중…';
-    try{
-      await handleCorpCardApprovalUpload(file);
-    }catch(err){
-      alert('승인내역 파일을 읽지 못했습니다: '+err.message);
-    }
-    e.target.value = '';
-    renderCorpCardMain();
-  });
   main.querySelectorAll('.corpcard-f').forEach(el=>{
     el.addEventListener('change', async ()=>{
       const row = rows.find(r=>r.id===el.dataset.id);
