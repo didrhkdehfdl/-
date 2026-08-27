@@ -10682,7 +10682,10 @@ async function renderVehicleMain(){
   const vehicleIssueCount = rows.filter(r=>Object.keys(vehicleRowIssues(r)).length>0).length;
 
   main.innerHTML = `
-    <h2 class="section-title">차량관리</h2>
+    <h2 class="section-title">
+      차량관리
+      ${isAdminUser ? `<span><button id="vehicleAlertConfigBtn" style="background:transparent; border:1px solid var(--line); color:var(--gold); border-radius:6px; padding:7px 12px; font-size:12px; cursor:pointer;">⏰ 빈칸 자동 알림 설정</button></span>` : ''}
+    </h2>
     <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
       "차량운행일지" 엑셀을 양식으로 한 번 올려두면, 차량별로 탭을 나눠 운행 기록을 입력할 수 있고 같은 모양으로 다시 엑셀로 내보낼 수 있습니다.
     </p>
