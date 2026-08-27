@@ -9089,20 +9089,20 @@ async function saveCorpCardList(){
 async function saveCorpCardApprovalEntries(){
   await saveFileToStorage(CORP_CARD_APPROVAL_KEY, JSON.stringify(corpCardState.approvalEntries), 30000);
 }
-// 카드사 승인내역 워크북의 아무 시트에서나 "승인일자"/"승인금액" 헤더를 찾아
-// (카드번호 섞인 통합 승인내역이어도) 카드번호·날짜·금액·가맹점명·승인번호를 뽑는다.
+// 카드사 승인내역 워크북에서 "승인일자"/"승인금액" 헤더가 있는 시트를 전부
+// 훑어서(카드사별로 시트가 나뉘어 있는 파일도 있어 첫 시트만 보면 다른 시트에
+// 있는 카드는 통째로 누락된다) 카드번호·날짜·금액·가맹점명·승인번호를 뽑는다.
 // 승인번호가 있으면 그걸로 중복 업로드를 걸러내고, 없으면 카드+날짜+금액+가맹점
 // 조합으로 대신 거른다.
 function parseApprovalWorkbookForCorpCard(wb){
   const norm = v => String(v||'').replace(/\s/g,'');
+  const rows = [];
   for(const sheetName of wb.SheetNames){
     const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, raw:true, defval:'' });
     const cols = approvalParseAoa(aoa);
     if(cols.error) continue;
-    let colApprovalNo = -1;
     const headerRow = aoa[cols.headerIdx]||[];
-    colApprovalNo = headerRow.findIndex(c=>norm(c)==='승인번호');
-    const rows = [];
+    const colApprovalNo = headerRow.findIndex(c=>norm(c)==='승인번호');
     for(let i=cols.headerIdx+1;i<aoa.length;i++){
       const row = aoa[i]||[];
       const cardNoStr = String(row[cols.colCard]||'').trim();
@@ -9115,9 +9115,8 @@ function parseApprovalWorkbookForCorpCard(wb){
         place: String(row[cols.colPlace]||'').trim(),
       });
     }
-    return rows;
   }
-  return [];
+  return rows;
 }
 function mergeApprovalEntries(existing, incoming){
   const keyOf = e => e.approvalNo ? ('no:'+e.approvalNo) : `ca:${e.cardNoStr}|${e.isoDate}|${e.amount}|${e.place}`;
