@@ -10283,7 +10283,9 @@ function vehicleRowIssues(row){
   const issues = {};
   const requiredFields = ['date','kmBefore','kmAfter','purpose','driver','fuelCost','hipass'];
   requiredFields.forEach(f=>{
-    const empty = (f==='kmBefore'||f==='kmAfter'||f==='fuelCost') ? (!row[f] || Number(row[f])===0) : !String(row[f]||'').trim();
+    // 주유비는 주유를 안 했을 때 "X"라고 적어두는 것도 채운 것으로 본다.
+    const empty = f==='fuelCost' ? (row.fuelCost!=='X' && (!row.fuelCost || Number(row.fuelCost)===0))
+      : (f==='kmBefore'||f==='kmAfter') ? (!row[f] || Number(row[f])===0) : !String(row[f]||'').trim();
     if(empty) issues[f] = '빈칸을 채워주세요';
   });
   return issues;
