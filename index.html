@@ -2958,6 +2958,10 @@ function renderMain(loading){
     renderCorpCardMain();
     return;
   }
+  if(state.activeTab === 'vehicle'){
+    renderVehicleMain();
+    return;
+  }
   if(state.activeTab === 'invoiceprep'){
     renderInvoicePrepMain();
     return;
