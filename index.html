@@ -282,10 +282,14 @@
       border-radius:10px; background:var(--panel-2);
     }
     .vehicle-table td{
-      flex:1 0 100%; display:flex; align-items:flex-start; gap:10px;
+      flex:1 0 100%; display:flex; flex-wrap:wrap; align-items:flex-start; gap:4px 10px;
       width:100% !important; padding:6px 0 !important; border-bottom:none;
       font-size:13px; position:static !important; background:transparent !important;
     }
+    /* 빈칸 경고문구(input 다음에 오는 <div>)는 입력칸 옆이 아니라 그 아래
+       한 줄 전체를 차지하게 줄바꿈시킨다 — 그냥 두면 좁은 화면에서 입력칸과
+       나란히 눌려서 읽기 힘들어진다. */
+    .vehicle-table td > div{ flex:1 0 100%; margin:0; }
     .vehicle-table td:first-child{
       flex:0 0 auto; order:-2; font-weight:700; color:var(--gold); font-size:15px; padding-bottom:8px !important;
     }
