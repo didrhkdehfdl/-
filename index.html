@@ -9379,9 +9379,11 @@ async function renderCorpCardMain(){
       if(el.classList.contains('corpcard-money')){
         const n = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
         row[field] = n;
+        recomputeCorpCardMismatches();
         renderCorpCardMain();
       } else {
         row[field] = el.value.trim();
+        if(field==='date' || field==='place') recomputeCorpCardMismatches();
       }
       await saveCorpCardRows(activeCard.id);
     });
@@ -9391,6 +9393,7 @@ async function renderCorpCardMain(){
       if(!confirm('이 행을 삭제할까요?')) return;
       s.rowsByCard[activeCard.id][s.activeMonth] = rows.filter(r=>r.id!==btn.dataset.id);
       await saveCorpCardRows(activeCard.id);
+      recomputeCorpCardMismatches();
       renderCorpCardMain();
     });
   });
