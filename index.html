@@ -9281,9 +9281,10 @@ async function renderCorpCardMain(){
         <tbody>
           ${rows.map((row,i)=>{
             const sv = corpCardSupplyVat(row.amount);
+            const isMismatch = mismatchIds.has(row.id);
             return `
-            <tr data-id="${row.id}">
-              <td style="padding:5px 4px; text-align:center; position:sticky; left:0; background:var(--panel-2);">${i+1}</td>
+            <tr data-id="${row.id}" ${isMismatch?'title="카드사 승인내역과 사용처 또는 금액이 다릅니다"':''} style="${isMismatch?'background:rgba(220,53,69,.18);':''}">
+              <td style="padding:5px 4px; text-align:center; position:sticky; left:0; background:${isMismatch?'rgba(220,53,69,.18)':'var(--panel-2)'};">${i+1}</td>
               <td style="padding:3px 4px;"><input type="date" class="corpcard-f" data-id="${row.id}" data-field="date" value="${escapeHtml(row.date)}" style="width:100%;"></td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="width:100%;"></td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="name" value="${escapeHtml(row.name)}" style="width:100%;"></td>
@@ -9355,6 +9356,21 @@ async function renderCorpCardMain(){
   });
   const exportBtn = document.getElementById('corpCardExportBtn');
   if(exportBtn) exportBtn.addEventListener('click', async ()=>{ await exportCorpCardToExcel(activeCard.id); });
+  const approvalBtn = document.getElementById('corpCardApprovalBtn');
+  const approvalFileInp = document.getElementById('corpCardApprovalFile');
+  if(approvalBtn) approvalBtn.addEventListener('click', ()=> approvalFileInp.click());
+  if(approvalFileInp) approvalFileInp.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    approvalBtn.disabled = true; approvalBtn.textContent = '처리중…';
+    try{
+      await handleCorpCardApprovalUpload(file);
+    }catch(err){
+      alert('승인내역 파일을 읽지 못했습니다: '+err.message);
+    }
+    e.target.value = '';
+    renderCorpCardMain();
+  });
   main.querySelectorAll('.corpcard-f').forEach(el=>{
     el.addEventListener('change', async ()=>{
       const row = rows.find(r=>r.id===el.dataset.id);
