@@ -10218,6 +10218,64 @@ async function exportVehicleToExcel(){
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 }
+// 차량 한 대의 운행 기록을 인쇄용 표로 만든다(칸이 많아 가로 방향으로 짠다).
+// 기안지/지출결의서·법인카드 사용내역서와 같은 출력 화면(#printOverlay)을
+// 그대로 재사용해서, 거기 있는 "PDF로 저장" 버튼으로 바로 PDF 저장까지 된다.
+function buildVehicleLogPrintHtml(vehicle, rows){
+  const rowsHtml = rows.map((r,i)=>{
+    const dist = vehicleDistance(r);
+    return `<tr>
+      <td class="pt-center">${i+1}</td>
+      <td class="pt-center pt-nowrap">${escapeHtml(r.date)}</td>
+      <td class="pt-num">${r.kmBefore?fmtNum(r.kmBefore):''}</td>
+      <td class="pt-num">${r.kmAfter?fmtNum(r.kmAfter):''}</td>
+      <td class="pt-num">${dist?fmtNum(dist):''}</td>
+      <td class="pt-note">${escapeHtml(r.purpose)}</td>
+      <td class="pt-center">${escapeHtml(r.driver)}</td>
+      <td class="pt-num">${r.fuelCost?fmtNum(r.fuelCost):''}</td>
+      <td class="pt-center">${escapeHtml(r.hipass)}</td>
+      <td class="pt-note">${escapeHtml(r.note)}</td>
+    </tr>`;
+  }).join('');
+  const totalDist = rows.reduce((sum,r)=>sum+vehicleDistance(r),0);
+  const totalFuel = rows.reduce((sum,r)=>sum+(Number(r.fuelCost)||0),0);
+  return `
+  <div class="print-page doc-page landscape">
+    <div style="text-align:center; font-size:20px; font-weight:700; margin-bottom:6px;">차량운행일지</div>
+    <div style="font-size:12px; margin-bottom:10px;">차량번호: ${escapeHtml(vehicle.plate)}${vehicle.manager?` · 담당자: ${escapeHtml(vehicle.manager)}`:''}</div>
+    <table class="print-table">
+      <thead>
+        <tr>
+          <th>순번</th><th>운행일자</th><th>운행전(Km)</th><th>운행후(Km)</th><th>거리(Km)</th>
+          <th>방문업체 및 운행목적</th><th>운행자</th><th>주유비</th><th>하이패스<br>통행여부</th><th>비고</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+        <tr>
+          <td colspan="4" class="pt-center" style="font-weight:700;">합계</td>
+          <td class="pt-num" style="font-weight:700;">${fmtNum(totalDist)}</td>
+          <td></td><td></td>
+          <td class="pt-num" style="font-weight:700;">${fmtNum(totalFuel)}</td>
+          <td colspan="2"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>`;
+}
+function openVehiclePrintPreview(vehicle, rows){
+  const html = buildVehicleLogPrintHtml(vehicle, rows);
+  document.getElementById('printSheet').innerHTML = html;
+  document.getElementById('printOverlay').classList.add('show');
+  document.body.classList.add('printing-preview');
+  const portraitBtn = document.getElementById('printPortraitBtn');
+  const landscapeBtn = document.getElementById('printLandscapeBtn');
+  portraitBtn.style.display = 'none';
+  landscapeBtn.style.display = '';
+  landscapeBtn.textContent = '차량운행일지 인쇄';
+  landscapeBtn.onclick = () => openPrintWindow(html, 'size:landscape; margin:10mm;');
+  pdfFilenameOverride = `차량운행일지_${vehicle.plate}_${isoDate(new Date())}`;
+}
 // 차량마다, 이미 서식이 갖춰진 데이터 칸(8행~32행)을 지금 입력된 내역으로
 // 통째로 다시 채운다. B/D/F/H/J/W열(단위 글자)은 절대 건드리지 않는다.
 async function patchVehicleTemplate(masterArrayBuffer, vehicles, rowsByVehicle){
