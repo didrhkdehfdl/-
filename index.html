@@ -8132,9 +8132,12 @@ async function renderCardReconMain(){
   });
   main.querySelectorAll('.cardmaster-refresh-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      btn.disabled = true; btn.textContent = '처리중…';
+      btn.disabled = true; btn.textContent = '처리중… (0%)';
       try{
-        await regenerateCardMasterAndDownload(btn.dataset.id);
+        await regenerateCardMasterAndDownload(btn.dataset.id, (done, total)=>{
+          const pct = total ? Math.round(done/total*100) : 0;
+          btn.textContent = `처리중… (${pct}%)`;
+        });
       }catch(err){
         alert('통합본 갱신 중 오류가 발생했습니다: '+err.message);
       }
