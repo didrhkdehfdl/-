@@ -108,3 +108,69 @@ exports.onNewInquiry = onDocumentUpdated("app_data/inquiry-list", async (event) 
     );
   }
 });
+
+// ---------- 특정 사람에게 건별 알림 보내기 ----------
+// 승인된 사용자별 기기 토큰은 fcm-admin-tokens(관리자 일괄 알림용)와 별도로
+// app_data/fcm-user-tokens에 uid를 키로 저장돼 있다({ [uid]: {email, tokens[]} }).
+// 죽은 토큰은 그 uid의 배열에서만 지운다(다른 사람 토큰은 건드리지 않음).
+async function sendToUserTokens(uid, title, body, data) {
+  if (!uid) return;
+  const text = await readAppData("fcm-user-tokens");
+  const usersMap = text ? JSON.parse(text) : {};
+  const entry = usersMap[uid];
+  const tokens = (entry && entry.tokens) || [];
+  if (!tokens.length) return;
+
+  const res = await getMessaging().sendEachForMulticast({
+    tokens,
+    notification: { title, body },
+    data: data || {},
+  });
+
+  const deadTokens = new Set();
+  res.responses.forEach((r, i) => {
+    if (!r.success && (r.error?.code === "messaging/registration-token-not-registered" ||
+                        r.error?.code === "messaging/invalid-registration-token")) {
+      deadTokens.add(tokens[i]);
+    }
+  });
+  if (deadTokens.size) {
+    usersMap[uid] = { ...entry, tokens: tokens.filter((t) => !deadTokens.has(t)) };
+    await db.collection("app_data").doc("fcm-user-tokens").set({
+      storedIn: "firestore",
+      value: JSON.stringify(usersMap),
+      updatedAt: new Date(),
+    });
+  }
+}
+
+// 알림 큐도 문의 목록과 같은 방식(문서 하나에 JSON 배열 통째로)이라 새로
+// 추가된 항목만 골라 발송한다. onDocumentUpdated가 아니라 onDocumentWritten을
+// 쓰는 이유: 이 문서는 이번이 처음 만들어지는 경우(맨 첫 알림)에는 "생성"
+// 이벤트라서 onUpdate로는 그 첫 건을 놓치기 때문이다.
+exports.onNotificationQueued = onDocumentWritten("app_data/notification-queue", async (event) => {
+  const beforeRaw = event.data?.before?.exists ? event.data.before.data() : null;
+  const afterRaw = event.data?.after?.exists ? event.data.after.data() : null;
+  if (!afterRaw) return;
+
+  const parseList = (raw) => {
+    if (!raw || raw.storedIn === "storage" || !raw.value) return [];
+    try { return JSON.parse(raw.value); } catch (e) { return []; }
+  };
+  const before = parseList(beforeRaw);
+  const after = parseList(afterRaw);
+  if (!after.length) return;
+
+  const beforeIds = new Set(before.map((it) => it.id));
+  const added = after.filter((it) => !beforeIds.has(it.id));
+  if (!added.length) return;
+
+  for (const item of added) {
+    await sendToUserTokens(
+      item.toUid,
+      item.title || "알림",
+      item.body || "",
+      { type: "case-notify", caseId: item.caseId || "" }
+    );
+  }
+});
