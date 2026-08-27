@@ -490,6 +490,28 @@
   </div>
 </div>
 
+<div id="notifySendOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:90; display:none; align-items:center; justify-content:center; padding:20px;">
+  <div style="background:var(--bg); border-radius:12px; width:440px; max-width:100%; display:flex; flex-direction:column; overflow:hidden;">
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line);">
+      <div style="font-family:'Noto Serif KR', serif; font-weight:700; font-size:15px;">🔔 알림 보내기</div>
+      <button id="notifySendCloseBtn" style="border:none; background:transparent; font-size:18px; color:var(--muted); cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:18px 20px; display:flex; flex-direction:column; gap:14px;">
+      <div style="font-size:12.5px; color:var(--muted);" id="notifySendCaseLabel"></div>
+      <div class="field">
+        <label>받을 사람</label>
+        <select id="notifySendRecipient" style="background:var(--panel-2); border:1px solid var(--line); border-radius:7px; padding:8px 10px; color:var(--text); font-size:13px; width:100%;"></select>
+      </div>
+      <div class="field">
+        <label>메시지(선택, 비우면 기본 문구로 전송)</label>
+        <input type="text" id="notifySendMessage" placeholder="예: 이 건 확인 부탁드립니다" style="background:var(--panel-2); border:1px solid var(--line); border-radius:7px; padding:8px 10px; color:var(--text); font-size:13px; width:100%;">
+      </div>
+      <div id="notifySendStatus" style="font-size:12px; color:var(--muted); min-height:16px;"></div>
+      <button id="notifySendSubmitBtn" style="padding:10px 14px; border-radius:8px; border:none; background:var(--gold); color:#fff; font-weight:600; cursor:pointer;">보내기</button>
+    </div>
+  </div>
+</div>
+
 <div id="migrateOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:95; display:none; align-items:center; justify-content:center; padding:20px;">
   <div style="background:var(--bg); border-radius:12px; width:520px; max-width:100%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
     <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line);">
