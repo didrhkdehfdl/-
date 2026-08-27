@@ -9110,7 +9110,7 @@ function corpCardRowIssues(row, mm){
     } else if(mm.reason==='no_match'){
       issues.date = issues.date || '승인내역 없음(날짜·금액 확인)';
       issues.amount = issues.amount || '승인내역 없음(날짜·금액 확인)';
-    } else if(mm.reason==='place'){
+    } else if(mm.reason==='place' && !row.placeOverride){
       issues.place = issues.place || `승인내역: ${mm.approvalPlace}`;
     }
   }
