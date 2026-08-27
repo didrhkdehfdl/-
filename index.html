@@ -9530,6 +9530,7 @@ async function renderCorpCardMain(){
     <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">카드번호: ${escapeHtml(activeCard.cardNumber)} · 양식 파일: ${escapeHtml(tmpl.fileName)}</div>
     <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
       ${months.map(m => `<button class="corpcard-month-btn" data-month="${escapeHtml(m)}" style="padding:7px 12px; border-radius:6px; border:1px solid ${m===s.activeMonth?'var(--gold)':'var(--line)'}; background:${m===s.activeMonth?'rgba(224,163,57,.12)':'transparent'}; color:${m===s.activeMonth?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12px;">${escapeHtml(m)}</button>`).join('')}
+      <button id="corpCardAddMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12px;">+ 월 추가</button>
     </div>
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
       <button id="corpCardAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
