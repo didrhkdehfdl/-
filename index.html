@@ -9361,7 +9361,7 @@ async function renderCorpCardMain(){
   const months = tmpl ? tmpl.months : [];
   const rows = (activeCard && s.rowsByCard[activeCard.id] && s.rowsByCard[activeCard.id][s.activeMonth]) || [];
   const mismatchMap = (activeCard && s.mismatchByCard[activeCard.id]) || new Map();
-  const mismatchCountInMonth = rows.filter(r=>mismatchMap.has(r.id)).length;
+  const issueCountInMonth = rows.filter(r=>Object.keys(corpCardRowIssues(r, mismatchMap.get(r.id))).length>0).length;
 
   main.innerHTML = `
     <h2 class="section-title">법인카드</h2>
