@@ -222,6 +222,12 @@ exports.checkVehicleBlanksHourly = onSchedule(
     const config = configText ? JSON.parse(configText) : null;
     if (!config || !config.toUids || !config.toUids.length || !config.intervalHours) return;
 
+    // 업무시간(08시~18시, 한국시간)에만 울리게 한다 — 이 시간대 밖이면 알림을
+    // 안 보낼 뿐 아니라 lastSentAt도 갱신하지 않아서, 다음날 08시가 되면
+    // 밤새 지난 시간만큼의 주기를 그대로 이어서 판단한다.
+    const kstHour = (new Date().getUTCHours() + 9) % 24;
+    if (kstHour < 8 || kstHour >= 18) return;
+
     const lastText = await readAppData("vehicle-alert-last-sent");
     const lastSentAt = lastText ? (JSON.parse(lastText).at || 0) : 0;
     const now = Date.now();
