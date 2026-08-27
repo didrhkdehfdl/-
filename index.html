@@ -10829,7 +10829,7 @@ async function init(){
   }
   const savedCompanyMaster = await loadCompanyMaster();
   if(Array.isArray(savedCompanyMaster)) companyMaster = savedCompanyMaster;
-  await restoreCardReconFiles();
+  await ensureCardMasterLoaded();
   await restoreSalesLedgerTemplate();
   await restoreOMListTemplate();
   await restoreProfitLedgerTemplate();
