@@ -9634,6 +9634,20 @@ async function renderCorpCardMain(){
   main.querySelectorAll('.corpcard-month-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{ s.activeMonth = btn.dataset.month; corpCardSelectedIds.clear(); renderCorpCardMain(); });
   });
+  const addMonthBtn = document.getElementById('corpCardAddMonthBtn');
+  if(addMonthBtn) addMonthBtn.addEventListener('click', async ()=>{
+    const input = prompt('추가할 월을 숫자로 입력해주세요 (예: 9)');
+    if(input===null) return;
+    const num = parseInt(input,10);
+    if(!num || num<1 || num>12){ alert('1~12 사이 숫자를 입력해주세요.'); return; }
+    const existing = tmpl.months.find(m=>monthNumFromLabel(m)===num);
+    if(existing){ s.activeMonth = existing; corpCardSelectedIds.clear(); renderCorpCardMain(); return; }
+    const label = await ensureCorpCardMonthExists(activeCard, num);
+    if(!label){ alert('월을 추가하지 못했습니다.'); return; }
+    s.activeMonth = label;
+    corpCardSelectedIds.clear();
+    renderCorpCardMain();
+  });
   const addCardBtn = document.getElementById('corpCardAddBtn');
   if(addCardBtn) addCardBtn.addEventListener('click', handleCorpCardAdd);
   const fix2025Btn = document.getElementById('corpCardFix2025Btn');
