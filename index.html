@@ -9040,7 +9040,7 @@ let corpCardTemplates = {}; // cardId -> { buffer, fileName, savedAt, months }
 
 function newCorpCardRow(){
   const row = { id: rid() };
-  CORP_CARD_COLUMNS.forEach(([f])=>{ row[f] = f==='amount' ? 0 : ''; });
+  CORP_CARD_COLUMNS.forEach(([f])=>{ row[f] = f==='amount' ? 0 : (f==='date' ? isoDate(new Date()) : ''); });
   return row;
 }
 // 원본의 공급가액/부가세 수식(L=IF(M=0,N,N/1.1), M=N/11)과 똑같이 화면에도 참고용으로
