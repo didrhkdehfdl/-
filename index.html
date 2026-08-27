@@ -10733,6 +10733,7 @@ document.getElementById('importFile').addEventListener('change', (e)=>{
 document.getElementById('printCloseBtn').addEventListener('click', closePrintPreview);
 
 let pdfLibsPromise = null;
+let pdfFilenameOverride = null;
 function setupStickyHScroll(wrapId, stickyId){
   const wrap = document.getElementById(wrapId);
   const sticky = document.getElementById(stickyId);
