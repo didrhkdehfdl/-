@@ -7763,7 +7763,7 @@ function cardParts(full){
 // 번호와 비교한다. 최소 2개 그룹은 보여야 하고, 보이는 그룹은 전부 일치해야
 // 같은 카드로 본다(보이는 자리가 너무 적으면 다른 카드와 우연히 헷갈릴 수 있다).
 function approvalRowMatchesCard(cardNoStr, parts){
-  const m = String(cardNoStr||'').trim().match(/^(\S{4})-(\S{4})-(\S{4})-(\S{4})$/);
+  const m = String(cardNoStr||'').trim().match(/^(\S{4})[-\s](\S{4})[-\s](\S{4})[-\s](\S{4})$/);
   if(!m) return false;
   const target = [parts.p1, parts.p2, parts.p3, parts.p4];
   let visible = 0, matched = 0;
