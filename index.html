@@ -9358,6 +9358,76 @@ async function handleCorpCardAdd(){
   });
   input.click();
 }
+// 체크된 행들을 "법인카드 사용내역서" 서식(원본은 한글(.hwp) 파일이지만, 그
+// 이진 형식은 브라우저에서 안전하게 편집할 방법이 없어 기안지/지출결의서와
+// 같은 방식 — 화면에 같은 모양으로 그려서 인쇄/PDF 저장 — 으로 대신한다)에
+// 채워서 한 장의 표로 모아 보여준다. "사용장소"·"통행여부"는 법인카드 탭에
+// 대응되는 데이터가 없어 빈칸으로 남는다.
+let corpCardSelectedIds = new Set();
+function buildCorpCardUsageDocHtml(rows, card){
+  const total = rows.reduce((sum,r)=> sum + (Number(r.amount)||0), 0);
+  const approvers = ['담당','부서장','전무','전무','대표'];
+  const bodyRows = rows.map((r,i)=>`
+    <tr>
+      <td class="pt-center">${i+1}</td>
+      <td class="pt-center pt-nowrap">${escapeHtml(r.date)}</td>
+      <td class="pt-center">${escapeHtml(r.dept)}</td>
+      <td class="pt-center">${escapeHtml(r.name)}</td>
+      <td>${escapeHtml(r.place)}</td>
+      <td></td>
+      <td>${escapeHtml(r.plantName)}</td>
+      <td>${escapeHtml(r.workDetail)}</td>
+      <td class="pt-center">${escapeHtml(r.expenseType)}</td>
+      <td class="pt-num">${fmtNum(r.amount)}</td>
+      <td class="pt-note">${escapeHtml(r.note)}</td>
+      <td class="pt-center pt-nowrap">${escapeHtml(r.corp)}${r.carNo?(' / '+escapeHtml(r.carNo)):''}</td>
+      <td class="pt-center">${escapeHtml(r.hipass)}</td>
+      <td></td>
+    </tr>`).join('');
+  return `
+  <div class="print-page doc-page portrait">
+    <div style="text-align:center; font-size:22px; font-weight:700; letter-spacing:8px; margin-bottom:14px;">법인카드 사용내역서</div>
+    <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:10px;">
+      <div style="font-size:13px;">카드No : ${escapeHtml(card.cardNumber||'')}</div>
+      <table style="border-collapse:collapse;">
+        <tr>${approvers.map(a=>`<td style="border:1px solid #000; width:66px; height:20px; text-align:center; font-size:11px; background:#f2f2f2;">${a}</td>`).join('')}</tr>
+        <tr>${approvers.map(()=>`<td style="border:1px solid #000; height:44px;"></td>`).join('')}</tr>
+      </table>
+    </div>
+    <table class="print-table">
+      <thead>
+        <tr>
+          <th style="width:26px;">순번</th><th>사용일</th><th>부서</th><th>성명/직급</th><th>사용처</th><th>사용장소</th>
+          <th>사업명<br>(발전소명)</th><th>업무내용</th><th>지출내역</th><th>금액</th><th>비고</th>
+          <th>업무법인<br>차량번호</th><th>하이패스</th><th>통행여부</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${bodyRows}
+        <tr>
+          <td colspan="9" class="pt-center" style="font-weight:700;">합 계</td>
+          <td class="pt-num" style="font-weight:700;">${fmtNum(total)}</td>
+          <td colspan="4"></td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="font-size:10.5px; color:#333; margin-top:10px; line-height:1.8;">
+      ※ 하이패스 법인카드 사용 시 O / X 기입 必<br>
+      ※ 영수증 첨부 및 추가 상세 내용 기입(부족 시 별지 사용)
+    </div>
+  </div>`;
+}
+function openCorpCardUsageDocPrint(rows, card){
+  const html = buildCorpCardUsageDocHtml(rows, card);
+  document.getElementById('printSheet').innerHTML = html;
+  document.getElementById('printOverlay').classList.add('show');
+  document.body.classList.add('printing-preview');
+  const portraitBtn = document.getElementById('printPortraitBtn');
+  portraitBtn.textContent = '법인카드 사용내역서 인쇄';
+  portraitBtn.onclick = () => openPrintWindow(html, 'size:portrait; margin:12mm;');
+  document.getElementById('printLandscapeBtn').style.display = 'none';
+  pdfFilenameOverride = `법인카드_사용내역서_${card.label||card.cardNumber}_${isoDate(new Date())}`;
+}
 async function renderCorpCardMain(){
   const main = document.getElementById('main');
   if(!corpCardState.loaded){
