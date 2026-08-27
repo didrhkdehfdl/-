@@ -9018,12 +9018,102 @@ async function ensureCorpCardLoaded(){
       const tmpl = corpCardTemplates[activeCard.id];
       if(!corpCardState.activeMonth) corpCardState.activeMonth = (tmpl && tmpl.months[0]) || '';
     }
+    const approvalText = await loadFileFromStorage(CORP_CARD_APPROVAL_KEY, 30000);
+    corpCardState.approvalEntries = approvalText ? JSON.parse(approvalText) : [];
+    recomputeCorpCardMismatches();
   }catch(e){ console.error('법인카드 목록 불러오기 실패', e); }
   corpCardState.loaded = true;
   corpCardState.loading = false;
 }
 async function saveCorpCardList(){
   await saveFileToStorage(CORP_CARD_LIST_KEY, JSON.stringify({ cards: corpCardState.cards, activeCardId: corpCardState.activeCardId }));
+}
+async function saveCorpCardApprovalEntries(){
+  await saveFileToStorage(CORP_CARD_APPROVAL_KEY, JSON.stringify(corpCardState.approvalEntries), 30000);
+}
+// 카드사 승인내역 워크북의 아무 시트에서나 "승인일자"/"승인금액" 헤더를 찾아
+// (카드번호 섞인 통합 승인내역이어도) 카드번호·날짜·금액·가맹점명·승인번호를 뽑는다.
+// 승인번호가 있으면 그걸로 중복 업로드를 걸러내고, 없으면 카드+날짜+금액+가맹점
+// 조합으로 대신 거른다.
+function parseApprovalWorkbookForCorpCard(wb){
+  const norm = v => String(v||'').replace(/\s/g,'');
+  for(const sheetName of wb.SheetNames){
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, raw:true, defval:'' });
+    const cols = approvalParseAoa(aoa);
+    if(cols.error) continue;
+    let colApprovalNo = -1;
+    const headerRow = aoa[cols.headerIdx]||[];
+    colApprovalNo = headerRow.findIndex(c=>norm(c)==='승인번호');
+    const rows = [];
+    for(let i=cols.headerIdx+1;i<aoa.length;i++){
+      const row = aoa[i]||[];
+      const cardNoStr = String(row[cols.colCard]||'').trim();
+      if(!cardNoStr) continue;
+      rows.push({
+        approvalNo: colApprovalNo>=0 ? String(row[colApprovalNo]||'').trim() : '',
+        cardNoStr,
+        isoDate: normalizeDotDate(row[cols.colDate]),
+        amount: Math.abs(Math.round(Number(row[cols.colAmount])||0)),
+        place: String(row[cols.colPlace]||'').trim(),
+      });
+    }
+    return rows;
+  }
+  return [];
+}
+function mergeApprovalEntries(existing, incoming){
+  const keyOf = e => e.approvalNo ? ('no:'+e.approvalNo) : `ca:${e.cardNoStr}|${e.isoDate}|${e.amount}|${e.place}`;
+  const seen = new Set(existing.map(keyOf));
+  const merged = existing.slice();
+  incoming.forEach(e=>{
+    const k = keyOf(e);
+    if(seen.has(k)) return;
+    seen.add(k);
+    merged.push(e);
+  });
+  return merged;
+}
+// 법인카드 탭에 입력된 내역(날짜+금액이 같은 것)을 승인내역과 짝지어 보고,
+// 짝을 못 찾았거나(금액 불일치) 짝은 찾았는데 사용처가 서로 딴판이면 그 행의
+// id를 "불일치"로 표시한다.
+function reconcileCorpCardWithApproval(ledgerRows, approvalEntries){
+  const result = reconcileCardEntries(ledgerRows, approvalEntries);
+  const mismatchIds = new Set();
+  result.rows.forEach(r=>{
+    if(r.status !== 'match'){ mismatchIds.add(r.id); return; }
+    const ae = approvalEntries.find(a=>a.isoDate===r.isoDate && a.amount===r.amount);
+    const p1 = String(r.place||'').replace(/\s/g,'');
+    const p2 = String((ae&&ae.place)||'').replace(/\s/g,'');
+    if(p1 && p2 && !(p1.includes(p2) || p2.includes(p1))) mismatchIds.add(r.id);
+  });
+  return mismatchIds;
+}
+function recomputeCorpCardMismatches(){
+  const s = corpCardState;
+  s.mismatchByCard = {};
+  s.cards.forEach(card=>{
+    const parts = cardParts(card.cardNumber);
+    if(!parts) return;
+    const approvalForCard = s.approvalEntries.filter(a=>approvalRowMatchesCard(a.cardNoStr, parts));
+    if(!approvalForCard.length) return;
+    const ledgerRows = [];
+    Object.values(s.rowsByCard[card.id]||{}).forEach(monthRows=>{
+      (monthRows||[]).forEach(r=>{ if(r.date) ledgerRows.push({ id:r.id, isoDate:r.date, amount: Math.abs(Number(r.amount)||0), place:r.place }); });
+    });
+    s.mismatchByCard[card.id] = reconcileCorpCardWithApproval(ledgerRows, approvalForCard);
+  });
+}
+async function handleCorpCardApprovalUpload(file){
+  await loadXlsxLib();
+  const { wb } = await readWorkbookFromFile(file);
+  const parsedRows = parseApprovalWorkbookForCorpCard(wb);
+  if(!parsedRows.length){ alert('승인내역 시트에서 "승인일자"/"승인금액" 헤더를 찾지 못했습니다.'); return; }
+  const before = corpCardState.approvalEntries.length;
+  corpCardState.approvalEntries = mergeApprovalEntries(corpCardState.approvalEntries, parsedRows);
+  const added = corpCardState.approvalEntries.length - before;
+  await saveCorpCardApprovalEntries();
+  recomputeCorpCardMismatches();
+  alert(`승인내역 ${parsedRows.length}건을 확인해서 ${added}건을 새로 추가했습니다. (누적 ${corpCardState.approvalEntries.length}건)`);
 }
 async function saveCorpCardRows(cardId){
   await saveFileToStorage('corp-card-rows:'+cardId, JSON.stringify(corpCardState.rowsByCard[cardId]||{}));
