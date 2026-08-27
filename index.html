@@ -12146,15 +12146,18 @@ const fbStorage = firebase.storage();
 // 발급받은 값으로 아래를 채워야 실제로 동작한다(발급 전까지는 조용히 건너뜀).
 const FCM_VAPID_KEY = 'BH8GpysDn3C8pqP8KiIotCzS18w_wmdX2ZWB-duCv3QxfzDWoPYdoZb0U17Y2iH53-7hPBPn181_M8I8gOwvgIE';
 const FCM_ADMIN_TOKENS_KEY = 'fcm-admin-tokens';
+async function getFcmToken(){
+  if(!('serviceWorker' in navigator) || !('Notification' in window)) return null;
+  if(!FCM_VAPID_KEY || FCM_VAPID_KEY.startsWith('REPLACE_')) return null;
+  const permission = await Notification.requestPermission();
+  if(permission !== 'granted') return null;
+  const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+  const messaging = firebase.messaging();
+  return await messaging.getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: registration });
+}
 async function setupAdminPushNotifications(){
   try{
-    if(!('serviceWorker' in navigator) || !('Notification' in window)) return;
-    if(!FCM_VAPID_KEY || FCM_VAPID_KEY.startsWith('REPLACE_')) return;
-    const permission = await Notification.requestPermission();
-    if(permission !== 'granted') return;
-    const registration = await navigator.serviceWorker.register('firebase-messaging-sw.js');
-    const messaging = firebase.messaging();
-    const token = await messaging.getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: registration });
+    const token = await getFcmToken();
     if(!token) return;
     const existingText = await loadFileFromStorage(FCM_ADMIN_TOKENS_KEY);
     const tokens = existingText ? JSON.parse(existingText) : [];
@@ -12163,6 +12166,24 @@ async function setupAdminPushNotifications(){
       await saveFileToStorage(FCM_ADMIN_TOKENS_KEY, JSON.stringify(tokens));
     }
   }catch(e){ console.error('푸시 알림 설정 실패', e); }
+}
+// "특정 사람에게 알림 보내기" 기능은 관리자뿐 아니라 승인된 사용자 누구나
+// 받는 쪽이 될 수 있어야 하므로, 이 계정의 기기 토큰을 uid로 구분해서 따로
+// 저장해둔다(기존 fcm-admin-tokens는 "새 가입/새 문의" 관리자 일괄 알림용으로
+// 그대로 두고 건드리지 않는다).
+const FCM_USER_TOKENS_KEY = 'fcm-user-tokens';
+async function setupUserPushNotifications(user){
+  try{
+    const token = await getFcmToken();
+    if(!token) return;
+    const existingText = await loadFileFromStorage(FCM_USER_TOKENS_KEY);
+    const usersMap = existingText ? JSON.parse(existingText) : {};
+    const entry = usersMap[user.uid] || { email: user.email, tokens: [] };
+    entry.email = user.email;
+    if(!entry.tokens.includes(token)) entry.tokens.push(token);
+    usersMap[user.uid] = entry;
+    await saveFileToStorage(FCM_USER_TOKENS_KEY, JSON.stringify(usersMap));
+  }catch(e){ console.error('사용자 푸시 알림 설정 실패', e); }
 }
 
 let authMode = 'login'; // 'login' | 'signup'
