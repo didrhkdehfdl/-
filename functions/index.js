@@ -233,20 +233,29 @@ exports.checkVehicleBlanksHourly = onSchedule(
     if (!vehicles.length) return;
 
     let totalIssueCount = 0;
-    const perVehicleSummary = [];
+    const detailLines = [];
     for (const v of vehicles) {
       const rowsText = await readAppData("vehicle-rows:" + v.id);
       const rows = rowsText ? JSON.parse(rowsText) : [];
-      const count = rows.filter(vehicleRowHasIssue).length;
-      if (count > 0) {
-        totalIssueCount += count;
-        perVehicleSummary.push(`${v.plate} ${count}건`);
-      }
+      rows.forEach((row, i) => {
+        const missingFields = vehicleRowIssueFields(row);
+        if (!missingFields.length) return;
+        totalIssueCount++;
+        const dateLabel = row.date || (() => {
+          const guess = guessVehicleDateRange(rows, i);
+          return guess ? `날짜 미입력(${guess}로 추정)` : "날짜 미입력";
+        })();
+        const missingLabels = missingFields.map((f) => VEHICLE_FIELD_LABELS[f] || f).join(", ");
+        detailLines.push(`${v.plate} ${i + 1}번(${dateLabel}): ${missingLabels}`);
+      });
     }
     if (!totalIssueCount) return;
 
+    const MAX_LINES = 15;
+    const shown = detailLines.slice(0, MAX_LINES);
+    const more = detailLines.length - shown.length;
     const title = "차량운행일지 빈칸 확인 필요";
-    const body = `빈칸이 있는 운행기록이 총 ${totalIssueCount}건 있습니다. (${perVehicleSummary.join(", ")})`;
+    const body = `빈칸이 있는 운행기록이 총 ${totalIssueCount}건 있습니다.\n${shown.join("\n")}${more > 0 ? `\n...외 ${more}건 더` : ""}`;
     for (const uid of config.toUids) {
       await sendToUserTokens(uid, title, body, { type: "vehicle-blank-alert", tab: "vehicle" });
     }
