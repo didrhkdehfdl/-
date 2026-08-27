@@ -10664,7 +10664,10 @@ async function renderVehicleMain(){
                 ${note('hipass')}
               </td>
               <td style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" style="width:100%;"></td>
-              <td style="padding:5px 4px; text-align:center;"><button class="vehicle-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button></td>
+              <td style="padding:5px 4px; text-align:center; white-space:nowrap;">
+                ${isMismatch && isAdminUser ? `<button class="vehicle-notify-btn" data-id="${row.id}" title="이 행 빈칸을 알림으로 보내기" style="background:transparent; border:none; color:var(--gold); cursor:pointer; font-size:14px; margin-right:4px;">🔔</button>` : ''}
+                <button class="vehicle-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button>
+              </td>
             </tr>
           `;}).join('')}
         </tbody>
