@@ -9611,6 +9611,28 @@ async function renderCorpCardMain(){
   });
   const exportBtn = document.getElementById('corpCardExportBtn');
   if(exportBtn) exportBtn.addEventListener('click', async ()=>{ await exportCorpCardToExcel(activeCard.id); });
+  const printDocBtn = document.getElementById('corpCardPrintDocBtn');
+  if(printDocBtn) printDocBtn.addEventListener('click', ()=>{
+    const selectedRows = rows.filter(r=>corpCardSelectedIds.has(r.id));
+    if(!selectedRows.length) return;
+    openCorpCardUsageDocPrint(selectedRows, activeCard);
+  });
+  const selectAllBox = document.getElementById('corpCardSelectAllBox');
+  if(selectAllBox){
+    selectAllBox.checked = rows.length>0 && rows.every(r=>corpCardSelectedIds.has(r.id));
+    selectAllBox.addEventListener('change', ()=>{
+      if(selectAllBox.checked) rows.forEach(r=>corpCardSelectedIds.add(r.id));
+      else rows.forEach(r=>corpCardSelectedIds.delete(r.id));
+      renderCorpCardMain();
+    });
+  }
+  main.querySelectorAll('.corpcard-select-box').forEach(box=>{
+    box.addEventListener('change', ()=>{
+      if(box.checked) corpCardSelectedIds.add(box.dataset.id);
+      else corpCardSelectedIds.delete(box.dataset.id);
+      renderCorpCardMain();
+    });
+  });
   main.querySelectorAll('.corpcard-f').forEach(el=>{
     el.addEventListener('change', async ()=>{
       const row = rows.find(r=>r.id===el.dataset.id);
