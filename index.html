@@ -2898,11 +2898,14 @@ function openPrintPreview(){
 function closePrintPreview(){
   document.getElementById('printOverlay').classList.remove('show');
   document.body.classList.remove('printing-preview');
-  // 법인카드 사용내역서처럼 activeCase가 없는 화면에서 인쇄 미리보기를 열 때는
-  // printPortraitBtn에 그 화면 전용 onclick을 임시로 얹어두는데, 여기서 정리해
-  // 두지 않으면 다음에 일반 사건 인쇄를 열었을 때도 남아서 같이 실행돼버린다.
+  // 법인카드 사용내역서·차량운행일지처럼 activeCase가 없는 화면에서 인쇄
+  // 미리보기를 열 때는 버튼에 그 화면 전용 onclick·표시상태를 임시로 얹어두는데,
+  // 여기서 정리해 두지 않으면 다음에 일반 사건 인쇄를 열었을 때도 남아서 같이
+  // 실행되거나 버튼이 숨겨진 채로 남는다.
   const portraitBtn = document.getElementById('printPortraitBtn');
-  if(portraitBtn) portraitBtn.onclick = null;
+  const landscapeBtn = document.getElementById('printLandscapeBtn');
+  if(portraitBtn){ portraitBtn.onclick = null; portraitBtn.style.display = ''; }
+  if(landscapeBtn){ landscapeBtn.onclick = null; landscapeBtn.style.display = ''; landscapeBtn.textContent = '건별내역 인쇄 (가로)'; }
   pdfFilenameOverride = null;
 }
 
