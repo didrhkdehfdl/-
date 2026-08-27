@@ -9358,64 +9358,111 @@ async function handleCorpCardAdd(){
   });
   input.click();
 }
-// 체크된 행들을 "법인카드 사용내역서" 서식(원본은 한글(.hwp) 파일이지만, 그
-// 이진 형식은 브라우저에서 안전하게 편집할 방법이 없어 기안지/지출결의서와
-// 같은 방식 — 화면에 같은 모양으로 그려서 인쇄/PDF 저장 — 으로 대신한다)에
-// 채워서 한 장의 표로 모아 보여준다. "사용장소"·"통행여부"는 법인카드 탭에
-// 대응되는 데이터가 없어 빈칸으로 남는다.
+// 체크된 행들을 "법인카드 사용내역서" 서식에 채운다. 원본은 한글(.hwp)
+// 이진 파일이라 브라우저에서 그 파일 자체를 안전하게 편집할 방법은 없어서,
+// 원본에 내장돼있던 미리보기 이미지(PrvImage 스트림)를 직접 열어 확인한 실제
+// 모양대로 기안지/지출결의서와 같은 방식(화면에 같은 모양으로 그려서 인쇄·PDF
+// 저장)으로 만든다. 원본은 "한 사람이 하루에 쓴 내역"을 한 장에 담는 전표
+// 형식이라(사용일·부서·성명이 한 번만 적히고, 그 아래 사용처별 내역이 최대
+// 4줄까지 들어간다) 체크한 행들을 (날짜, 부서, 성명) 기준으로 묶어서 그룹마다
+// 전표를 한 장씩(4건 넘으면 별지로 여러 장) 만든다.
+// "사용장소"·"통행여부"는 법인카드 탭에 대응되는 데이터가 없어 빈칸으로 남는다.
 let corpCardSelectedIds = new Set();
-function buildCorpCardUsageDocHtml(rows, card){
-  const total = rows.reduce((sum,r)=> sum + (Number(r.amount)||0), 0);
-  const approvers = ['담당','부서장','전무','전무','대표'];
-  const bodyRows = rows.map((r,i)=>`
+function groupCorpCardRowsForDoc(rows){
+  const order = [];
+  const groups = new Map();
+  rows.forEach(r=>{
+    const key = `${r.date}|${r.dept}|${r.name}`;
+    if(!groups.has(key)){ groups.set(key, []); order.push(key); }
+    groups.get(key).push(r);
+  });
+  const pages = [];
+  order.forEach(key=>{
+    const items = groups.get(key);
+    for(let i=0;i<items.length;i+=4) pages.push(items.slice(i,i+4));
+  });
+  return pages;
+}
+function buildCorpCardUsageDocPage(items, card){
+  const first = items[0];
+  const total = items.reduce((sum,r)=> sum + (Number(r.amount)||0), 0);
+  const approvers = ['담 당','부서장','전 무','전 무','대 표'];
+  const corp = (items.find(r=>String(r.corp||'').trim())||{}).corp || '';
+  const carNo = (items.find(r=>String(r.carNo||'').trim())||{}).carNo || '';
+  const hipass = (items.find(r=>String(r.hipass||'').trim())||{}).hipass || '';
+  const note = (items.find(r=>String(r.note||'').trim())||{}).note || '';
+  const pad = Array.from({length:4}, (_,i)=>items[i]||null);
+  const itemRows = pad.map(r=>`
     <tr>
-      <td class="pt-center">${i+1}</td>
-      <td class="pt-center pt-nowrap">${escapeHtml(r.date)}</td>
-      <td class="pt-center">${escapeHtml(r.dept)}</td>
-      <td class="pt-center">${escapeHtml(r.name)}</td>
-      <td>${escapeHtml(r.place)}</td>
+      <td style="height:26px;">${r?escapeHtml(r.place):''}</td>
       <td></td>
-      <td>${escapeHtml(r.plantName)}</td>
-      <td>${escapeHtml(r.workDetail)}</td>
-      <td class="pt-center">${escapeHtml(r.expenseType)}</td>
-      <td class="pt-num">${fmtNum(r.amount)}</td>
-      <td class="pt-note">${escapeHtml(r.note)}</td>
-      <td class="pt-center pt-nowrap">${escapeHtml(r.corp)}${r.carNo?(' / '+escapeHtml(r.carNo)):''}</td>
-      <td class="pt-center">${escapeHtml(r.hipass)}</td>
-      <td></td>
+      <td>${r?escapeHtml(r.plantName):''}</td>
+      <td>${r?escapeHtml(r.workDetail):''}</td>
+      <td class="pt-center">${r?escapeHtml(r.expenseType):''}</td>
+      <td class="pt-num">${r&&r.amount?fmtNum(r.amount):''}</td>
     </tr>`).join('');
+  const cellB = 'border:1px solid #000; padding:4px 6px; font-size:11.5px;';
+  const labelB = cellB + 'background:#fff; text-align:center; font-weight:600;';
   return `
-  <div class="print-page doc-page portrait">
-    <div style="text-align:center; font-size:22px; font-weight:700; letter-spacing:8px; margin-bottom:14px;">법인카드 사용내역서</div>
-    <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:10px;">
-      <div style="font-size:13px;">카드No : ${escapeHtml(card.cardNumber||'')}</div>
-      <table style="border-collapse:collapse;">
-        <tr>${approvers.map(a=>`<td style="border:1px solid #000; width:66px; height:20px; text-align:center; font-size:11px; background:#f2f2f2;">${a}</td>`).join('')}</tr>
-        <tr>${approvers.map(()=>`<td style="border:1px solid #000; height:44px;"></td>`).join('')}</tr>
-      </table>
-    </div>
-    <table class="print-table">
+  <div class="print-page doc-page portrait" style="font-family:'Noto Sans KR', sans-serif; color:#000;">
+    <table style="border-collapse:collapse; width:100%; margin-bottom:10px;">
+      <tr>
+        <td style="border:none; vertical-align:bottom; padding-bottom:4px;">
+          <div style="font-size:24px; font-weight:700; text-decoration:underline; text-underline-offset:4px;">법인카드 사용내역서</div>
+        </td>
+        <td style="border:none; width:340px;">
+          <table style="border-collapse:collapse; width:100%;">
+            <tr>${approvers.map(a=>`<td style="${labelB} width:20%;">${a}</td>`).join('')}</tr>
+            <tr>${approvers.map(()=>`<td style="${cellB} height:40px;"></td>`).join('')}</tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+    <div style="font-size:13px; margin-bottom:8px;">카드No : ${escapeHtml(card.cardNumber||'')}</div>
+
+    <table style="border-collapse:collapse; width:100%; margin-bottom:0;">
+      <tr>
+        <td style="${labelB} width:11%;">사용일</td>
+        <td style="${cellB} width:22%;">${escapeHtml(first.date)}</td>
+        <td style="${labelB} width:9%;">부서</td>
+        <td style="${cellB} width:20%;">${escapeHtml(first.dept)}</td>
+        <td style="${labelB} width:13%;">성명/직급</td>
+        <td style="${cellB} width:25%;">${escapeHtml(first.name)}</td>
+      </tr>
+    </table>
+    <table class="print-table" style="margin-top:-1px;">
+      <colgroup>
+        <col style="width:15%;"><col style="width:15%;"><col style="width:18%;"><col style="width:18%;"><col style="width:17%;"><col style="width:17%;">
+      </colgroup>
       <thead>
-        <tr>
-          <th style="width:26px;">순번</th><th>사용일</th><th>부서</th><th>성명/직급</th><th>사용처</th><th>사용장소</th>
-          <th>사업명<br>(발전소명)</th><th>업무내용</th><th>지출내역</th><th>금액</th><th>비고</th>
-          <th>업무법인<br>차량번호</th><th>하이패스</th><th>통행여부</th>
-        </tr>
+        <tr><th>사용처</th><th>사용장소</th><th>사업명(발전소명)</th><th>업무내용</th><th>지출내역</th><th>금&nbsp;&nbsp;액</th></tr>
       </thead>
       <tbody>
-        ${bodyRows}
+        ${itemRows}
         <tr>
-          <td colspan="9" class="pt-center" style="font-weight:700;">합 계</td>
-          <td class="pt-num" style="font-weight:700;">${fmtNum(total)}</td>
-          <td colspan="4"></td>
+          <td style="${labelB} text-align:center;">비 고</td>
+          <td colspan="3" style="${cellB}">${escapeHtml(note)}</td>
+          <td style="${labelB} background:#ddd;">합 계</td>
+          <td style="${cellB} text-align:right; font-weight:700;">${fmtNum(total)}</td>
+        </tr>
+        <tr>
+          <td style="${labelB}">업무법인<br>차량번호</td>
+          <td style="${cellB} text-align:center;">${escapeHtml(corp)}${carNo?(' / '+escapeHtml(carNo)):''}</td>
+          <td colspan="2" style="${labelB}">하이패스<br>통행여부</td>
+          <td style="${cellB} text-align:center;">${escapeHtml(hipass)}</td>
+          <td style="${cellB} background:#ddd; font-size:10px; text-align:center;">※ 하이패스 법인카드<br>사용 시 O / X 기입 必</td>
         </tr>
       </tbody>
     </table>
-    <div style="font-size:10.5px; color:#333; margin-top:10px; line-height:1.8;">
-      ※ 하이패스 법인카드 사용 시 O / X 기입 必<br>
+
+    <div style="border:1px solid #000; border-top:none; min-height:480px; padding:8px;"></div>
+    <div style="text-align:center; font-size:11.5px; color:#000; margin-top:10px;">
       ※ 영수증 첨부 및 추가 상세 내용 기입(부족 시 별지 사용)
     </div>
   </div>`;
+}
+function buildCorpCardUsageDocHtml(rows, card){
+  return groupCorpCardRowsForDoc(rows).map(items=>buildCorpCardUsageDocPage(items, card)).join('');
 }
 function openCorpCardUsageDocPrint(rows, card){
   const html = buildCorpCardUsageDocHtml(rows, card);
