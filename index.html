@@ -9334,6 +9334,12 @@ async function renderCorpCardMain(){
     <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
       카드마다 "법인카드 사용 관리대장" 엑셀을 양식으로 한 번 올려두면, 월을 골라 그 달 사용내역만 입력할 수 있고 같은 모양으로 다시 엑셀로 내보낼 수 있습니다.
     </p>
+    ${countCorpCard2025Dates()>0 ? `
+    <div style="display:flex; align-items:center; gap:10px; padding:10px 14px; border-radius:8px; background:rgba(224,163,57,.1); border:1px solid var(--gold-dim); margin-bottom:14px;">
+      <span style="font-size:12.5px; color:var(--gold);">⚠ 연도가 2025년으로 잘못 표시된 항목이 ${fmtNum(countCorpCard2025Dates())}건 있습니다.</span>
+      <button id="corpCardFix2025Btn" style="margin-left:auto; padding:7px 12px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; font-size:12px; font-weight:600;">2026년으로 일괄 수정</button>
+    </div>
+    ` : ''}
     <div style="margin-bottom:10px;">
       <div style="display:grid; grid-template-columns:repeat(13, minmax(0,1fr)); gap:8px;">
         ${s.cards.map(c => `<button class="corpcard-tab-btn" data-id="${c.id}" style="padding:8px 6px; border-radius:7px; border:1px solid ${c.id===s.activeCardId?'var(--gold)':'var(--line)'}; background:${c.id===s.activeCardId?'rgba(224,163,57,.12)':'transparent'}; color:${c.id===s.activeCardId?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">💳 ${escapeHtml(c.label||c.cardNumber)}</button>`).join('')}
