@@ -10042,6 +10042,378 @@ async function patchCorpCardTemplate(masterArrayBuffer, months, rowsByMonth){
   return { blob };
 }
 
+// ---------- 차량관리 (차량운행일지) ----------
+// 여러 차량이 한 파일에 시트별로 들어있는 "차량운행일지" 양식을 한 번만
+// 올려두면, 차량별로 탭을 나눠 운행 기록을 입력하고 같은 모양으로 다시
+// 엑셀로 내보낼 수 있다 — 법인카드 탭과 같은 방식(양식 저장 → 표 입력 →
+// JSZip으로 원본 서식에 값만 채워 넣기)을 그대로 따른다.
+const VEHICLE_LIST_KEY = 'vehicle-list';
+const VEHICLE_TEMPLATE_META_KEY = 'vehicle-template-meta';
+const VEHICLE_TEMPLATE_B64_KEY = 'vehicle-template-b64';
+const VEHICLE_COLUMNS = [
+  ['date','운행일자'], ['kmBefore','운행전(Km)'], ['kmAfter','운행후(Km)'],
+  ['purpose','방문업체 및 운행목적'], ['driver','운행자'],
+  ['fuelCost','주유비'], ['hipass','하이패스 통행여부'], ['note','비고'],
+];
+// 원본 양식에서 실제 값이 들어가는 열 — 월(A)/일(C)은 운행일자에서 뽑아 쓰고,
+// 거리(I)는 운행전·운행후로 자동 계산해서 채운다. B/D/F/H/J/W열에는 "월"/"일"/
+// "Km"/"원" 같은 고정 단위 글자가 이미 인쇄돼 있어 절대 건드리지 않는다.
+const VEHICLE_ROW_START = 8;
+const VEHICLE_ROW_END = 32; // 서식이 갖춰진 마지막 데이터 행(총 25건)
+
+let vehicleState = { vehicles:[], activeVehicleId:'', rowsByVehicle:{}, loaded:false, loading:false };
+let vehicleTemplate = null; // { buffer, fileName, savedAt }
+
+function newVehicleRow(){
+  const row = { id: rid() };
+  VEHICLE_COLUMNS.forEach(([f])=>{ row[f] = (f==='kmBefore'||f==='kmAfter'||f==='fuelCost') ? 0 : (f==='date' ? isoDate(new Date()) : ''); });
+  return row;
+}
+function vehicleDistance(row){
+  return Math.max(0, (Number(row.kmAfter)||0) - (Number(row.kmBefore)||0));
+}
+async function ensureVehicleLoaded(){
+  if(vehicleState.loaded || vehicleState.loading) return;
+  vehicleState.loading = true;
+  try{
+    const listText = await loadFileFromStorage(VEHICLE_LIST_KEY);
+    const saved = listText ? JSON.parse(listText) : null;
+    vehicleState.vehicles = (saved && saved.vehicles) || [];
+    vehicleState.activeVehicleId = (saved && saved.activeVehicleId) || (vehicleState.vehicles[0] ? vehicleState.vehicles[0].id : '');
+    for(const v of vehicleState.vehicles){
+      const rowsText = await loadFileFromStorage('vehicle-rows:'+v.id);
+      vehicleState.rowsByVehicle[v.id] = rowsText ? JSON.parse(rowsText) : [];
+    }
+    const metaText = await loadFileFromStorage(VEHICLE_TEMPLATE_META_KEY);
+    const meta = metaText ? JSON.parse(metaText) : null;
+    if(meta){
+      const b64 = await loadFileFromStorage(VEHICLE_TEMPLATE_B64_KEY, 30000);
+      if(b64) vehicleTemplate = { buffer: base64ToArrayBuffer(b64), fileName: meta.fileName, savedAt: meta.savedAt };
+    }
+  }catch(e){ console.error('차량관리 목록 불러오기 실패', e); }
+  vehicleState.loaded = true;
+  vehicleState.loading = false;
+}
+async function saveVehicleList(){
+  await saveFileToStorage(VEHICLE_LIST_KEY, JSON.stringify({ vehicles: vehicleState.vehicles, activeVehicleId: vehicleState.activeVehicleId }));
+}
+async function saveVehicleRows(vehicleId){
+  await saveFileToStorage('vehicle-rows:'+vehicleId, JSON.stringify(vehicleState.rowsByVehicle[vehicleId]||[]));
+}
+async function saveVehicleTemplateFile(buffer, fileName){
+  const savedAt = new Date().toISOString();
+  await saveFileToStorage(VEHICLE_TEMPLATE_B64_KEY, arrayBufferToBase64(buffer), 30000);
+  await saveFileToStorage(VEHICLE_TEMPLATE_META_KEY, JSON.stringify({ fileName, savedAt }));
+  vehicleTemplate = { buffer, fileName, savedAt };
+}
+// 차량운행일지 워크북에서 "총합" 시트를 빼고, "NN. 차량번호" 형식의 시트마다
+// 차량번호(시트 이름에서 번호 접두어를 뗀 부분)·담당자(L4)를 찾는다.
+function parseVehicleWorkbookMeta(wb){
+  const vehicles = [];
+  wb.SheetNames.forEach(sheetName=>{
+    const m = sheetName.match(/^\d+\.\s*(.+)$/);
+    if(!m) return; // "총합" 같은 요약 시트는 건너뜀
+    const ws = wb.Sheets[sheetName];
+    const managerCell = ws['L4'];
+    const managerRaw = managerCell ? String(managerCell.v||'') : '';
+    const manager = managerRaw.replace(/^담당자\s*[:：]\s*/,'').trim();
+    vehicles.push({ sheetName, plate: m[1].trim(), manager });
+  });
+  if(!vehicles.length) return { error: '차량 시트("NN. 차량번호" 형식)를 찾지 못했습니다.' };
+  return { vehicles };
+}
+// 차량 시트의 8~32행(운행 기록)을 읽어 앱 표에 그대로 가져온다. 운행전/운행후/
+// 주유비 중 하나라도 있어야 실제 기록으로 본다(빈 예비 행은 건너뜀). 원본에는
+// 연도 정보가 없어(월/일만 있음) 현재 연도로 가정해서 날짜를 만든다.
+function parseVehicleSheetRows(ws){
+  const rows = [];
+  const curYear = new Date().getFullYear();
+  for(let r=VEHICLE_ROW_START; r<=VEHICLE_ROW_END; r++){
+    const get = (col) => { const c = ws[col+r]; return c ? c.v : undefined; };
+    const month = get('A'); const day = get('C');
+    const kmBefore = get('E'); const kmAfter = get('G'); const fuelCost = get('V');
+    const hasData = (month!==undefined&&month!=='') || (kmBefore!==undefined&&kmBefore!=='') || (fuelCost!==undefined&&fuelCost!=='');
+    if(!hasData) continue;
+    const mm = parseInt(month,10)||0, dd = parseInt(day,10)||0;
+    const date = (mm>=1&&mm<=12&&dd>=1&&dd<=31) ? `${curYear}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}` : '';
+    rows.push({
+      id: rid(), date,
+      kmBefore: parseExcelNumber(kmBefore), kmAfter: parseExcelNumber(kmAfter),
+      purpose: String(get('K')||'').trim(), driver: String(get('S')||'').trim(),
+      fuelCost: parseExcelNumber(fuelCost), hipass: String(get('X')||'').trim(), note: String(get('Z')||'').trim(),
+    });
+  }
+  return rows;
+}
+async function handleVehicleTemplateAdd(file){
+  await loadXlsxLib();
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type:'array', cellDates:true });
+  const meta = parseVehicleWorkbookMeta(wb);
+  if(meta.error){ alert(meta.error); return; }
+  meta.vehicles.forEach(v=>{
+    // 같은 차량번호로 이미 등록돼 있으면(같은 파일을 다시 올린 경우) 새로
+    // 추가하지 않고 기존 차량을 그대로 갱신한다.
+    const existing = vehicleState.vehicles.find(x=>x.plate===v.plate);
+    const id = existing ? existing.id : rid();
+    if(existing){ existing.sheetName = v.sheetName; existing.manager = v.manager; }
+    else { vehicleState.vehicles.push({ id, plate:v.plate, sheetName:v.sheetName, manager:v.manager }); }
+    vehicleState.rowsByVehicle[id] = parseVehicleSheetRows(wb.Sheets[v.sheetName]);
+  });
+  if(!vehicleState.activeVehicleId && vehicleState.vehicles.length) vehicleState.activeVehicleId = vehicleState.vehicles[0].id;
+  await saveVehicleTemplateFile(buf, file.name);
+  await saveVehicleList();
+  for(const v of meta.vehicles){
+    const veh = vehicleState.vehicles.find(x=>x.plate===v.plate);
+    if(veh) await saveVehicleRows(veh.id);
+  }
+  renderVehicleMain();
+}
+async function exportVehicleToExcel(){
+  if(!vehicleTemplate){ alert('차량운행일지 양식 파일이 없습니다.'); return; }
+  const result = await patchVehicleTemplate(vehicleTemplate.buffer, vehicleState.vehicles, vehicleState.rowsByVehicle);
+  if(result.error){ alert('엑셀을 만들지 못했습니다: ' + result.error); return; }
+  const url = URL.createObjectURL(result.blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = vehicleTemplate.fileName || `차량운행일지_${isoDate(new Date())}.xlsx`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+// 차량마다, 이미 서식이 갖춰진 데이터 칸(8행~32행)을 지금 입력된 내역으로
+// 통째로 다시 채운다. B/D/F/H/J/W열(단위 글자)은 절대 건드리지 않는다.
+async function patchVehicleTemplate(masterArrayBuffer, vehicles, rowsByVehicle){
+  await loadJSZipLib();
+  const zip = await window.JSZip.loadAsync(masterArrayBuffer);
+  const parser = new DOMParser();
+  const serializer = new XMLSerializer();
+  const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const SS_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  const capacity = VEHICLE_ROW_END - VEHICLE_ROW_START + 1;
+
+  const wbFile = zip.file('xl/workbook.xml');
+  if(!wbFile) return { error: '엑셀 구조를 인식할 수 없습니다(workbook.xml 없음).' };
+  const wbDoc = parser.parseFromString(await wbFile.async('string'), 'application/xml');
+  const relsFile = zip.file('xl/_rels/workbook.xml.rels');
+  if(!relsFile) return { error: '워크북 관계 정보를 찾을 수 없습니다.' };
+  const relsDoc = parser.parseFromString(await relsFile.async('string'), 'application/xml');
+
+  for(const vehicle of vehicles){
+    const rows = (rowsByVehicle[vehicle.id]||[]).filter(r=>r.date);
+    if(rows.length > capacity){
+      return { error: `"${vehicle.plate}" 입력 건수(${rows.length}건)가 이 양식에 이미 서식이 갖춰진 칸(${capacity}행)보다 많습니다.` };
+    }
+    const sheetEl = Array.from(wbDoc.getElementsByTagName('sheet')).find(el => el.getAttribute('name') === vehicle.sheetName);
+    if(!sheetEl) continue; // 이 통합본에 없는 차량은 건너뜀
+    const rId = sheetEl.getAttributeNS(REL_NS, 'id');
+    const relEl = Array.from(relsDoc.getElementsByTagName('Relationship')).find(el => el.getAttribute('Id') === rId);
+    if(!relEl) continue;
+    let target = (relEl.getAttribute('Target')||'').replace(/^\.?\//,'');
+    const sheetPath = target.startsWith('xl/') ? target : ('xl/' + target);
+    const sheetFile = zip.file(sheetPath);
+    if(!sheetFile) continue;
+    const sheetDoc = parser.parseFromString(await sheetFile.async('string'), 'application/xml');
+    const sheetDataEl = sheetDoc.getElementsByTagName('sheetData')[0];
+    if(!sheetDataEl) continue;
+
+    const findCell = (rowEl, col) => Array.from(rowEl.getElementsByTagName('c')).find(el => el.getAttribute('r') === col+rowEl.getAttribute('r')) || null;
+
+    for(let i=0; i<capacity; i++){
+      const rowNum = String(VEHICLE_ROW_START+i);
+      let rowEl = Array.from(sheetDataEl.getElementsByTagName('row')).find(r=>r.getAttribute('r')===rowNum);
+      if(!rowEl){
+        rowEl = sheetDoc.createElementNS(SS_NS,'row');
+        rowEl.setAttribute('r', rowNum);
+        sheetDataEl.appendChild(rowEl);
+      }
+      const row = rows[i] || null;
+      const setNum = (col, val) => {
+        let cEl = findCell(rowEl, col);
+        if(!cEl){ cEl = sheetDoc.createElementNS(SS_NS,'c'); cEl.setAttribute('r', col+rowNum); rowEl.appendChild(cEl); }
+        while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
+        cEl.removeAttribute('t');
+        if(val===null || val===undefined || val==='') return;
+        const vEl = sheetDoc.createElementNS(SS_NS,'v');
+        vEl.textContent = String(val);
+        cEl.appendChild(vEl);
+      };
+      const setText = (col, val) => {
+        let cEl = findCell(rowEl, col);
+        if(!cEl){ cEl = sheetDoc.createElementNS(SS_NS,'c'); cEl.setAttribute('r', col+rowNum); rowEl.appendChild(cEl); }
+        while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
+        if(!val){ cEl.removeAttribute('t'); return; }
+        cEl.setAttribute('t','inlineStr');
+        const isEl = sheetDoc.createElementNS(SS_NS,'is');
+        const tEl = sheetDoc.createElementNS(SS_NS,'t');
+        tEl.textContent = String(val);
+        isEl.appendChild(tEl);
+        cEl.appendChild(isEl);
+      };
+      if(row && row.date){
+        const [, mm, dd] = row.date.split('-');
+        setNum('A', parseInt(mm,10));
+        setNum('C', parseInt(dd,10));
+      } else {
+        setNum('A', ''); setNum('C', '');
+      }
+      setNum('E', row ? (Number(row.kmBefore)||'') : '');
+      setNum('G', row ? (Number(row.kmAfter)||'') : '');
+      setNum('I', row ? (vehicleDistance(row)||'') : '');
+      setText('K', row ? row.purpose : '');
+      setText('S', row ? row.driver : '');
+      setNum('V', row ? (Number(row.fuelCost)||'') : '');
+      setText('X', row ? row.hipass : '');
+      setText('Z', row ? row.note : '');
+    }
+    zip.file(sheetPath, serializer.serializeToString(sheetDoc));
+  }
+
+  let calcPr = wbDoc.getElementsByTagName('calcPr')[0];
+  if(!calcPr){ calcPr = wbDoc.createElementNS(SS_NS,'calcPr'); wbDoc.documentElement.appendChild(calcPr); }
+  calcPr.setAttribute('fullCalcOnLoad','1');
+  zip.file('xl/workbook.xml', serializer.serializeToString(wbDoc));
+  zip.file('xl/_rels/workbook.xml.rels', serializer.serializeToString(relsDoc));
+
+  const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
+  return { blob };
+}
+async function renderVehicleMain(){
+  const main = document.getElementById('main');
+  if(!vehicleState.loaded){
+    main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+    await ensureVehicleLoaded();
+    if(state.activeTab !== 'vehicle') return;
+  }
+  const s = vehicleState;
+  const activeVehicle = s.vehicles.find(v=>v.id===s.activeVehicleId);
+  const rows = activeVehicle ? (s.rowsByVehicle[activeVehicle.id]||[]) : [];
+
+  main.innerHTML = `
+    <h2 class="section-title">차량관리</h2>
+    <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
+      "차량운행일지" 엑셀을 양식으로 한 번 올려두면, 차량별로 탭을 나눠 운행 기록을 입력할 수 있고 같은 모양으로 다시 엑셀로 내보낼 수 있습니다.
+    </p>
+    <div style="margin-bottom:10px;">
+      <input type="file" id="vehicleTemplateFile" accept=".xlsx,.xls" style="display:none;">
+      <div style="display:grid; grid-template-columns:repeat(13, minmax(0,1fr)); gap:8px;">
+        ${s.vehicles.map(v => `<button class="vehicle-tab-btn" data-id="${v.id}" style="padding:8px 6px; border-radius:7px; border:1px solid ${v.id===s.activeVehicleId?'var(--gold)':'var(--line)'}; background:${v.id===s.activeVehicleId?'rgba(224,163,57,.12)':'transparent'}; color:${v.id===s.activeVehicleId?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🚗 ${escapeHtml(v.plate)}</button>`).join('')}
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+        <button id="vehicleAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12.5px;">${vehicleTemplate ? '+ 차량운행일지 다시 올리기(갱신)' : '+ 차량운행일지 올리기'}</button>
+        ${activeVehicle ? `<button id="vehicleDelBtn" style="margin-left:auto; padding:8px 14px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">이 차량 목록에서 제거</button>` : ''}
+      </div>
+    </div>
+    ${!activeVehicle ? `<div class="empty-side">등록된 차량이 없습니다. "차량운행일지 올리기"로 엑셀을 올려주세요.</div>` : `
+    <div style="font-size:12px; color:var(--muted); margin-bottom:14px;">차량번호: ${escapeHtml(activeVehicle.plate)}${activeVehicle.manager?` · 담당자: ${escapeHtml(activeVehicle.manager)}`:''} · 양식 파일: ${escapeHtml(vehicleTemplate?vehicleTemplate.fileName:'')}</div>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+      <button id="vehicleAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
+      <button id="vehicleExportBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기(전체 차량)</button>
+    </div>
+    <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">총 ${rows.length}건 · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다</div>
+    <div class="table-wrap table-wrap-frozen" id="vehicleTableWrap">
+      <table style="border-collapse:collapse; min-width:1200px; font-size:12px;">
+        <thead><tr>
+          <th style="padding:6px 4px; color:var(--muted); position:sticky; left:0; background:var(--panel-2); width:36px;">순번</th>
+          <th style="padding:6px 4px; color:var(--muted); width:110px;">운행일자</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">운행전(Km)</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">운행후(Km)</th>
+          <th style="padding:6px 4px; color:var(--muted); width:80px;">거리(Km)</th>
+          <th style="padding:6px 4px; color:var(--muted); width:220px;">방문업체 및 운행목적</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">운행자</th>
+          <th style="padding:6px 4px; color:var(--muted); width:100px;">주유비</th>
+          <th style="padding:6px 4px; color:var(--muted); width:80px;">하이패스<br>통행여부</th>
+          <th style="padding:6px 4px; color:var(--muted); width:160px;">비고</th>
+          <th style="padding:6px 4px; color:var(--muted);">삭제</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((row,i)=>{
+            const dist = vehicleDistance(row);
+            return `
+            <tr data-id="${row.id}">
+              <td style="padding:5px 4px; text-align:center; position:sticky; left:0; background:var(--panel-2);">${i+1}</td>
+              <td style="padding:3px 4px;"><input type="date" class="vehicle-f" data-id="${row.id}" data-field="date" value="${escapeHtml(row.date)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" inputmode="numeric" class="vehicle-f vehicle-num" data-id="${row.id}" data-field="kmBefore" value="${row.kmBefore?Number(row.kmBefore).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right;"></td>
+              <td style="padding:3px 4px;"><input type="text" inputmode="numeric" class="vehicle-f vehicle-num" data-id="${row.id}" data-field="kmAfter" value="${row.kmAfter?Number(row.kmAfter).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right;"></td>
+              <td style="padding:5px 4px; text-align:right; color:var(--muted);">${dist?fmtNum(dist):''}</td>
+              <td style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="purpose" value="${escapeHtml(row.purpose)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="driver" value="${escapeHtml(row.driver)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" inputmode="numeric" class="vehicle-f vehicle-num" data-id="${row.id}" data-field="fuelCost" value="${row.fuelCost?Number(row.fuelCost).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="hipass" value="${escapeHtml(row.hipass)}" style="width:100%; text-align:center;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" style="width:100%;"></td>
+              <td style="padding:5px 4px; text-align:center;"><button class="vehicle-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button></td>
+            </tr>
+          `;}).join('')}
+        </tbody>
+      </table>
+    </div>
+    `}
+  `;
+
+  main.querySelectorAll('.vehicle-tab-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      s.activeVehicleId = btn.dataset.id;
+      await saveVehicleList();
+      renderVehicleMain();
+    });
+  });
+  const addBtn = document.getElementById('vehicleAddBtn');
+  if(addBtn) addBtn.addEventListener('click', ()=> document.getElementById('vehicleTemplateFile').click());
+  const fileInp = document.getElementById('vehicleTemplateFile');
+  if(fileInp) fileInp.addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    try{
+      await handleVehicleTemplateAdd(file);
+    }catch(err){
+      console.error(err);
+      alert('파일을 읽지 못했습니다: '+err.message);
+    }
+    e.target.value = '';
+  });
+  const delBtn = document.getElementById('vehicleDelBtn');
+  if(delBtn) delBtn.addEventListener('click', async ()=>{
+    if(!confirm(`"${activeVehicle.plate}" 차량을 목록에서 제거할까요? (원본 엑셀 파일이 지워지는 건 아니고, 앱에 입력해둔 내역만 함께 사라집니다)`)) return;
+    s.vehicles = s.vehicles.filter(v=>v.id!==activeVehicle.id);
+    delete s.rowsByVehicle[activeVehicle.id];
+    s.activeVehicleId = s.vehicles[0] ? s.vehicles[0].id : '';
+    await saveVehicleList();
+    renderVehicleMain();
+  });
+  if(!activeVehicle) return;
+  setupStickyHScroll('vehicleTableWrap', 'vehicleStickyScroll');
+  const addRowBtn = document.getElementById('vehicleAddRowBtn');
+  if(addRowBtn) addRowBtn.addEventListener('click', async ()=>{
+    s.rowsByVehicle[activeVehicle.id] = s.rowsByVehicle[activeVehicle.id] || [];
+    s.rowsByVehicle[activeVehicle.id].push(newVehicleRow());
+    await saveVehicleRows(activeVehicle.id);
+    renderVehicleMain();
+  });
+  const exportBtn = document.getElementById('vehicleExportBtn');
+  if(exportBtn) exportBtn.addEventListener('click', exportVehicleToExcel);
+  main.querySelectorAll('.vehicle-f').forEach(el=>{
+    el.addEventListener('change', async ()=>{
+      const row = rows.find(r=>r.id===el.dataset.id);
+      if(!row) return;
+      const field = el.dataset.field;
+      if(el.classList.contains('vehicle-num')){
+        row[field] = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
+        renderVehicleMain();
+      } else {
+        row[field] = el.value.trim();
+      }
+      await saveVehicleRows(activeVehicle.id);
+    });
+  });
+  main.querySelectorAll('.vehicle-del-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 행을 삭제할까요?')) return;
+      s.rowsByVehicle[activeVehicle.id] = rows.filter(r=>r.id!==btn.dataset.id);
+      await saveVehicleRows(activeVehicle.id);
+      renderVehicleMain();
+    });
+  });
+}
+
 function renderImportMain(){
   const main = document.getElementById('main');
   // 체크박스 하나 누를 때마다 표 전체를 다시 그리는데, innerHTML을 통째로
