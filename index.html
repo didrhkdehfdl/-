@@ -7698,35 +7698,6 @@ async function renderHistoryMain(){
 // 이를 위해 openpyxl/SheetJS로 통째로 열었다 다시 쓰는 대신, ZIP(xlsx) 내부의
 // 해당 시트 XML 한 파일만 문자열 수준에서 직접 수정한다 (SheetJS로 통합본 전체를
 // 다시 저장하면 외부링크가 깨진다는 게 확인된 사실이라 이 방식을 쓴다).
-function ledgerParseAoa(aoa){
-  const headerIdx = aoa.findIndex(row => row && String(row[1]||'').replace(/\s/g,'')==='날짜' && String(row[3]||'').replace(/\s/g,'')==='성명');
-  if(headerIdx < 0) return { error: '관리대장 시트에서 헤더 행(날짜/성명 등)을 찾지 못했습니다. 시트를 다시 확인해주세요.' };
-  const dataRows = [];
-  for(let i=headerIdx+1;i<aoa.length;i++){
-    const row = aoa[i] || [];
-    const dateVal = row[1], nameVal = row[3];
-    const dateEmpty = dateVal===undefined || dateVal===null || dateVal==='';
-    const nameEmpty = nameVal===undefined || nameVal===null || nameVal==='';
-    if(dateEmpty && nameEmpty) break; // 데이터 끝
-    if(dateEmpty) continue; // 빈 줄은 건너뜀
-    dataRows.push(row);
-  }
-  if(dataRows.length===0) return { error: '관리대장 시트에서 실제 사용 내역을 찾지 못했습니다.' };
-  return { dataRows };
-}
-function ledgerRowToEntry(row){
-  const dateVal = row[1];
-  const dateObj = (dateVal instanceof Date) ? dateVal : null;
-  // SheetJS의 cellDates 옵션은 엑셀 날짜(시간대 없는 달력 날짜)를 Date.UTC 기준으로
-  // 만든다. 여기서 로컬시간 getter(getDate 등)를 쓰면 브라우저가 UTC보다 느린
-  // 시간대일 때 하루가 앞으로 당겨진다 — 반드시 UTC getter로 읽어야 한다.
-  const dayNum = dateObj ? dateObj.getUTCDate() : (parseInt(String(dateVal).trim().split(/[-.\/]/).pop(),10) || '');
-  const isoD = dateObj ? isoDateUTC(dateObj) : normalizeDotDate(dateVal);
-  const amount = Math.round(Number(row[13])||0);
-  // 통합본 B~Q열에 그대로 옮겨쓸 16개 값 (B=날짜(일자만), C~Q=원본 그대로)
-  const block = [dayNum, ...row.slice(2,17)];
-  return { isoDate: isoD, amount, block, display: { date:isoD, name:row[3], place:row[8], work:row[9], item:row[10], amount } };
-}
 function isoDateUTC(d){
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
 }
@@ -7762,16 +7733,6 @@ function normalizeDotDate(s){
   const m = String(s||'').trim().match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
   if(!m) return String(s||'');
   return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-}
-function findCardNumberInAoa(aoa){
-  for(const row of aoa){
-    for(const cell of (row||[])){
-      const s = String(cell||'');
-      const m = s.match(/\d{4}-\d{4}-\d{4}-\d{4}/);
-      if(m) return m[0];
-    }
-  }
-  return '';
 }
 function cardParts(full){
   const m = String(full||'').trim().match(/^(\d{4})-(\d{4})-(\d{4})-(\d{4})$/);
