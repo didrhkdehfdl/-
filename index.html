@@ -9203,6 +9203,7 @@ async function handleCorpCardAdd(){
       await saveCorpCardTemplate(id, buf, file.name, meta.months);
       await saveCorpCardList();
       await saveCorpCardRows(id);
+      recomputeCorpCardMismatches();
       renderCorpCardMain();
     }catch(err){
       console.error(err);
