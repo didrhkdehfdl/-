@@ -10277,6 +10277,17 @@ function newVehicleRow(){
 function vehicleDistance(row){
   return Math.max(0, (Number(row.kmAfter)||0) - (Number(row.kmBefore)||0));
 }
+// 법인카드 탭과 같은 방식 — 비고를 뺀 나머지 칸이 비어있으면 그 칸마다
+// "빈칸을 채워주세요" 문구를 붙여서 돌려준다.
+function vehicleRowIssues(row){
+  const issues = {};
+  const requiredFields = ['date','kmBefore','kmAfter','purpose','driver','fuelCost','hipass'];
+  requiredFields.forEach(f=>{
+    const empty = (f==='kmBefore'||f==='kmAfter'||f==='fuelCost') ? (!row[f] || Number(row[f])===0) : !String(row[f]||'').trim();
+    if(empty) issues[f] = '빈칸을 채워주세요';
+  });
+  return issues;
+}
 async function ensureVehicleLoaded(){
   if(vehicleState.loaded || vehicleState.loading) return;
   vehicleState.loading = true;
