@@ -9043,6 +9043,40 @@ function newCorpCardRow(){
   CORP_CARD_COLUMNS.forEach(([f])=>{ row[f] = f==='amount' ? 0 : (f==='date' ? isoDate(new Date()) : ''); });
   return row;
 }
+// 행 하나를 검사해서 문제가 있는 칸마다 "왜 문제인지" 메시지를 담아 돌려준다.
+// 승인내역 대사 결과(mm)와 필수 입력칸 공백, "점심"으로 잘못 적은 지출내역까지
+// 한 곳에서 합쳐서 판단해야, 화면에서는 행 전체를 빨간줄로 칠하는 기준과
+// 칸마다 보여주는 안내문구가 서로 어긋나지 않는다.
+function corpCardRowIssues(row, mm){
+  const issues = {};
+  const requiredFields = ['date','dept','name','place','workDetail','expenseType','amount'];
+  requiredFields.forEach(f=>{
+    const empty = f==='amount' ? (!row.amount || Number(row.amount)===0) : !String(row[f]||'').trim();
+    if(empty) issues[f] = '빈칸을 채워주세요';
+  });
+  if(!issues.expenseType && String(row.expenseType||'').trim()==='점심') issues.expenseType = '"식대"로 수정해주세요';
+  if(mm){
+    if(mm.reason==='no_match'){
+      issues.date = issues.date || '승인내역 없음(날짜·금액 확인)';
+      issues.amount = issues.amount || '승인내역 없음(날짜·금액 확인)';
+    } else if(mm.reason==='place'){
+      issues.place = issues.place || `승인내역: ${mm.approvalPlace}`;
+    }
+  }
+  return issues;
+}
+// 순번 칸의 ▲▼를 눌러 그 행을 바로 위/아래 행과 자리를 바꾼다(정렬 기준 없이
+// 화면에 보이는 순서를 사용자가 직접 손으로 조정할 수 있게).
+function moveCorpCardRow(cardId, month, rowId, dir){
+  const arr = corpCardState.rowsByCard[cardId] && corpCardState.rowsByCard[cardId][month];
+  if(!arr) return false;
+  const idx = arr.findIndex(r=>r.id===rowId);
+  if(idx<0) return false;
+  const swapIdx = dir==='up' ? idx-1 : idx+1;
+  if(swapIdx<0 || swapIdx>=arr.length) return false;
+  [arr[idx], arr[swapIdx]] = [arr[swapIdx], arr[idx]];
+  return true;
+}
 // 원본 엑셀을 불러올 때 연도가 2025로 잘못 인식된 행이 있으면(파싱 문제인지
 // 원본 데이터 자체 문제인지는 확실치 않지만, 이미 들어온 데이터는 되돌릴 방법이
 // 없으므로) 사용자가 직접 확인하고 눌렀을 때만 2026년으로 한꺼번에 옮겨준다.
