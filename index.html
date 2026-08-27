@@ -9398,12 +9398,15 @@ async function ensureCorpCardLoaded(){
     const saved = listText ? JSON.parse(listText) : null;
     corpCardState.cards = (saved && saved.cards) || [];
     corpCardState.activeCardId = (saved && saved.activeCardId) || (corpCardState.cards[0] ? corpCardState.cards[0].id : '');
-    // 아직 종류(공용/개인불출)가 지정 안 된 카드는 끝 4자리 목록을 기준으로
-    // 한 번만 분류해서 저장해둔다(다음부터는 그대로 유지).
+    // 종류가 아직 없거나, 끝 4자리가 지정 목록(공용/안전)에 있는데 실제
+    // 분류가 그와 다르면(예: 안전카드 목록이 나중에 추가된 경우) 다시
+    // 맞춰준다 — 그 외 카드는 이미 정해둔 종류를 그대로 둔다.
     let categoryChanged = false;
     corpCardState.cards.forEach(card=>{
-      if(!card.category){
-        card.category = corpCardDefaultCategory(card.label);
+      const expected = corpCardDefaultCategory(card.label);
+      const shouldFix = !card.category || (expected!=='personal' && card.category!==expected);
+      if(shouldFix){
+        card.category = expected;
         categoryChanged = true;
       }
     });
