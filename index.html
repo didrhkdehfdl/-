@@ -10482,6 +10482,29 @@ function vehicleRowIssues(row){
   });
   return issues;
 }
+// 어떤 행에 km는 적혀있는데 날짜가 비어있을 때, 표 위아래의 날짜 적힌 행을
+// 찾아 "18~27일 사이"처럼 대략적인 기간을 짐작해서 알림 기본 문구에 넣어준다.
+function vehicleGuessDateRange(rows, idx){
+  const parseYmd = d => /^\d{4}-\d{2}-\d{2}$/.test(d||'') ? d : null;
+  let before = null, after = null;
+  for(let i=idx-1;i>=0;i--){ const d=parseYmd(rows[i].date); if(d){ before=d; break; } }
+  for(let i=idx+1;i<rows.length;i++){ const d=parseYmd(rows[i].date); if(d){ after=d; break; } }
+  if(!before && !after) return null;
+  if(before && after){
+    const [,bm,bd] = before.split('-');
+    const [,am,ad] = after.split('-');
+    if(bm===am) return `${Number(bm)}월 ${Number(bd)}~${Number(ad)}일 사이`;
+    return `${Number(bm)}월 ${Number(bd)}일 ~ ${Number(am)}월 ${Number(ad)}일 사이`;
+  }
+  if(before){ const [,bm,bd]=before.split('-'); return `${Number(bm)}월 ${Number(bd)}일 이후`; }
+  const [,am,ad]=after.split('-');
+  return `${Number(am)}월 ${Number(ad)}일 이전`;
+}
+function vehicleDateLabelForNotify(rows, row){
+  if(row.date) return row.date;
+  const guess = vehicleGuessDateRange(rows, rows.indexOf(row));
+  return guess ? `날짜 미입력(${guess}로 추정)` : '날짜 미입력';
+}
 async function ensureVehicleLoaded(){
   if(vehicleState.loaded || vehicleState.loading) return;
   vehicleState.loading = true;
@@ -10964,7 +10987,7 @@ async function renderVehicleMain(){
       }).join(', ');
       openNotifySendOverlay(
         { title: `${activeVehicle.plate} 운행기록 확인`, id: null },
-        `${activeVehicle.plate} 차량 ${row.date||'날짜 미입력'} 운행기록에 빈칸이 있습니다: ${missing}`
+        `${activeVehicle.plate} 차량 ${vehicleDateLabelForNotify(rows, row)} 운행기록에 빈칸이 있습니다: ${missing}`
       );
     });
   });
