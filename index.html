@@ -12669,6 +12669,7 @@ fbAuth.onAuthStateChanged(async (user) => {
     const approved = data.approved === true;
     const rejected = data.rejected === true;
     if(approved){
+      currentUserName = data.name || '';
       startApp(Array.isArray(data.allowedTabs) ? data.allowedTabs : null);
       setupUserPushNotifications(user);
     } else {
