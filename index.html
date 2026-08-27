@@ -11000,7 +11000,7 @@ async function renderVehicleMain(){
         const col = VEHICLE_COLUMNS.find(c=>c[0]===f);
         return col ? col[1] : f;
       }).join(', ');
-      return `${i+1}번(${row.date||'날짜 미입력'}): ${missing}`;
+      return `${i+1}번(${vehicleDateLabelForNotify(rows, row)}): ${missing}`;
     }).filter(Boolean);
     openNotifySendOverlay(
       { title: `${activeVehicle.plate} 운행기록 확인`, id: null },
