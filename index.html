@@ -9049,7 +9049,7 @@ async function ensureCorpCardLoaded(){
     const activeCard = corpCardState.cards.find(c=>c.id===corpCardState.activeCardId);
     if(activeCard){
       const tmpl = corpCardTemplates[activeCard.id];
-      if(!corpCardState.activeMonth) corpCardState.activeMonth = (tmpl && tmpl.months[0]) || '';
+      if(!corpCardState.activeMonth) corpCardState.activeMonth = pickDefaultCorpCardMonth(tmpl && tmpl.months);
     }
     const approvalText = await loadFileFromStorage(CORP_CARD_APPROVAL_KEY, 30000);
     corpCardState.approvalEntries = approvalText ? JSON.parse(approvalText) : [];
@@ -9250,7 +9250,7 @@ async function handleCorpCardAdd(){
         corpCardState.rowsByCard[id][monthName] = parseCorpCardMonthRows(wb.Sheets[monthName]);
       });
       corpCardState.activeCardId = id;
-      corpCardState.activeMonth = meta.months[0] || '';
+      corpCardState.activeMonth = pickDefaultCorpCardMonth(meta.months);
       await saveCorpCardTemplate(id, buf, file.name, meta.months);
       await saveCorpCardList();
       await saveCorpCardRows(id);
@@ -9379,7 +9379,7 @@ async function renderCorpCardMain(){
     btn.addEventListener('click', async ()=>{
       s.activeCardId = btn.dataset.id;
       const tmpl2 = corpCardTemplates[s.activeCardId];
-      s.activeMonth = (tmpl2 && tmpl2.months[0]) || '';
+      s.activeMonth = pickDefaultCorpCardMonth(tmpl2 && tmpl2.months);
       await saveCorpCardList();
       renderCorpCardMain();
     });
