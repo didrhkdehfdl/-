@@ -260,6 +260,41 @@
     .agentdoc-table td input, .agentdoc-table td select{ flex:1; min-width:0; }
     .agentdoc-table td[data-label="작업"]{ flex-wrap:wrap; row-gap:4px; }
   }
+  /* 차량관리 표는 칸이 많고 입력칸이 촘촘해서 휴대폰에서는 좌우로 계속
+     밀어야 입력할 수 있었다 — 이 너비부터는 행 하나를 카드 하나로 세로로
+     쌓고, 순번·삭제 버튼만 카드 맨 위 한 줄에 나란히 놓고 나머지 입력칸은
+     라벨과 함께 한 줄씩 쌓아서(agentdoc-table과 같은 방식) 손가락으로 바로
+     입력할 수 있게 한다. 글자 크기도 15px 이상으로 키워서 iOS에서 입력칸을
+     누를 때 화면이 확대되지 않게 한다. */
+  @media (max-width: 760px){
+    #vehicleTableWrap{ max-height:none; overflow-y:visible; }
+    #vehicleStickyScroll{ display:none; }
+    .vehicle-table{ display:block; width:100% !important; min-width:0 !important; }
+    .vehicle-table thead{ display:none; }
+    .vehicle-table tbody{ display:block; }
+    .vehicle-table tr{
+      display:flex; flex-wrap:wrap; align-items:flex-start; width:100%;
+      margin-bottom:12px; padding:10px 12px; border:1px solid var(--line);
+      border-radius:10px; background:var(--panel-2);
+    }
+    .vehicle-table td{
+      flex:1 0 100%; display:flex; align-items:flex-start; gap:10px;
+      width:100% !important; padding:6px 0 !important; border-bottom:none;
+      font-size:13px; position:static !important; background:transparent !important;
+    }
+    .vehicle-table td:first-child{
+      flex:0 0 auto; order:-2; font-weight:700; color:var(--gold); font-size:15px; padding-bottom:8px !important;
+    }
+    .vehicle-table td:last-child{
+      flex:0 0 auto; order:-1; margin-left:auto; padding-bottom:8px !important;
+    }
+    .vehicle-table td[data-label]:not(:first-child):not(:last-child)::before{
+      content: attr(data-label); flex:0 0 92px; font-size:11px; color:var(--muted); white-space:normal; padding-top:9px;
+    }
+    .vehicle-table td input, .vehicle-table td select{
+      flex:1; min-width:0; font-size:15px; padding:9px 10px;
+    }
+  }
   /* ---------- Print / exact-export preview ---------- */
   #printOverlay{
     position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:80;
