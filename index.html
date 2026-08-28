@@ -10894,7 +10894,7 @@ async function saveVehicleList(){
   await saveFileToStorage(VEHICLE_LIST_KEY, JSON.stringify({ vehicles: vehicleState.vehicles, activeVehicleId: vehicleState.activeVehicleId }));
 }
 async function saveVehicleRows(vehicleId){
-  await saveFileToStorage('vehicle-rows:'+vehicleId, JSON.stringify(vehicleState.rowsByVehicle[vehicleId]||[]));
+  await saveWithGenericHistory('vehicle-rows:'+vehicleId, JSON.stringify(vehicleState.rowsByVehicle[vehicleId]||{}));
 }
 async function saveVehicleTemplateFile(buffer, fileName){
   const savedAt = new Date().toISOString();
