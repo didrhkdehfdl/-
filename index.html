@@ -10954,9 +10954,10 @@ async function handleVehicleTemplateAdd(file){
     const id = existing ? existing.id : rid();
     if(existing){ existing.sheetName = v.sheetName; existing.manager = v.manager; }
     else { vehicleState.vehicles.push({ id, plate:v.plate, sheetName:v.sheetName, manager:v.manager }); }
-    vehicleState.rowsByVehicle[id] = parseVehicleSheetRows(wb.Sheets[v.sheetName]);
+    vehicleState.rowsByVehicle[id] = groupVehicleRowsByMonth(parseVehicleSheetRows(wb.Sheets[v.sheetName]));
   });
   if(!vehicleState.activeVehicleId && vehicleState.vehicles.length) vehicleState.activeVehicleId = vehicleState.vehicles[0].id;
+  vehicleState.activeMonth = pickDefaultVehicleMonth(vehicleState.rowsByVehicle[vehicleState.activeVehicleId]);
   await saveVehicleTemplateFile(buf, file.name);
   await saveVehicleList();
   for(const v of meta.vehicles){
