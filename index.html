@@ -11329,15 +11329,51 @@ async function renderVehicleMain(){
   });
   if(!activeVehicle) return;
   setupStickyHScroll('vehicleTableWrap', 'vehicleStickyScroll');
+  const addMonthBtn = document.getElementById('vehicleAddMonthBtn');
+  if(addMonthBtn) addMonthBtn.addEventListener('click', async ()=>{
+    const input = prompt('추가할 월을 "YYYY-MM" 형식으로 입력해주세요 (예: 2026-09)', isoDate(new Date()).slice(0,7));
+    if(input===null) return;
+    const m = input.trim().match(/^(\d{4})-(\d{2})$/);
+    if(!m || Number(m[2])<1 || Number(m[2])>12){ alert('"YYYY-MM" 형식으로 입력해주세요 (예: 2026-09).'); return; }
+    const key = input.trim();
+    s.rowsByVehicle[activeVehicle.id] = s.rowsByVehicle[activeVehicle.id] || {};
+    if(!s.rowsByVehicle[activeVehicle.id][key]) s.rowsByVehicle[activeVehicle.id][key] = [];
+    s.activeMonth = key;
+    await saveVehicleRows(activeVehicle.id);
+    renderVehicleMain();
+  });
+  const deleteMonthBtn = document.getElementById('vehicleDeleteMonthBtn');
+  if(deleteMonthBtn) deleteMonthBtn.addEventListener('click', async ()=>{
+    const monthToDelete = s.activeMonth;
+    const rowCount = (s.rowsByVehicle[activeVehicle.id]?.[monthToDelete] || []).length;
+    const warn = rowCount>0 ? `이 탭에는 ${rowCount}건이 입력되어 있습니다. ` : '';
+    if(!confirm(`"${vehicleMonthLabel(monthToDelete)}" 탭을 삭제할까요? ${warn}입력된 내용도 함께 사라집니다.`)) return;
+    delete s.rowsByVehicle[activeVehicle.id][monthToDelete];
+    s.activeMonth = pickDefaultVehicleMonth(s.rowsByVehicle[activeVehicle.id]);
+    await saveVehicleRows(activeVehicle.id);
+    renderVehicleMain();
+  });
   const addRowBtn = document.getElementById('vehicleAddRowBtn');
   if(addRowBtn) addRowBtn.addEventListener('click', async ()=>{
-    s.rowsByVehicle[activeVehicle.id] = s.rowsByVehicle[activeVehicle.id] || [];
-    const arr = s.rowsByVehicle[activeVehicle.id];
+    s.rowsByVehicle[activeVehicle.id] = s.rowsByVehicle[activeVehicle.id] || {};
+    s.rowsByVehicle[activeVehicle.id][s.activeMonth] = s.rowsByVehicle[activeVehicle.id][s.activeMonth] || [];
+    const arr = s.rowsByVehicle[activeVehicle.id][s.activeMonth];
     const newRow = newVehicleRow();
-    // 앞 행의 운행후 값을 새 행의 운행전으로 이어받아서, 매번 계기판 숫자를
-    // 다시 안 옮겨 적어도 되게 한다(실제로 같은 차가 이어서 운행하는 경우가 많음).
+    // 이 달 첫 행이면 날짜를 이 달의 1일로 맞춘다(오늘 날짜가 다른 달이면
+    // 엉뚱한 달짜가 들어가지 않게). 앞 행이 있으면 그 행의 운행후 값을 새
+    // 행의 운행전으로 이어받아서, 매번 계기판 숫자를 다시 안 옮겨 적어도
+    // 되게 한다 — 이 달 첫 행이면 지난달 마지막 행에서 이어받는다.
+    if(!arr.length && /^\d{4}-\d{2}$/.test(s.activeMonth)) newRow.date = s.activeMonth+'-01';
     const prev = arr[arr.length-1];
-    if(prev && prev.kmAfter) newRow.kmBefore = prev.kmAfter;
+    if(prev && prev.kmAfter){
+      newRow.kmBefore = prev.kmAfter;
+    } else if(!arr.length){
+      const monthKeys = Object.keys(s.rowsByVehicle[activeVehicle.id]).sort();
+      const prevMonthKey = [...monthKeys].reverse().find(k=>k<s.activeMonth);
+      const prevMonthRows = prevMonthKey ? s.rowsByVehicle[activeVehicle.id][prevMonthKey] : null;
+      const prevMonthLast = prevMonthRows && prevMonthRows[prevMonthRows.length-1];
+      if(prevMonthLast && prevMonthLast.kmAfter) newRow.kmBefore = prevMonthLast.kmAfter;
+    }
     arr.push(newRow);
     await saveVehicleRows(activeVehicle.id);
     renderVehicleMain();
@@ -11345,7 +11381,7 @@ async function renderVehicleMain(){
   const exportBtn = document.getElementById('vehicleExportBtn');
   if(exportBtn) exportBtn.addEventListener('click', exportVehicleToExcel);
   const pdfBtn = document.getElementById('vehiclePdfBtn');
-  if(pdfBtn) pdfBtn.addEventListener('click', ()=> openVehiclePrintPreview(activeVehicle, rows));
+  if(pdfBtn) pdfBtn.addEventListener('click', ()=> openVehiclePrintPreview(activeVehicle, rows, s.activeMonth));
   main.querySelectorAll('.vehicle-f').forEach(el=>{
     el.addEventListener('change', async ()=>{
       const row = rows.find(r=>r.id===el.dataset.id);
