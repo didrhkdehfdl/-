@@ -242,17 +242,22 @@ exports.checkVehicleBlanksHourly = onSchedule(
     const detailLines = [];
     for (const v of vehicles) {
       const rowsText = await readAppData("vehicle-rows:" + v.id);
-      const rows = rowsText ? JSON.parse(rowsText) : [];
-      rows.forEach((row, i) => {
-        const missingFields = vehicleRowIssueFields(row);
-        if (!missingFields.length) return;
-        totalIssueCount++;
-        const dateLabel = row.date || (() => {
-          const guess = guessVehicleDateRange(rows, i);
-          return guess ? `날짜 미입력(${guess}로 추정)` : "날짜 미입력";
-        })();
-        const missingLabels = missingFields.map((f) => VEHICLE_FIELD_LABELS[f] || f).join(", ");
-        detailLines.push(`${v.plate} ${i + 1}번(${dateLabel}): ${missingLabels}`);
+      const parsed = rowsText ? JSON.parse(rowsText) : [];
+      // 클라이언트가 이제 달마다({ "YYYY-MM": [...] }) 나눠서 저장한다 — 아직
+      // 마이그레이션 전(예전 버전, 배열 하나)인 경우도 그대로 처리되게 둘 다 받는다.
+      const monthGroups = Array.isArray(parsed) ? { _all: parsed } : parsed;
+      Object.values(monthGroups).forEach((rows) => {
+        rows.forEach((row, i) => {
+          const missingFields = vehicleRowIssueFields(row);
+          if (!missingFields.length) return;
+          totalIssueCount++;
+          const dateLabel = row.date || (() => {
+            const guess = guessVehicleDateRange(rows, i);
+            return guess ? `날짜 미입력(${guess}로 추정)` : "날짜 미입력";
+          })();
+          const missingLabels = missingFields.map((f) => VEHICLE_FIELD_LABELS[f] || f).join(", ");
+          detailLines.push(`${v.plate} ${i + 1}번(${dateLabel}): ${missingLabels}`);
+        });
       });
     }
     if (!totalIssueCount) return;
