@@ -10782,8 +10782,37 @@ const VEHICLE_COLUMNS = [
 const VEHICLE_ROW_START = 8;
 const VEHICLE_ROW_END = 32; // 서식이 갖춰진 마지막 데이터 행(총 25건)
 
-let vehicleState = { vehicles:[], activeVehicleId:'', rowsByVehicle:{}, loaded:false, loading:false };
+let vehicleState = { vehicles:[], activeVehicleId:'', rowsByVehicle:{}, activeMonth:'', loaded:false, loading:false };
 let vehicleTemplate = null; // { buffer, fileName, savedAt }
+
+// 법인카드 탭처럼 월별로 탭을 나누기 위한 도우미들. 원본 엑셀은 차량 한 대당
+// 시트 하나에 25행만 있어서(운행일자에 연도가 없음) 한 해치를 넘기면 칸이
+// 모자라진다 — 그래서 앱 안에서는 날짜 기준 "YYYY-MM"으로 달마다 따로
+// 묶어서 관리하고, 내보낼 때도 달마다 파일을 따로 만든다.
+function vehicleMonthKey(dateStr){
+  const m = String(dateStr||'').match(/^(\d{4})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}` : '미분류';
+}
+function vehicleMonthLabel(monthKey){
+  if(monthKey==='미분류') return '미분류';
+  const m = String(monthKey||'').match(/^(\d{4})-(\d{2})$/);
+  if(!m) return monthKey;
+  return `${m[1]}년 ${Number(m[2])}월`;
+}
+function groupVehicleRowsByMonth(rows){
+  const grouped = {};
+  (rows||[]).forEach(row=>{
+    const key = vehicleMonthKey(row.date);
+    (grouped[key] = grouped[key] || []).push(row);
+  });
+  return grouped;
+}
+function pickDefaultVehicleMonth(rowsByMonth){
+  const keys = Object.keys(rowsByMonth||{}).sort();
+  if(!keys.length) return '';
+  const curKey = isoDate(new Date()).slice(0,7);
+  return keys.includes(curKey) ? curKey : keys[keys.length-1];
+}
 
 function newVehicleRow(){
   const row = { id: rid() };
