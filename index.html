@@ -2528,7 +2528,7 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'vehicle' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'historySales' || state.activeTab === 'historyProfit' || state.activeTab === 'none'){
+  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'vehicle' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
