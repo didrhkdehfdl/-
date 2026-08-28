@@ -9363,7 +9363,7 @@ const CORP_CARD_COLUMNS = [
 // 원본 시트의 실제 열 순서(B~Q, 공급가액·부가세 열은 금액에서 자동 계산되는 수식이라
 // 앱에서 직접 쓰지 않고 원본 수식을 그대로 둔다).
 const CORP_CARD_COL_LETTERS = ['B','C','D','E','F','G','H','I','J','K','N','O','P','Q'];
-let corpCardState = { cards:[], activeCardId:'', activeMonth:'', rowsByCard:{}, loaded:false, loading:false, nameMode:'variable', fixedName:'', approvalEntries:[], mismatchByCard:{} };
+let corpCardState = { cards:[], activeCardId:'', activeMonth:'', rowsByCard:{}, loaded:false, loading:false, nameMode:'variable', fixedName:'', fixedPosition:'', approvalEntries:[], mismatchByCard:{} };
 const CORP_CARD_APPROVAL_KEY = 'corp-card-approval-entries';
 let corpCardTemplates = {}; // cardId -> { buffer, fileName, savedAt, months }
 
