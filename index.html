@@ -1610,8 +1610,9 @@ document.getElementById('approvalAlertSaveBtn').addEventListener('click', async 
   const toUids = [...document.querySelectorAll('.approval-alert-recipient-box:checked')].map(el=>el.value);
   const statusEl = document.getElementById('approvalAlertConfigStatus');
   if(!toUids.length){ statusEl.textContent = '받을 사람을 한 명 이상 선택해주세요.'; return; }
+  const message = document.getElementById('approvalAlertMessageInput').value.trim() || CORP_CARD_APPROVAL_ALERT_DEFAULT_MESSAGE;
   try{
-    await saveFileToStorage(CORP_CARD_APPROVAL_ALERT_CONFIG_KEY, JSON.stringify({ toUids, updatedAt: Date.now() }));
+    await saveFileToStorage(CORP_CARD_APPROVAL_ALERT_CONFIG_KEY, JSON.stringify({ toUids, message, updatedAt: Date.now() }));
     statusEl.style.color = '#2e9e5b';
     statusEl.textContent = `저장했습니다. 업로드할 때마다 ${toUids.length}명에게 알림을 보냅니다.`;
     setTimeout(closeApprovalAlertConfigOverlay, 900);
@@ -1622,8 +1623,9 @@ document.getElementById('approvalAlertSaveBtn').addEventListener('click', async 
 });
 document.getElementById('approvalAlertDisableBtn').addEventListener('click', async ()=>{
   const statusEl = document.getElementById('approvalAlertConfigStatus');
+  const message = document.getElementById('approvalAlertMessageInput').value.trim() || CORP_CARD_APPROVAL_ALERT_DEFAULT_MESSAGE;
   try{
-    await saveFileToStorage(CORP_CARD_APPROVAL_ALERT_CONFIG_KEY, JSON.stringify({ toUids: [], updatedAt: Date.now() }));
+    await saveFileToStorage(CORP_CARD_APPROVAL_ALERT_CONFIG_KEY, JSON.stringify({ toUids: [], message, updatedAt: Date.now() }));
     statusEl.style.color = '#2e9e5b';
     statusEl.textContent = '업로드 알림을 껐습니다.';
     setTimeout(closeApprovalAlertConfigOverlay, 900);
