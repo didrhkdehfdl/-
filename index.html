@@ -8653,7 +8653,7 @@ async function loadCompanyMaster(){
   }catch(e){ return null; }
 }
 const debouncedSaveCompanyMaster = debounce(()=>{
-  saveFileToStorage(COMPANY_MASTER_KEY, JSON.stringify(companyMaster));
+  saveWithGenericHistory(COMPANY_MASTER_KEY, JSON.stringify(companyMaster));
 }, 500);
 
 const INVOICE_ITEM_NAME_OPTIONS = ['태양광 주자재 납품 및 설치', '인버터 교체AS', '모듈 교체AS', '커넥터 교체AS'];
@@ -9175,7 +9175,7 @@ async function ensureOMListLoaded(){
   omListState.loaded = true;
 }
 async function saveOMListRows(){
-  try{ await saveFileToStorage(OM_LIST_KEY, JSON.stringify(omListState.rows)); }catch(e){ console.error(e); }
+  try{ await saveWithGenericHistory(OM_LIST_KEY, JSON.stringify(omListState.rows)); }catch(e){ console.error(e); }
 }
 function newOMListRow(){
   const row = { id: rid() };
