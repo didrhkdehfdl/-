@@ -11999,7 +11999,7 @@ function parseImportSheet(sheetName){
     importState.rows = rows;
     importState.error = rows.length ? '' : '이 시트에서 고객 데이터를 찾지 못했습니다.';
     if(rows.length){
-      saveFileToStorage(IMPORT_DATA_KEY, JSON.stringify({
+      saveWithGenericHistory(IMPORT_DATA_KEY, JSON.stringify({
         fileName: importState.fileName, sheetNames: importState.sheetNames,
         sheetName: importState.sheetName, rows: importState.rows
       }));
