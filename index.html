@@ -9822,7 +9822,7 @@ function buildCorpCardUsageDocPage(items, card){
         <td style="${labelB} width:9%;">부서</td>
         <td style="${cellB} width:20%;">${escapeHtml(first.dept)}</td>
         <td style="${labelB} width:13%;">성명/직급</td>
-        <td style="${cellB} width:25%;">${escapeHtml(first.name)}</td>
+        <td style="${cellB} width:25%;">${escapeHtml(first.name)}${first.position ? '&nbsp;&nbsp;' + escapeHtml(first.position) : ''}</td>
       </tr>
     </table>
     <table class="print-table" style="margin-top:-1px;">
@@ -10024,6 +10024,7 @@ async function renderCorpCardMain(){
           <th style="padding:6px 4px; color:var(--muted); width:100px;">날짜</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">부서</th>
           <th style="padding:6px 4px; color:var(--muted); width:80px;">성명</th>
+          <th style="padding:6px 4px; color:var(--muted); width:70px;">직급</th>
           <th style="padding:6px 4px; color:var(--muted); width:80px;">법인</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">사업분류</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">프로젝트</th>
