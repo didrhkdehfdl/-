@@ -8482,6 +8482,8 @@ async function renderCardReconMain(){
     </div>
   `;
 
+  const approvalAlertConfigBtn = document.getElementById('approvalAlertConfigBtn');
+  if(approvalAlertConfigBtn) approvalAlertConfigBtn.addEventListener('click', openApprovalAlertConfigOverlay);
   document.getElementById('cardApprovalBtn2').addEventListener('click', ()=> document.getElementById('cardApprovalFile2').click());
   document.getElementById('cardApprovalFile2').addEventListener('change', async (e)=>{
     const file = e.target.files[0];
