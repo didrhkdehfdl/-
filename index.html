@@ -1702,6 +1702,85 @@ async function deleteCaseStorage(id){
   await deleteFromStorage(key);
 }
 
+// ---- 범용 변경 이력 (영업비/이윤정산 건별 이력과 같은 방식을, 나머지
+// 탭들의 "탭 전체가 문서 하나" 또는 "카드·차량별 문서 하나" 구조에도 그대로
+// 적용한다) ----
+// storageKey를 그대로 이력 키의 일부로 써서('history:'+storageKey), 탭마다
+// 새 상수를 만들지 않아도 자동으로 구분된다.
+const GENERIC_HISTORY_LIMIT = 20;
+const GENERIC_HISTORY_MIN_INTERVAL_MS = 60*1000;
+function genericHistoryKey(storageKey){ return 'history:'+storageKey; }
+async function recordGenericHistoryBeforeSave(storageKey){
+  try{
+    const prevRaw = await loadFileFromStorage(storageKey);
+    if(!prevRaw) return; // 첫 저장이라 이전 상태가 없음
+    const hKey = genericHistoryKey(storageKey);
+    const historyRaw = await loadFileFromStorage(hKey);
+    const history = historyRaw ? JSON.parse(historyRaw) : [];
+    const lastEntry = history[history.length-1];
+    const now = Date.now();
+    if(lastEntry && now - lastEntry.timestamp < GENERIC_HISTORY_MIN_INTERVAL_MS) return;
+    if(lastEntry && lastEntry.data === prevRaw) return;
+    history.push({ timestamp: now, data: prevRaw });
+    while(history.length > GENERIC_HISTORY_LIMIT) history.shift();
+    await saveFileToStorage(hKey, JSON.stringify(history));
+  }catch(e){ console.error(e); }
+}
+async function loadGenericHistory(storageKey){
+  try{
+    const raw = await loadFileFromStorage(genericHistoryKey(storageKey));
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ return []; }
+}
+let genericHistoryContext = null; // { storageKey, onRestore }
+async function openGenericHistoryOverlay(storageKey, label, onRestore){
+  genericHistoryContext = { storageKey, onRestore };
+  document.getElementById('genericHistoryTitle').textContent = label;
+  const listEl = document.getElementById('genericHistoryList');
+  listEl.innerHTML = '불러오는 중…';
+  document.getElementById('genericHistoryOverlay').style.display = 'flex';
+  const history = await loadGenericHistory(storageKey);
+  if(!genericHistoryContext || genericHistoryContext.storageKey !== storageKey) return; // 그 사이 다른 이력 창을 열었으면 무시
+  if(history.length === 0){
+    listEl.innerHTML = '<div class="empty-side">아직 남은 변경 이력이 없습니다. 이 항목을 수정하시면 그때부터 이전 상태가 기록됩니다.</div>';
+    return;
+  }
+  const ordered = [...history].reverse(); // 최신이 위로
+  listEl.innerHTML = ordered.map((entry, i) => {
+    const idx = history.length - 1 - i;
+    return `
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:8px;">
+        <div style="font-size:12.5px; color:var(--muted);">${fmtHistoryTimestamp(entry.timestamp)}</div>
+        <button class="generic-history-restore-btn" data-idx="${idx}" style="font-size:11.5px; padding:6px 12px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; white-space:nowrap;">이 시점으로 복원</button>
+      </div>`;
+  }).join('');
+  listEl.querySelectorAll('.generic-history-restore-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 시점으로 되돌릴까요? 지금 상태는 이력에 남아서 다시 되돌릴 수 있습니다.')) return;
+      const ctx = genericHistoryContext;
+      if(!ctx) return;
+      const h = await loadGenericHistory(ctx.storageKey);
+      const entry = h[Number(btn.dataset.idx)];
+      if(!entry) return;
+      try{
+        await ctx.onRestore(entry.data);
+        closeGenericHistoryOverlay();
+      }catch(e){ alert('이 버전을 복원하지 못했습니다: '+e.message); }
+    });
+  });
+}
+function closeGenericHistoryOverlay(){
+  document.getElementById('genericHistoryOverlay').style.display = 'none';
+  genericHistoryContext = null;
+}
+document.getElementById('genericHistoryCloseBtn').addEventListener('click', closeGenericHistoryOverlay);
+// 탭 전체가 문서 하나인 경우 공통으로 쓰는 저장 래퍼 — recordGenericHistoryBeforeSave로
+// 이전 상태를 이력에 남긴 뒤에 새 값을 덮어쓴다.
+async function saveWithGenericHistory(storageKey, value){
+  await recordGenericHistoryBeforeSave(storageKey);
+  await saveFileToStorage(storageKey, value);
+}
+
 const CONTRACTS_INDEX_KEY = 'contracts-index';
 async function saveContractsIndex(list){
   try{
