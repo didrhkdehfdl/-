@@ -9590,8 +9590,17 @@ function reconcileCorpCardWithApproval(ledgerRows, approvalEntries){
   const mismatchMap = new Map();
   result.rows.forEach(r=>{
     if(r.status !== 'match'){
-      const sameAmount = approvalEntries.find(a=>a.amount===r.amount && a.isoDate!==r.isoDate);
-      const sameDate = approvalEntries.find(a=>a.isoDate===r.isoDate && a.amount!==r.amount);
+      // 날짜나 금액만 같은 후보가 하루에 여러 건 있을 수 있다(카드 하나로
+      // 같은 날 여러 번 결제하는 경우가 흔함) — 후보가 여러 건이면 사용처가
+      // 비슷한 것만 "그 건"으로 인정하고, 비슷한 게 없으면(우연히 날짜/금액만
+      // 같은 전혀 다른 건일 수 있으니) 안내 자체를 내보내지 않는다. 후보가
+      // 딱 하나뿐이면 사용처가 다르게 적혀 있어도 그게 맞을 가능성이 높으니
+      // 그대로 인정한다.
+      const amountCandidates = approvalEntries.filter(a=>a.amount===r.amount && a.isoDate!==r.isoDate);
+      const dateCandidates = approvalEntries.filter(a=>a.isoDate===r.isoDate && a.amount!==r.amount);
+      const pickCandidate = list => list.length===1 ? list[0] : list.find(a=>placesSimilar(r.place, a.place));
+      const sameAmount = pickCandidate(amountCandidates);
+      const sameDate = pickCandidate(dateCandidates);
       if(sameAmount){ mismatchMap.set(r.id, { reason:'date', approvalDate: sameAmount.isoDate }); }
       else if(sameDate){ mismatchMap.set(r.id, { reason:'amount', approvalAmount: sameDate.amount }); }
       else { mismatchMap.set(r.id, { reason:'no_match' }); }
