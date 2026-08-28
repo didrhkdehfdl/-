@@ -2152,7 +2152,7 @@ async function saveAgentDocsIndex(list, targetState){
     ? (targetState===agentDocsStateOM ? OM_DOCS_INDEX_KEY : AGENT_DOCS_INDEX_KEY)
     : currentAgentDocsIndexKey();
   try{
-    await saveFileToStorage(key, JSON.stringify(list));
+    await saveWithGenericHistory(key, JSON.stringify(list));
   }catch(e){ console.error(e); }
 }
 async function loadAgentDocFileData(id){
