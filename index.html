@@ -10715,7 +10715,12 @@ function buildVehicleLogPrintHtml(vehicle, rows){
   const th = 'background:#d9d9d9; border-style:double; border-width:3px;';
   return `
   <div class="print-page doc-page landscape vehicle-log-doc" style="color:#000;">
-    <style>.vehicle-log-doc table.print-table th, .vehicle-log-doc table.print-table td{ border-color:#000; }</style>
+    <style>
+      .vehicle-log-doc table.print-table th, .vehicle-log-doc table.print-table td{ border-color:#000; }
+      .vehicle-log-doc table.print-table{ font-size:14px; }
+      .vehicle-log-doc table.print-table thead th{ font-size:14px; }
+      .vehicle-log-doc table.print-table td.pt-note{ font-size:12px; }
+    </style>
     <div style="display:flex; align-items:center; gap:16px; margin-bottom:10px;">
       <div style="display:inline-block; background:linear-gradient(180deg,#767676 0%,#ffffff 50%,#767676 100%); border:4px double #000; padding:9px 26px; font-size:18pt; font-weight:700; font-family:'굴림','Gulim',sans-serif; color:#000; white-space:nowrap;">( ${escapeHtml(vehicle.plate)}) 차량 운행일지</div>
       ${vehicle.manager ? `<div style="color:#000; font-size:11pt; font-weight:700; white-space:nowrap;">담당자 : ${escapeHtml(vehicle.manager)}</div>` : ''}
@@ -10740,9 +10745,9 @@ function buildVehicleLogPrintHtml(vehicle, rows){
         ${rowsHtml}
         <tr>
           <td colspan="4" class="pt-center" style="font-weight:700;">합계</td>
-          <td class="pt-num" style="font-weight:700;">${fmtNum(totalDist)}</td>
+          <td class="pt-num" style="font-weight:700;">${fmtNum(totalDist)} Km</td>
           <td></td><td></td>
-          <td class="pt-num" style="font-weight:700;">${fmtNum(totalFuel)}</td>
+          <td class="pt-num" style="font-weight:700;">${fmtNum(totalFuel)} 원</td>
           <td colspan="2"></td>
         </tr>
       </tbody>
