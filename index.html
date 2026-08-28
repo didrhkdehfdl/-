@@ -10994,7 +10994,7 @@ async function exportVehicleToExcel(){
 // 차량 한 대의 운행 기록을 인쇄용 표로 만든다(칸이 많아 가로 방향으로 짠다).
 // 기안지/지출결의서·법인카드 사용내역서와 같은 출력 화면(#printOverlay)을
 // 그대로 재사용해서, 거기 있는 "PDF로 저장" 버튼으로 바로 PDF 저장까지 된다.
-function buildVehicleLogPrintHtml(vehicle, rows){
+function buildVehicleLogPrintHtml(vehicle, rows, monthLabel){
   const rowsHtml = rows.map((r,i)=>{
     const dist = vehicleDistance(r);
     return `<tr>
