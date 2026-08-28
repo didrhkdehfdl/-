@@ -7903,7 +7903,7 @@ async function ensureInquiryLoaded(){
   inquiryState.loaded = true;
 }
 async function saveInquiryList(){
-  try{ await saveFileToStorage(INQUIRY_KEY, JSON.stringify(inquiryState.items)); }catch(e){ console.error(e); }
+  try{ await saveWithGenericHistory(INQUIRY_KEY, JSON.stringify(inquiryState.items)); }catch(e){ console.error(e); }
 }
 function newInquiryItem(){
   return { id: rid(), date: isoDate(new Date()), sender:'', region:'', question:'', customer:'', phone:'', detail:'', response:'', jibunAddr:'', zipNo:'' };
@@ -8437,7 +8437,7 @@ async function ensureCardMasterLoaded(){
   corpCardMasterLoaded = true;
 }
 async function saveCardMasterList(){
-  await saveFileToStorage(CORP_CARD_MASTER_LIST_KEY, JSON.stringify(corpCardMasterTemplates.map(t=>({ id:t.id, label:t.label, fileName:t.fileName }))));
+  await saveWithGenericHistory(CORP_CARD_MASTER_LIST_KEY, JSON.stringify(corpCardMasterTemplates.map(t=>({ id:t.id, label:t.label, fileName:t.fileName }))));
 }
 async function handleCardMasterAdd(file){
   const { buf } = await readWorkbookFromFile(file);
