@@ -11411,7 +11411,7 @@ async function renderVehicleMain(){
   main.querySelectorAll('.vehicle-del-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!confirm('이 행을 삭제할까요?')) return;
-      s.rowsByVehicle[activeVehicle.id] = rows.filter(r=>r.id!==btn.dataset.id);
+      s.rowsByVehicle[activeVehicle.id][s.activeMonth] = rows.filter(r=>r.id!==btn.dataset.id);
       await saveVehicleRows(activeVehicle.id);
       renderVehicleMain();
     });
