@@ -10966,16 +10966,30 @@ async function handleVehicleTemplateAdd(file){
   }
   renderVehicleMain();
 }
+// 달마다 파일을 따로 만든다 — 전체 차량 중 하나라도 그 달에 기록이 있으면
+// 그 달의 파일을 만든다(다른 차량은 그 달 칸이 그냥 비어있는 채로 나간다).
 async function exportVehicleToExcel(){
   if(!vehicleTemplate){ alert('차량운행일지 양식 파일이 없습니다.'); return; }
-  const result = await patchVehicleTemplate(vehicleTemplate.buffer, vehicleState.vehicles, vehicleState.rowsByVehicle);
-  if(result.error){ alert('엑셀을 만들지 못했습니다: ' + result.error); return; }
-  const url = URL.createObjectURL(result.blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = vehicleTemplate.fileName || `차량운행일지_${isoDate(new Date())}.xlsx`;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
+  const allMonths = new Set();
+  vehicleState.vehicles.forEach(v=>{
+    Object.keys(vehicleState.rowsByVehicle[v.id]||{}).forEach(m=>allMonths.add(m));
+  });
+  const months = [...allMonths].sort();
+  if(!months.length){ alert('내보낼 운행 기록이 없습니다.'); return; }
+  for(const month of months){
+    const rowsByVehicleForMonth = {};
+    vehicleState.vehicles.forEach(v=>{
+      rowsByVehicleForMonth[v.id] = (vehicleState.rowsByVehicle[v.id]||{})[month] || [];
+    });
+    const result = await patchVehicleTemplate(vehicleTemplate.buffer, vehicleState.vehicles, rowsByVehicleForMonth);
+    if(result.error){ alert(`"${vehicleMonthLabel(month)}" 파일을 만들지 못했습니다: ` + result.error); continue; }
+    const url = URL.createObjectURL(result.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `차량운행일지_${month}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
 }
 // 차량 한 대의 운행 기록을 인쇄용 표로 만든다(칸이 많아 가로 방향으로 짠다).
 // 기안지/지출결의서·법인카드 사용내역서와 같은 출력 화면(#printOverlay)을
