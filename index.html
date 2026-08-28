@@ -9398,7 +9398,7 @@ function corpCardRowIssues(row, mm){
   } else if(noteHasContent){
     issues.note = '업무내용에 적어주세요';
   }
-  if(!issues.expenseType && String(row.expenseType||'').trim()==='점심') issues.expenseType = '"식대"로 수정해주세요';
+  if(!issues.expenseType && ['점심','중식'].includes(String(row.expenseType||'').trim())) issues.expenseType = '"식대"로 수정해주세요';
   if(mm){
     if(mm.reason==='date'){
       issues.date = issues.date || `날짜가 잘못된 것 같습니다 (승인내역: ${mm.approvalDate})`;
