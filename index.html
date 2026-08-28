@@ -2115,7 +2115,7 @@ function fmtFileSize(bytes){
 const INSPECTION_INDEX_KEY = 'inspection-index';
 async function saveInspectionIndex(list){
   try{
-    await saveFileToStorage(INSPECTION_INDEX_KEY, JSON.stringify(list));
+    await saveWithGenericHistory(INSPECTION_INDEX_KEY, JSON.stringify(list));
   }catch(e){ console.error(e); }
 }
 async function loadInspectionFileData(id){
