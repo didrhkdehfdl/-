@@ -11206,6 +11206,11 @@ async function renderVehicleMain(){
     </div>
     ${!activeVehicle ? `<div class="empty-side">등록된 차량이 없습니다. "차량운행일지 올리기"로 엑셀을 올려주세요.</div>` : `
     <div style="font-size:12px; color:var(--muted); margin-bottom:14px;">차량번호: ${escapeHtml(activeVehicle.plate)}${activeVehicle.manager?` · 담당자: ${escapeHtml(activeVehicle.manager)}`:''} · 양식 파일: ${escapeHtml(vehicleTemplate?vehicleTemplate.fileName:'')}</div>
+    <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
+      ${months.map(m => `<button class="vehicle-month-btn" data-month="${escapeHtml(m)}" style="padding:7px 12px; border-radius:6px; border:1px solid ${m===s.activeMonth?'var(--gold)':'var(--line)'}; background:${m===s.activeMonth?'rgba(224,163,57,.12)':'transparent'}; color:${m===s.activeMonth?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12px;">${escapeHtml(vehicleMonthLabel(m))}</button>`).join('')}
+      <button id="vehicleAddMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12px;">+ 월 추가</button>
+      ${months.length>1 ? `<button id="vehicleDeleteMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">"${escapeHtml(vehicleMonthLabel(s.activeMonth))}" 탭 삭제</button>` : ''}
+    </div>
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
       <button id="vehicleAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
       <button id="vehiclePdfBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">🖨 PDF로 내보내기</button>
