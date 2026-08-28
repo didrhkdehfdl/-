@@ -2555,8 +2555,8 @@ function renderSidebar(){
                   ? '<div class="empty-side">실적리스트에서 아직 발행 안 된 건을 찾아<br>세금계산서·현금영수증 업로드 파일을 만듭니다.</div>'
                   : state.activeTab === 'inquiry'
                     ? '<div class="empty-side">카카오톡 문의 대화를 올리거나 직접 입력하면<br>여기가 아닌 문의 대응 화면에 표로 표시됩니다.</div>'
-                  : (state.activeTab === 'historySales' || state.activeTab === 'historyProfit')
-                    ? '<div class="empty-side">이 종류의 정산 건 변경 이력을<br>한 곳에서 확인하고 복원할 수 있습니다.</div>'
+                  : state.activeTab === 'history'
+                    ? '<div class="empty-side">모든 정산 건의 변동내역을<br>한 곳에서 확인하고 복원할 수 있습니다.</div>'
                     : state.activeTab === 'none'
                       ? '<div class="empty-side">접근 가능한 메뉴가 없습니다.<br>관리자에게 문의해주세요.</div>'
                       : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
