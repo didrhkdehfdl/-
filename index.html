@@ -856,7 +856,7 @@ async function loadModuleMaster(){
   }catch(e){ return null; }
 }
 const debouncedSaveModuleMaster = debounce(()=>{
-  saveFileToStorage(MODULE_MASTER_KEY, JSON.stringify(moduleMaster));
+  saveWithGenericHistory(MODULE_MASTER_KEY, JSON.stringify(moduleMaster));
 }, 500);
 function computeModuleNotes(checks){
   const selected = MODULE_NOTE_OPTIONS
