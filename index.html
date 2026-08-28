@@ -11294,9 +11294,13 @@ async function renderVehicleMain(){
   main.querySelectorAll('.vehicle-tab-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       s.activeVehicleId = btn.dataset.id;
+      s.activeMonth = pickDefaultVehicleMonth(s.rowsByVehicle[btn.dataset.id]);
       await saveVehicleList();
       renderVehicleMain();
     });
+  });
+  main.querySelectorAll('.vehicle-month-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ s.activeMonth = btn.dataset.month; renderVehicleMain(); });
   });
   const alertConfigBtn = document.getElementById('vehicleAlertConfigBtn');
   if(alertConfigBtn) alertConfigBtn.addEventListener('click', openVehicleAlertConfigOverlay);
