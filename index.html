@@ -9761,6 +9761,7 @@ async function handleCorpCardApprovalUpload(file){
   const added = corpCardState.approvalEntries.length - before;
   await saveCorpCardApprovalEntries();
   recomputeCorpCardMismatches();
+  notifyApprovalUpload(parsedRows.length, added, corpCardState.approvalEntries.length);
   alert(`승인내역 ${parsedRows.length}건을 확인해서 ${added}건을 새로 추가했습니다. (누적 ${corpCardState.approvalEntries.length}건)`);
 }
 async function saveCorpCardRows(cardId){
