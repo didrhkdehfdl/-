@@ -9642,9 +9642,10 @@ async function saveCorpCardTemplate(cardId, buffer, fileName, months){
 }
 // 업로드한 카드 파일에서 카드번호(B9)와 월 시트 목록("1 월"~"12 월", 숫자 순 정렬)을 찾는다.
 function parseCorpCardWorkbookMeta(wb){
-  // 엑셀에서 "숨기기"로 되어있는 시트(예: 보고용으로 따로 빼둔 시트)는
-  // wb.Workbook.Sheets[i].Hidden이 1(숨김) 또는 2(매우 숨김)로 표시된다 —
-  // 이런 시트는 월 탭 후보에서 아예 뺀다.
+  // 엑셀에서 "숨기기"로 되어있는 시트는 wb.Workbook.Sheets[i].Hidden이
+  // 1(숨김) 또는 2(매우 숨김)로 표시된다 — 이런 시트는 월 탭 후보에서 아예
+  // 뺀다. 다만 "01 월 보고용"처럼 숨기지 않고 그냥 이름만 다르게 빼둔
+  // 보고용 시트도 있어서, 이름에 "보고용"이 들어간 시트도 함께 제외한다.
   const hiddenNames = new Set(
     (wb.Workbook && wb.Workbook.Sheets || [])
       .filter(s => s && s.Hidden)
@@ -9652,6 +9653,7 @@ function parseCorpCardWorkbookMeta(wb){
   );
   const monthSheets = wb.SheetNames
     .filter(n => !hiddenNames.has(n))
+    .filter(n => !n.includes('보고용'))
     .map(n => ({ n, month: parseInt((n.match(/^(\d{1,2})\s*월/)||[])[1], 10) }))
     .filter(x => !isNaN(x.month))
     .sort((a,b)=>a.month-b.month);
