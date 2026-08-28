@@ -1562,6 +1562,95 @@ document.getElementById('vehicleAlertDisableBtn').addEventListener('click', asyn
     statusEl.textContent = '처리하지 못했습니다: '+err.message;
   }
 });
+
+// 카드관리 탭에서 "카드사 승인내역 업로드"를 할 때마다(예약 확인이 아니라
+// 업로드하는 그 순간 바로) 고른 사람들에게 알림을 보내는 설정. 차량관리의
+// 주기 확인과 달리 서버가 따로 감시할 필요가 없어서, 여기 저장해둔
+// toUids만 있으면 handleCorpCardApprovalUpload에서 업로드 직후 바로
+// notification-queue에 쌓아서 보낸다.
+const CORP_CARD_APPROVAL_ALERT_CONFIG_KEY = 'corp-card-approval-alert-config';
+async function openApprovalAlertConfigOverlay(){
+  document.getElementById('approvalAlertConfigStatus').textContent = '불러오는 중…';
+  document.getElementById('approvalAlertConfigOverlay').style.display = 'flex';
+  try{
+    const [snap, configText] = await Promise.all([
+      fbDb.collection('users').where('approved','==',true).get(),
+      loadFileFromStorage(CORP_CARD_APPROVAL_ALERT_CONFIG_KEY),
+    ]);
+    const config = configText ? JSON.parse(configText) : null;
+    const me = fbAuth.currentUser;
+    const users = snap.docs.map(d=>({ id:d.id, ...d.data() })).filter(u=>u.id!==(me&&me.uid));
+    const selected = new Set((config && config.toUids) || []);
+    const list = document.getElementById('approvalAlertRecipientList');
+    list.innerHTML = users.length
+      ? users.map(u=>`
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">
+            <input type="checkbox" class="approval-alert-recipient-box" value="${u.id}" ${selected.has(u.id)?'checked':''}>
+            ${escapeHtml(u.name||u.email||u.id)}
+          </label>`).join('')
+      : `<div style="font-size:12.5px; color:var(--muted);">알림 보낼 수 있는 다른 사용자가 없습니다</div>`;
+    document.getElementById('approvalAlertConfigStatus').textContent = config && config.toUids && config.toUids.length
+      ? `현재 ${config.toUids.length}명에게 업로드 알림이 켜져 있습니다.`
+      : '현재 업로드 알림이 꺼져 있습니다.';
+  }catch(err){
+    document.getElementById('approvalAlertConfigStatus').textContent = '불러오지 못했습니다: '+err.message;
+  }
+}
+function closeApprovalAlertConfigOverlay(){
+  document.getElementById('approvalAlertConfigOverlay').style.display = 'none';
+}
+document.getElementById('approvalAlertConfigCloseBtn').addEventListener('click', closeApprovalAlertConfigOverlay);
+document.getElementById('approvalAlertSaveBtn').addEventListener('click', async ()=>{
+  const toUids = [...document.querySelectorAll('.approval-alert-recipient-box:checked')].map(el=>el.value);
+  const statusEl = document.getElementById('approvalAlertConfigStatus');
+  if(!toUids.length){ statusEl.textContent = '받을 사람을 한 명 이상 선택해주세요.'; return; }
+  try{
+    await saveFileToStorage(CORP_CARD_APPROVAL_ALERT_CONFIG_KEY, JSON.stringify({ toUids, updatedAt: Date.now() }));
+    statusEl.style.color = '#2e9e5b';
+    statusEl.textContent = `저장했습니다. 업로드할 때마다 ${toUids.length}명에게 알림을 보냅니다.`;
+    setTimeout(closeApprovalAlertConfigOverlay, 900);
+  }catch(err){
+    statusEl.style.color = 'var(--neg)';
+    statusEl.textContent = '저장하지 못했습니다: '+err.message;
+  }
+});
+document.getElementById('approvalAlertDisableBtn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('approvalAlertConfigStatus');
+  try{
+    await saveFileToStorage(CORP_CARD_APPROVAL_ALERT_CONFIG_KEY, JSON.stringify({ toUids: [], updatedAt: Date.now() }));
+    statusEl.style.color = '#2e9e5b';
+    statusEl.textContent = '업로드 알림을 껐습니다.';
+    setTimeout(closeApprovalAlertConfigOverlay, 900);
+  }catch(err){
+    statusEl.style.color = 'var(--neg)';
+    statusEl.textContent = '처리하지 못했습니다: '+err.message;
+  }
+});
+// 승인내역 업로드가 끝난 직후 호출 — 설정해둔 사람들에게 곧바로 알림을 큐에 쌓는다.
+async function notifyApprovalUpload(parsedCount, addedCount, totalCount){
+  try{
+    const configText = await loadFileFromStorage(CORP_CARD_APPROVAL_ALERT_CONFIG_KEY);
+    const config = configText ? JSON.parse(configText) : null;
+    const toUids = (config && config.toUids) || [];
+    if(!toUids.length) return;
+    const listText = await loadFileFromStorage(NOTIFICATION_QUEUE_KEY);
+    const queue = listText ? JSON.parse(listText) : [];
+    const fromEmail = (fbAuth.currentUser && fbAuth.currentUser.email) || '';
+    const body = `승인내역 ${fmtNum(parsedCount)}건을 확인해서 ${fmtNum(addedCount)}건을 새로 추가했습니다. (누적 ${fmtNum(totalCount)}건)`;
+    toUids.forEach(toUid=>{
+      queue.push({
+        id: rid(), toUid, fromEmail,
+        title: '카드사 승인내역 업로드됨',
+        body,
+        caseId: null,
+        createdAt: Date.now(),
+      });
+    });
+    while(queue.length > 200) queue.shift();
+    await saveFileToStorage(NOTIFICATION_QUEUE_KEY, JSON.stringify(queue));
+  }catch(err){ console.error('승인내역 업로드 알림 발송 실패', err); }
+}
+
 async function restoreCaseHistoryEntry(caseId, idx){
   const history = await loadCaseHistory(caseId);
   const entry = history[idx];
