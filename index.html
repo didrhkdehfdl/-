@@ -1573,6 +1573,7 @@ document.getElementById('vehicleAlertDisableBtn').addEventListener('click', asyn
 // toUids만 있으면 handleCorpCardApprovalUpload에서 업로드 직후 바로
 // notification-queue에 쌓아서 보낸다.
 const CORP_CARD_APPROVAL_ALERT_CONFIG_KEY = 'corp-card-approval-alert-config';
+const CORP_CARD_APPROVAL_ALERT_DEFAULT_MESSAGE = '승인내역 {count}건을 확인해서 {added}건을 새로 추가했습니다. (누적 {total}건)';
 async function openApprovalAlertConfigOverlay(){
   document.getElementById('approvalAlertConfigStatus').textContent = '불러오는 중…';
   document.getElementById('approvalAlertConfigOverlay').style.display = 'flex';
@@ -1593,6 +1594,7 @@ async function openApprovalAlertConfigOverlay(){
             ${escapeHtml(u.name||u.email||u.id)}
           </label>`).join('')
       : `<div style="font-size:12.5px; color:var(--muted);">알림 보낼 수 있는 다른 사용자가 없습니다</div>`;
+    document.getElementById('approvalAlertMessageInput').value = (config && config.message) || CORP_CARD_APPROVAL_ALERT_DEFAULT_MESSAGE;
     document.getElementById('approvalAlertConfigStatus').textContent = config && config.toUids && config.toUids.length
       ? `현재 ${config.toUids.length}명에게 업로드 알림이 켜져 있습니다.`
       : '현재 업로드 알림이 꺼져 있습니다.';
