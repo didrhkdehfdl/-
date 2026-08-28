@@ -8138,10 +8138,87 @@ async function renderInquiryMain(){
 // 바로 이력을 확인·복원할 수 있도록 전체 목록을 모아서 보여준다. 탭은
 // "변동내역" 하나뿐이고, 그 안에서 영업비 정산/사업 이윤정산을 섹션으로
 // 나눠서 보여준다(예전처럼 한 표에 "종류" 칸을 넣어 섞어 보여주지 않는다).
+// 탭 전체가 문서 하나인 곳들 — 영업비/이윤정산(건별)과 법인카드·차량관리
+// (카드·차량별)을 뺀 나머지 전부. { storageKey, icon, label, onRestore(rawJson) }
+// 형태로만 적어두면 아래에서 개수 조회·버튼 연결까지 공통으로 처리한다.
+function vehicleHistoryOnRestore(vehicleId){
+  return async (raw) => {
+    vehicleState.rowsByVehicle[vehicleId] = JSON.parse(raw);
+    if(state.activeTab==='vehicle') renderVehicleMain();
+  };
+}
+function corpCardHistoryOnRestore(cardId){
+  return async (raw) => {
+    corpCardState.rowsByCard[cardId] = JSON.parse(raw);
+    recomputeCorpCardMismatches();
+    if(state.activeTab==='corpCard') renderCorpCardMain();
+  };
+}
+function simpleHistoryTargets(){
+  return [
+    { key: IMPORT_DATA_KEY, icon:'📥', label:'사급 실적리스트 (업로드 데이터)', onRestore: async raw => {
+        const data = JSON.parse(raw);
+        importState.fileName = data.fileName; importState.sheetNames = data.sheetNames;
+        importState.sheetName = data.sheetName; importState.rows = data.rows;
+        if(state.activeTab==='import') renderImportMain();
+      } },
+    { key: PERF_ROWS_KEY, icon:'📥', label:'사급 실적리스트 (직접입력)', onRestore: async raw => {
+        importState.manualRows = JSON.parse(raw);
+        if(state.activeTab==='import') renderImportMain();
+      } },
+    { key: CONTRACTS_INDEX_KEY, icon:'📄', label:'계약서', onRestore: async raw => {
+        contractsState.items = JSON.parse(raw);
+        if(state.activeTab==='contracts') renderContractsMain();
+      } },
+    { key: INSPECTION_INDEX_KEY, icon:'🔍', label:'사용전점검(검사)', onRestore: async raw => {
+        inspectionState.items = JSON.parse(raw);
+        if(state.activeTab==='inspection') renderInspectionMain();
+      } },
+    { key: AGENT_DOCS_INDEX_KEY, icon:'👤', label:'영업자용', onRestore: async raw => {
+        agentDocsStateDefault.items = JSON.parse(raw);
+        if(state.activeTab==='agentDocs') renderAgentDocsMain();
+      } },
+    { key: MODULE_MASTER_KEY, icon:'🏷️', label:'모듈 단가 관리', onRestore: async raw => {
+        moduleMaster.length = 0; moduleMaster.push(...JSON.parse(raw));
+        rebuildModuleDerived();
+        if(state.activeTab==='moduleprices') renderModulePricesMain();
+      } },
+    { key: CORP_CARD_MASTER_LIST_KEY, icon:'🔄', label:'카드관리 (통합본 목록)', onRestore: async raw => {
+        corpCardMasterTemplates.length = 0; corpCardMasterTemplates.push(...JSON.parse(raw));
+        if(state.activeTab==='cardrecon') renderCardReconMain();
+      } },
+    { key: OM_DOCS_INDEX_KEY, icon:'🛠️', label:'O&M팀 (서류)', onRestore: async raw => {
+        agentDocsStateOM.items = JSON.parse(raw);
+        if(state.activeTab==='omTeam') renderAgentDocsMain();
+      } },
+    { key: OM_DEPOSIT_CONFIRM_KEY, icon:'🛠️', label:'O&M팀 (입금확인)', onRestore: async raw => {
+        depositConfirmStateOM.items = JSON.parse(raw);
+        if(state.activeTab==='omTeam') renderAgentDocsMain();
+      } },
+    { key: OM_CASH_RECEIPT_KEY, icon:'🛠️', label:'O&M팀 (현금영수증)', onRestore: async raw => {
+        omCashReceiptState.items = JSON.parse(raw);
+        if(state.activeTab==='omTeam') renderAgentDocsMain();
+      } },
+    { key: OM_LIST_KEY, icon:'📋', label:'O&M 리스트', onRestore: async raw => {
+        omListState.rows = JSON.parse(raw);
+        if(state.activeTab==='omList') renderOMListMain();
+      } },
+    { key: COMPANY_MASTER_KEY, icon:'🧾', label:'세금계산서/현금영수증 (거래처 마스터)', onRestore: async raw => {
+        companyMaster.length = 0; companyMaster.push(...JSON.parse(raw));
+        if(state.activeTab==='invoiceprep') renderInvoicePrepMain();
+      } },
+    { key: INQUIRY_KEY, icon:'💬', label:'문의 대응', onRestore: async raw => {
+        inquiryState.items = JSON.parse(raw);
+        if(state.activeTab==='inquiry') renderInquiryMain();
+      } },
+  ];
+}
 async function renderHistoryMain(){
   const main = document.getElementById('main');
   main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
   const list = await loadIndex(); // 사이드바용 캐시(state.cases)가 오래됐을 수 있으니 항상 새로 불러온다
+  // 카드별/차량별 이력 목록을 만들려면 그 목록도 먼저 불러와야 한다.
+  await Promise.all([ ensureCorpCardLoaded(), ensureVehicleLoaded() ]);
   if(state.activeTab !== 'history') return; // 불러오는 동안 다른 탭으로 이동했으면 무시
   state.cases = list;
 
@@ -8175,20 +8252,77 @@ async function renderHistoryMain(){
     </div>`;
   };
 
+  // 단순 문서형(탭 전체가 문서 하나) 이력 개수를 한꺼번에 불러온다.
+  const simpleTargets = simpleHistoryTargets();
+  const simpleCounts = await Promise.all(simpleTargets.map(t => loadGenericHistory(t.key).then(h=>h.length)));
+  const simpleRowHtml = (icon, label, count, btnKey) => `
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:8px;">
+      <div style="font-size:13px;">${icon} ${escapeHtml(label)} <span style="color:var(--muted); font-size:11.5px;">(이력 ${count}건)</span></div>
+      <button class="generic-history-view-btn" data-key="${escapeHtml(btnKey)}" style="font-size:11px; padding:6px 12px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; white-space:nowrap;">🕒 이력 보기</button>
+    </div>`;
+  const simpleSectionHtml = `
+    <div style="margin-bottom:24px;">
+      <div style="font-size:13.5px; font-weight:700; margin-bottom:8px;">📁 그 외 탭들</div>
+      ${simpleTargets.map((t,i)=>simpleRowHtml(t.icon, t.label, simpleCounts[i], t.key)).join('')}
+    </div>`;
+
+  // 법인카드는 카드별로, 차량관리는 차량별로 따로 이력이 쌓인다.
+  const corpCardKeys = corpCardState.cards.map(c=>'corp-card-rows:'+c.id);
+  const corpCardCounts = await Promise.all(corpCardKeys.map(k=>loadGenericHistory(k).then(h=>h.length)));
+  const corpCardSectionHtml = `
+    <div style="margin-bottom:24px;">
+      <div style="font-size:13.5px; font-weight:700; margin-bottom:8px;">💳 법인카드 (카드별) (${corpCardState.cards.length})</div>
+      ${!corpCardState.cards.length ? `<div class="empty-side">등록된 카드가 없습니다.</div>` :
+        corpCardState.cards.map((c,i)=>simpleRowHtml('💳', c.label||c.cardNumber, corpCardCounts[i], 'corp-card-rows:'+c.id)).join('')}
+    </div>`;
+  const vehicleKeys = vehicleState.vehicles.map(v=>'vehicle-rows:'+v.id);
+  const vehicleCounts = await Promise.all(vehicleKeys.map(k=>loadGenericHistory(k).then(h=>h.length)));
+  const vehicleSectionHtml = `
+    <div style="margin-bottom:24px;">
+      <div style="font-size:13.5px; font-weight:700; margin-bottom:8px;">🚗 차량관리 (차량별) (${vehicleState.vehicles.length})</div>
+      ${!vehicleState.vehicles.length ? `<div class="empty-side">등록된 차량이 없습니다.</div>` :
+        vehicleState.vehicles.map((v,i)=>simpleRowHtml('🚗', v.plate, vehicleCounts[i], 'vehicle-rows:'+v.id)).join('')}
+    </div>`;
+
   main.innerHTML = `
     <h2 class="section-title">변동내역</h2>
     <p style="font-size:12.5px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
-      영업비 정산·사업 이윤정산 건들의 변경 이력을 한 곳에서 확인하고, 필요하면 이전 시점으로 되돌릴 수 있습니다.
-      건을 수정할 때마다(최소 1분 간격으로) 자동으로 기록되며, 각 건당 최근 20개 버전까지 보관됩니다.
+      모든 탭의 변경 이력을 한 곳에서 확인하고, 필요하면 이전 시점으로 되돌릴 수 있습니다.
+      수정할 때마다(최소 1분 간격으로) 자동으로 기록되며, 최근 20개 버전까지 보관됩니다.
     </p>
     ${section('sales', '💰', '영업비 정산')}
     ${section('profit', '📊', '사업 이윤정산')}
+    ${corpCardSectionHtml}
+    ${vehicleSectionHtml}
+    ${simpleSectionHtml}
   `;
 
   main.querySelectorAll('.history-view-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       state.activeId = btn.dataset.id; // openCaseHistoryOverlay의 "다른 곳으로 이동했는지" 확인 로직과 맞춰준다
       openCaseHistoryOverlay(btn.dataset.id);
+    });
+  });
+  main.querySelectorAll('.generic-history-view-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const key = btn.dataset.key;
+      let target = simpleTargets.find(t=>t.key===key);
+      let label = target ? target.label : key;
+      let onRestore = target ? target.onRestore : null;
+      if(!onRestore && key.startsWith('corp-card-rows:')){
+        const cardId = key.slice('corp-card-rows:'.length);
+        const card = corpCardState.cards.find(c=>c.id===cardId);
+        label = card ? `법인카드 - ${card.label||card.cardNumber}` : key;
+        onRestore = corpCardHistoryOnRestore(cardId);
+      }
+      if(!onRestore && key.startsWith('vehicle-rows:')){
+        const vehicleId = key.slice('vehicle-rows:'.length);
+        const vehicle = vehicleState.vehicles.find(v=>v.id===vehicleId);
+        label = vehicle ? `차량관리 - ${vehicle.plate}` : key;
+        onRestore = vehicleHistoryOnRestore(vehicleId);
+      }
+      if(!onRestore) return;
+      openGenericHistoryOverlay(key, label, onRestore);
     });
   });
 }
