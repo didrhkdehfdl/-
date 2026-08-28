@@ -11029,6 +11029,7 @@ function buildVehicleLogPrintHtml(vehicle, rows, monthLabel){
     <div style="display:flex; align-items:center; gap:16px; margin-bottom:10px;">
       <div style="display:inline-block; background:linear-gradient(180deg,#767676 0%,#ffffff 50%,#767676 100%); border:4px double #000; padding:9px 26px; font-size:18pt; font-weight:700; font-family:'굴림','Gulim',sans-serif; color:#000; white-space:nowrap;">( ${escapeHtml(vehicle.plate)}) 차량 운행일지</div>
       ${vehicle.manager ? `<div style="color:#000; font-size:11pt; font-weight:700; white-space:nowrap;">담당자 : ${escapeHtml(vehicle.manager)}</div>` : ''}
+      ${monthLabel ? `<div style="color:#000; font-size:12pt; font-weight:700; white-space:nowrap;">${escapeHtml(monthLabel)}</div>` : ''}
       <div style="margin-left:auto; color:#000; font-size:11pt; font-weight:400; white-space:nowrap;">정비 내역 작성.</div>
     </div>
     <table class="print-table">
