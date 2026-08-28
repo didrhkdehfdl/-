@@ -605,6 +605,10 @@
         <label>알림 받을 사람(여러 명 선택 가능)</label>
         <div id="approvalAlertRecipientList" style="background:var(--panel-2); border:1px solid var(--line); border-radius:7px; padding:8px 10px; max-height:180px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
       </div>
+      <div class="field">
+        <label>알림 문구 ({count}=확인건수, {added}=신규건수, {total}=누적건수)</label>
+        <textarea id="approvalAlertMessageInput" rows="3" style="background:var(--panel-2); border:1px solid var(--line); border-radius:7px; padding:8px 10px; color:var(--text); font-size:12.5px; width:100%; resize:vertical; font-family:inherit;"></textarea>
+      </div>
       <div id="approvalAlertConfigStatus" style="font-size:12px; color:var(--muted); min-height:16px;"></div>
       <div style="display:flex; gap:8px;">
         <button id="approvalAlertDisableBtn" style="flex:1; padding:10px 14px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--neg); font-weight:600; cursor:pointer;">알림 끄기</button>
