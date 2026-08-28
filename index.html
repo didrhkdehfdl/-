@@ -6864,7 +6864,7 @@ async function ensureDepositConfirmLoaded(){
 }
 async function saveDepositConfirmList(){
   const key = depositConfirmState===depositConfirmStateOM ? OM_DEPOSIT_CONFIRM_KEY : DEPOSIT_CONFIRM_KEY;
-  try{ await saveFileToStorage(key, JSON.stringify(depositConfirmState.items)); }catch(e){ console.error(e); }
+  try{ await saveWithGenericHistory(key, JSON.stringify(depositConfirmState.items)); }catch(e){ console.error(e); }
 }
 function newDepositConfirmItem(){
   return { id: rid(), customerName:'', address:'', contractAmount:0, requested:false, requestedAt:'', depositDate:'', depositAmount:0 };
@@ -6889,7 +6889,7 @@ async function ensureOMCashReceiptLoaded(){
   omCashReceiptState.loaded = true;
 }
 async function saveOMCashReceiptList(){
-  try{ await saveFileToStorage(OM_CASH_RECEIPT_KEY, JSON.stringify(omCashReceiptState.items)); }catch(e){ console.error(e); }
+  try{ await saveWithGenericHistory(OM_CASH_RECEIPT_KEY, JSON.stringify(omCashReceiptState.items)); }catch(e){ console.error(e); }
 }
 function agentDocCategoryButtonsHtml(){
   return AGENT_DOC_CATEGORIES.map(c => `
