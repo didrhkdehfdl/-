@@ -11181,7 +11181,9 @@ async function renderVehicleMain(){
   }
   const s = vehicleState;
   const activeVehicle = s.vehicles.find(v=>v.id===s.activeVehicleId);
-  const rows = activeVehicle ? (s.rowsByVehicle[activeVehicle.id]||[]) : [];
+  const months = activeVehicle ? Object.keys(s.rowsByVehicle[activeVehicle.id]||{}).sort() : [];
+  if(activeVehicle && !months.includes(s.activeMonth)) s.activeMonth = pickDefaultVehicleMonth(s.rowsByVehicle[activeVehicle.id]);
+  const rows = activeVehicle ? ((s.rowsByVehicle[activeVehicle.id]||{})[s.activeMonth]||[]) : [];
   const vehicleIssueCount = rows.filter(r=>Object.keys(vehicleRowIssues(r)).length>0).length;
 
   main.innerHTML = `
