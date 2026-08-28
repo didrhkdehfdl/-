@@ -9370,6 +9370,9 @@ let corpCardTemplates = {}; // cardId -> { buffer, fileName, savedAt, months }
 function newCorpCardRow(){
   const row = { id: rid() };
   CORP_CARD_COLUMNS.forEach(([f])=>{ row[f] = f==='amount' ? 0 : (f==='date' ? isoDate(new Date()) : ''); });
+  // 직급은 원본 엑셀 양식에는 없는 칸이라 CORP_CARD_COLUMNS(엑셀 B~Q열
+  // 매핑)에는 넣지 않는다 — 앱에서만 입력받아 사용내역서 출력에만 쓴다.
+  row.position = '';
   return row;
 }
 // 행 하나를 검사해서 문제가 있는 칸마다 "왜 문제인지" 메시지를 담아 돌려준다.
