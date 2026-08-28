@@ -10007,6 +10007,7 @@ async function renderCorpCardMain(){
         <button class="corpcard-namemode-btn" data-mode="variable" style="padding:5px 10px; border-radius:5px; border:none; background:${s.nameMode==='variable'?'var(--gold)':'transparent'}; color:${s.nameMode==='variable'?'#1a1a1a':'var(--muted)'}; font-size:12px; cursor:pointer;">변동</button>
       </div>
       ${s.nameMode==='fixed' ? `<input type="text" id="corpCardFixedNameInput" placeholder="성명 고정값" value="${escapeHtml(s.fixedName)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
+      ${s.nameMode==='fixed' ? `<input type="text" id="corpCardFixedPositionInput" placeholder="직급 고정값" value="${escapeHtml(s.fixedPosition)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
       <button id="corpCardPrintDocBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>
       <button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">🖨 이 달 PDF로 내보내기</button>
       <button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
@@ -10171,6 +10172,8 @@ async function renderCorpCardMain(){
   });
   const fixedNameInp = document.getElementById('corpCardFixedNameInput');
   if(fixedNameInp) fixedNameInp.addEventListener('input', (e)=>{ s.fixedName = e.target.value; });
+  const fixedPositionInp = document.getElementById('corpCardFixedPositionInput');
+  if(fixedPositionInp) fixedPositionInp.addEventListener('input', (e)=>{ s.fixedPosition = e.target.value; });
   const addRowBtn = document.getElementById('corpCardAddRowBtn');
   if(addRowBtn) addRowBtn.addEventListener('click', async ()=>{
     s.rowsByCard[activeCard.id] = s.rowsByCard[activeCard.id] || {};
@@ -10180,6 +10183,7 @@ async function renderCorpCardMain(){
     // 채워서 행을 만든다 — 원본 엑셀도 같은 사람이 쓰는 행이 이어질 땐
     // 성명·부서 등을 미리 채워두는 방식이라 이걸 그대로 흉내낸 것.
     if(s.nameMode === 'fixed' && s.fixedName.trim()) newRow.name = s.fixedName.trim();
+    if(s.nameMode === 'fixed' && s.fixedPosition.trim()) newRow.position = s.fixedPosition.trim();
     s.rowsByCard[activeCard.id][s.activeMonth].push(newRow);
     await saveCorpCardRows(activeCard.id);
     renderCorpCardMain();
