@@ -10695,12 +10695,12 @@ function buildVehicleLogPrintHtml(vehicle, rows){
     return `<tr>
       <td class="pt-center">${i+1}</td>
       <td class="pt-center pt-nowrap">${escapeHtml(r.date)}</td>
-      <td class="pt-num">${r.kmBefore?fmtNum(r.kmBefore):''}</td>
-      <td class="pt-num">${r.kmAfter?fmtNum(r.kmAfter):''}</td>
-      <td class="pt-num">${dist?fmtNum(dist):''}</td>
+      <td class="pt-num">${r.kmBefore?fmtNum(r.kmBefore)+' Km':''}</td>
+      <td class="pt-num">${r.kmAfter?fmtNum(r.kmAfter)+' Km':''}</td>
+      <td class="pt-num">${dist?fmtNum(dist)+' Km':''}</td>
       <td class="pt-note">${escapeHtml(r.purpose)}</td>
       <td class="pt-center">${escapeHtml(r.driver)}</td>
-      <td class="pt-num">${r.fuelCost==='X'?'X':(r.fuelCost?fmtNum(r.fuelCost):'')}</td>
+      <td class="pt-num">${r.fuelCost==='X'?'X':(r.fuelCost?fmtNum(r.fuelCost)+' 원':'')}</td>
       <td class="pt-center">${escapeHtml(r.hipass)}</td>
       <td class="pt-note">${escapeHtml(r.note)}</td>
     </tr>`;
