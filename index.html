@@ -10868,8 +10868,18 @@ async function ensureVehicleLoaded(){
     vehicleState.activeVehicleId = (saved && saved.activeVehicleId) || (vehicleState.vehicles[0] ? vehicleState.vehicles[0].id : '');
     for(const v of vehicleState.vehicles){
       const rowsText = await loadFileFromStorage('vehicle-rows:'+v.id);
-      vehicleState.rowsByVehicle[v.id] = rowsText ? JSON.parse(rowsText) : [];
+      let parsed = rowsText ? JSON.parse(rowsText) : {};
+      if(Array.isArray(parsed)){
+        // 예전 버전(월 구분 없이 한 배열에 다 담던 방식)으로 저장된 데이터를
+        // 날짜 기준으로 달마다 나눠서 새 형식으로 옮겨 저장한다.
+        parsed = groupVehicleRowsByMonth(parsed);
+        vehicleState.rowsByVehicle[v.id] = parsed;
+        await saveVehicleRows(v.id);
+      } else {
+        vehicleState.rowsByVehicle[v.id] = parsed || {};
+      }
     }
+    vehicleState.activeMonth = pickDefaultVehicleMonth(vehicleState.rowsByVehicle[vehicleState.activeVehicleId]);
     const metaText = await loadFileFromStorage(VEHICLE_TEMPLATE_META_KEY);
     const meta = metaText ? JSON.parse(metaText) : null;
     if(meta){
