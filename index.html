@@ -9761,7 +9761,8 @@ async function handleCorpCardAdd(){
 // 형식이라(사용일·부서·성명이 한 번만 적히고, 그 아래 사용처별 내역이 최대
 // 4줄까지 들어간다) 체크한 행들을 (날짜, 부서, 성명) 기준으로 묶어서 그룹마다
 // 전표를 한 장씩(4건 넘으면 별지로 여러 장) 만든다.
-// "사용장소"·"통행여부"는 법인카드 탭에 대응되는 데이터가 없어 빈칸으로 남는다.
+// "통행여부"는 법인카드 탭에 대응되는 데이터가 없어 빈칸으로 남는다.
+// "사용장소"는 row.venue(법인카드 탭의 "사용장소" 칸)를 그대로 옮겨 적는다.
 let corpCardSelectedIds = new Set();
 function groupCorpCardRowsForDoc(rows){
   const order = [];
@@ -9790,7 +9791,7 @@ function buildCorpCardUsageDocPage(items, card){
   const itemRows = pad.map(r=>`
     <tr>
       <td style="height:34px; ${itemCellStyle}">${r?escapeHtml(r.place):''}</td>
-      <td style="${itemCellStyle}"></td>
+      <td style="${itemCellStyle}">${r?escapeHtml(r.venue):''}</td>
       <td style="${itemCellStyle}">${r?escapeHtml(r.plantName):''}</td>
       <td style="${itemCellStyle}">${r?escapeHtml(r.workDetail):''}</td>
       <td class="pt-center" style="${itemCellStyle}">${r?escapeHtml(r.expenseType):''}</td>
