@@ -1784,7 +1784,7 @@ async function saveWithGenericHistory(storageKey, value){
 const CONTRACTS_INDEX_KEY = 'contracts-index';
 async function saveContractsIndex(list){
   try{
-    await saveFileToStorage(CONTRACTS_INDEX_KEY, JSON.stringify(list));
+    await saveWithGenericHistory(CONTRACTS_INDEX_KEY, JSON.stringify(list));
   }catch(e){ console.error(e); }
 }
 async function loadContractFileData(id){
