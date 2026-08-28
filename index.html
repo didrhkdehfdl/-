@@ -9625,9 +9625,16 @@ function recomputeCorpCardMismatches(){
     if(!parts) return;
     const approvalForCard = s.approvalEntries.filter(a=>approvalRowMatchesCard(a.cardNoStr, parts));
     if(!approvalForCard.length) return;
+    // 승인내역을 아직 안 올린 달까지 통째로 "승인내역 없음"으로 빨갛게
+    // 칠하면 안 되니, 실제로 승인내역이 있는 달(YYYY-MM)의 행만 대사
+    // 대상으로 삼는다 — 비교할 기준 자체가 없는 달은 그냥 건드리지 않는다.
+    const approvalMonths = new Set(approvalForCard.map(a=>String(a.isoDate||'').slice(0,7)));
     const ledgerRows = [];
     Object.values(s.rowsByCard[card.id]||{}).forEach(monthRows=>{
-      (monthRows||[]).forEach(r=>{ if(r.date) ledgerRows.push({ id:r.id, isoDate:r.date, amount: Math.abs(Number(r.amount)||0), place:r.place }); });
+      (monthRows||[]).forEach(r=>{
+        if(!r.date || !approvalMonths.has(String(r.date).slice(0,7))) return;
+        ledgerRows.push({ id:r.id, isoDate:r.date, amount: Math.abs(Number(r.amount)||0), place:r.place });
+      });
     });
     s.mismatchByCard[card.id] = reconcileCorpCardWithApproval(ledgerRows, approvalForCard);
   });
