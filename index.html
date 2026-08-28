@@ -10027,6 +10027,7 @@ async function renderCorpCardMain(){
           <th style="padding:6px 4px; color:var(--muted); width:90px;">부서</th>
           <th style="padding:6px 4px; color:var(--muted); width:80px;">성명</th>
           <th style="padding:6px 4px; color:var(--muted); width:70px;">직급</th>
+          <th style="padding:6px 4px; color:var(--muted); width:100px;">사용장소</th>
           <th style="padding:6px 4px; color:var(--muted); width:80px;">법인</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">사업분류</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">프로젝트</th>
@@ -10063,6 +10064,7 @@ async function renderCorpCardMain(){
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="width:100%; ${issues.dept?errBorder:''}">${note('dept')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="name" value="${escapeHtml(row.name)}" style="width:100%; ${issues.name?errBorder:''}">${note('name')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="position" value="${escapeHtml(row.position)}" style="width:100%;"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="venue" value="${escapeHtml(row.venue)}" style="width:100%;"></td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="corp" value="${escapeHtml(row.corp)}" style="width:100%; ${issues.corp?errBorder:''}">${note('corp')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="bizCategory" value="${escapeHtml(row.bizCategory)}" style="width:100%; ${issues.bizCategory?errBorder:''}">${note('bizCategory')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="project" value="${escapeHtml(row.project)}" style="width:100%; ${issues.project?errBorder:''}">${note('project')}</td>
