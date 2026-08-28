@@ -1644,7 +1644,11 @@ async function notifyApprovalUpload(parsedCount, addedCount, totalCount){
     const listText = await loadFileFromStorage(NOTIFICATION_QUEUE_KEY);
     const queue = listText ? JSON.parse(listText) : [];
     const fromEmail = (fbAuth.currentUser && fbAuth.currentUser.email) || '';
-    const body = `승인내역 ${fmtNum(parsedCount)}건을 확인해서 ${fmtNum(addedCount)}건을 새로 추가했습니다. (누적 ${fmtNum(totalCount)}건)`;
+    const template = (config && config.message) || CORP_CARD_APPROVAL_ALERT_DEFAULT_MESSAGE;
+    const body = template
+      .replace(/\{count\}/g, fmtNum(parsedCount))
+      .replace(/\{added\}/g, fmtNum(addedCount))
+      .replace(/\{total\}/g, fmtNum(totalCount));
     toUids.forEach(toUid=>{
       queue.push({
         id: rid(), toUid, fromEmail,
