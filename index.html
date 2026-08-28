@@ -752,10 +752,10 @@ async function loadPerfRows(){
   }catch(e){ return []; }
 }
 const debouncedSavePerfRows = debounce(()=>{
-  saveFileToStorage(PERF_ROWS_KEY, JSON.stringify(importState.manualRows));
+  saveWithGenericHistory(PERF_ROWS_KEY, JSON.stringify(importState.manualRows));
 }, 500);
 const debouncedSaveImportRows = debounce(()=>{
-  saveFileToStorage(IMPORT_DATA_KEY, JSON.stringify({
+  saveWithGenericHistory(IMPORT_DATA_KEY, JSON.stringify({
     fileName: importState.fileName, sheetNames: importState.sheetNames,
     sheetName: importState.sheetName, rows: importState.rows
   }));
