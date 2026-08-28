@@ -8448,7 +8448,10 @@ async function renderCardReconMain(){
     </p>
 
     <div class="table-wrap" style="padding:14px; margin-bottom:16px;">
-      <div style="font-size:12.5px; font-weight:600; margin-bottom:8px;">카드사 승인내역 업로드(대사)</div>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <div style="font-size:12.5px; font-weight:600;">카드사 승인내역 업로드(대사)</div>
+        ${isAdminUser ? `<button id="approvalAlertConfigBtn" style="background:transparent; border:1px solid var(--line); color:var(--gold); border-radius:6px; padding:6px 10px; font-size:11.5px; cursor:pointer;">🔔 업로드 알림 설정</button>` : ''}
+      </div>
       <div style="font-size:11.5px; color:var(--muted); line-height:1.6; margin-bottom:10px;">
         올리면 카드번호로 <b>법인카드</b> 탭의 카드를 찾아, 이미 입력된 내역과 날짜·금액을 대조합니다.
         사용처 또는 금액이 다르면 법인카드 탭에서 해당 행이 빨간줄로 표시됩니다. 업로드한 내역은 계속 누적되며 중복은 자동으로 걸러집니다.
