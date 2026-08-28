@@ -8174,8 +8174,12 @@ function simpleHistoryTargets(){
         inspectionState.items = JSON.parse(raw);
         if(state.activeTab==='inspection') renderInspectionMain();
       } },
-    { key: AGENT_DOCS_INDEX_KEY, icon:'👤', label:'영업자용', onRestore: async raw => {
+    { key: AGENT_DOCS_INDEX_KEY, icon:'👤', label:'영업자용 (서류)', onRestore: async raw => {
         agentDocsStateDefault.items = JSON.parse(raw);
+        if(state.activeTab==='agentDocs') renderAgentDocsMain();
+      } },
+    { key: DEPOSIT_CONFIRM_KEY, icon:'👤', label:'영업자용 (입금확인)', onRestore: async raw => {
+        depositConfirmStateDefault.items = JSON.parse(raw);
         if(state.activeTab==='agentDocs') renderAgentDocsMain();
       } },
     { key: MODULE_MASTER_KEY, icon:'🏷️', label:'모듈 단가 관리', onRestore: async raw => {
