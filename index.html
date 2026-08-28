@@ -11060,8 +11060,9 @@ function buildVehicleLogPrintHtml(vehicle, rows, monthLabel){
     </table>
   </div>`;
 }
-function openVehiclePrintPreview(vehicle, rows){
-  const html = buildVehicleLogPrintHtml(vehicle, rows);
+function openVehiclePrintPreview(vehicle, rows, month){
+  const monthLabel = month ? vehicleMonthLabel(month) : '';
+  const html = buildVehicleLogPrintHtml(vehicle, rows, monthLabel);
   document.getElementById('printSheet').innerHTML = html;
   document.getElementById('printOverlay').classList.add('show');
   document.body.classList.add('printing-preview');
@@ -11071,7 +11072,7 @@ function openVehiclePrintPreview(vehicle, rows){
   landscapeBtn.style.display = '';
   landscapeBtn.textContent = '차량운행일지 인쇄';
   landscapeBtn.onclick = () => openPrintWindow(html, 'size:landscape; margin:10mm;');
-  pdfFilenameOverride = `차량운행일지_${vehicle.plate}_${isoDate(new Date())}`;
+  pdfFilenameOverride = `차량운행일지_${vehicle.plate}_${month||isoDate(new Date())}`;
 }
 // 차량마다, 이미 서식이 갖춰진 데이터 칸(8행~32행)을 지금 입력된 내역으로
 // 통째로 다시 채운다. B/D/F/H/J/W열(단위 글자)은 절대 건드리지 않는다.
