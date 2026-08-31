@@ -1230,6 +1230,13 @@ function profitCaseDupKey(p){
 // 구조물 구매가를 고치면 판매가를 자동으로 20% 마진 처리)을 그대로 따라간다.
 function applyProfitListFieldChange(p, col, inputEl){
   const pfield = col.pfield || col.key;
+  // renderProfitMain의 [data-pf] 핸들러와 같은 이유로, 실적리스트에서
+  // 만들어진 건이면 여기서 직접 고친 항목도 touchedFields에 표시해서
+  // 나중에 실적리스트가 바뀌어도 덮어써지지 않게 한다.
+  if(p.sourceRowId){
+    if(!p.touchedFields) p.touchedFields = [];
+    if(!p.touchedFields.includes(pfield)) p.touchedFields.push(pfield);
+  }
   let val;
   if(col.edit === 'money') val = Number(String(inputEl.value).replace(/[^0-9.-]/g,'')) || 0;
   else if(col.edit === 'number') val = inputEl.value === '' ? 0 : Number(inputEl.value);
