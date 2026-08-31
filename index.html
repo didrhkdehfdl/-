@@ -2862,14 +2862,19 @@ function createNewCase(){
 function removeActiveCase(){
   if(!activeCase) return;
   if(!confirm('이 정산 건을 삭제할까요? 되돌릴 수 없습니다.')) return;
-  const id = activeCase.id;
+  deleteProfitCaseById(activeCase.id);
+  renderSidebar();
+  renderMain();
+}
+
+// removeActiveCase()와 같은 삭제 로직을 확인창은 호출한 쪽에서 이미 띄운
+// 뒤에 id만 받아 수행한다 — 가로 목록처럼 activeCase가 아닌 건도 지울 수 있어야 해서.
+function deleteProfitCaseById(id){
   delete caseCache[id];
   deleteCaseStorage(id);
   state.cases = state.cases.filter(x=>x.id!==id);
   saveIndex(state.cases);
-  activeCase = null; state.activeId = null;
-  renderSidebar();
-  renderMain();
+  if(activeCase && activeCase.id===id){ activeCase = null; state.activeId = null; }
 }
 
 function debounce(fn, ms){
