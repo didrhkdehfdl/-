@@ -11542,19 +11542,19 @@ async function renderVehicleMain(){
       <table class="vehicle-table" style="border-collapse:collapse; min-width:1200px; font-size:12px;">
         <thead><tr>
           <th style="padding:6px 4px; color:var(--muted); position:sticky; left:0; background:var(--panel-2); width:36px;">순번</th>
-          <th style="padding:6px 4px; color:var(--muted); width:110px;">운행일자</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">운행전(Km)</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">운행후(Km)</th>
+          <th style="padding:6px 4px; color:var(--muted); width:110px;">운행일자${colFilterIconHtml(colFilterTabKey,'date')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">운행전(Km)${colFilterIconHtml(colFilterTabKey,'kmBefore')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">운행후(Km)${colFilterIconHtml(colFilterTabKey,'kmAfter')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:80px;">거리(Km)</th>
-          <th style="padding:6px 4px; color:var(--muted); width:220px;">방문업체 및 운행목적</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">운행자</th>
-          <th style="padding:6px 4px; color:var(--muted); width:100px;">주유비</th>
-          <th style="padding:6px 4px; color:var(--muted); width:80px;">하이패스<br>통행여부</th>
-          <th style="padding:6px 4px; color:var(--muted); width:160px;">비고</th>
+          <th style="padding:6px 4px; color:var(--muted); width:220px;">방문업체 및 운행목적${colFilterIconHtml(colFilterTabKey,'purpose')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">운행자${colFilterIconHtml(colFilterTabKey,'driver')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:100px;">주유비${colFilterIconHtml(colFilterTabKey,'fuelCost')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:80px;">하이패스<br>통행여부${colFilterIconHtml(colFilterTabKey,'hipass')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:160px;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
           <th style="padding:6px 4px; color:var(--muted);">삭제</th>
         </tr></thead>
         <tbody>
-          ${rows.map((row,i)=>{
+          ${visibleRows.map((row,i)=>{
             const dist = vehicleDistance(row);
             const issues = vehicleRowIssues(row);
             const isMismatch = Object.keys(issues).length>0;
