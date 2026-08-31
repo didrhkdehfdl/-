@@ -11813,9 +11813,11 @@ function renderUploadMode(){
   const st = importState;
   const sheetOptions = st.sheetNames.map(n=>`<option value="${escapeHtml(n)}" ${n===st.sheetName?'selected':''}>${escapeHtml(n)}</option>`).join('');
 
-  const filtered = st.search
+  registerColFilterProvider('import-upload', ()=>st.rows, renderImportMain);
+  let filtered = st.search
     ? st.rows.filter(r => (r.customer||'').includes(st.search) || (r.agent||'').includes(st.search) || (r.team||'').includes(st.search))
     : st.rows;
+  filtered = filtered.filter(r => rowPassesColumnFilters('import-upload', r));
   st.rows.forEach(r => { if(!r.id) r.id = rid(); });
   const capped = filtered.slice(0, 200);
 
