@@ -9751,11 +9751,14 @@ function corpCardRowIssues(row, mm){
   // 뜻으로 보고 세 경우 다 경고하지 않는다.
   const isMealAllowance = String(row.expenseType||'').trim()==='식대';
   const isEntertainment = String(row.expenseType||'').trim()==='접대비';
+  const isFuelCost = String(row.expenseType||'').trim()==='주유비';
   const noteHasContent = /[^\s\-–—]/.test(row.note||'');
   if(isMealAllowance){
     if(!noteHasContent) issues.note = '빈칸을 채워주세요';
   } else if(isEntertainment){
     if(!/^.+\/\/.+\(.+\)\s*$/.test(String(row.note||'').trim())) issues.note = '"성명 // 상대방 (업체)" 형식으로 적어주세요';
+  } else if(isFuelCost){
+    if(noteHasContent) issues.note = '이름 지워주세요';
   } else if(noteHasContent){
     issues.note = '업무내용에 적어주세요';
   }
