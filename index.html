@@ -784,7 +784,8 @@ function newRecord(defaultCorp){
     id: rid(),
     date:'', contractDate:'', corp: defaultCorp||'', customer:'', address:'',
     team:'', module:'', module2:'', inverter:'금비 3.7kW*1', capacity:'3.0kw', structureType:'',
-    deposit:0, vatAuto:true, vatManual:0, companyPrice:0, extra:0, note:''
+    deposit:0, vatAuto:true, vatManual:0, companyPrice:0, extra:0, note:'',
+    sourceRowId:null, touchedFields:[]
   };
 }
 // ---------- 모듈 단가 마스터 데이터 ----------
