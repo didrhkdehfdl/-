@@ -12424,6 +12424,7 @@ function wirePerfRowEvents(){
         }
       }
       debouncedSavePerfRows();
+      debouncedSyncFromManualRows();
     };
     inp.addEventListener('input', handler);
     inp.addEventListener('change', handler);
