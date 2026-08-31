@@ -496,7 +496,10 @@
     <div id="caseList"></div>
     <button id="appLogoutBtn" style="margin:0 18px 16px; padding:9px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:12px; cursor:pointer;">로그아웃</button>
   </aside>
-  <main id="main"></main>
+  <div style="display:flex; flex-direction:column; flex:1; min-width:0;">
+    <div id="presenceBanner" style="display:none; padding:8px 22px; font-size:12.5px; background:rgba(224,163,57,.08); border-bottom:1px solid var(--gold-dim); color:var(--gold);"></div>
+    <main id="main" style="flex:1;"></main>
+  </div>
 </div>
 <div id="printOverlay">
   <div style="display:flex; flex-direction:column; align-items:center;">
