@@ -5672,7 +5672,8 @@ async function renderContractsMain(){
     await ensureContractsLoaded();
     if(state.activeTab !== 'contracts') return; // navigated away while loading
   }
-  const items = sortedContracts();
+  registerColFilterProvider('contracts', ()=>contractsState.items, renderContractsMain);
+  const items = sortedContracts().filter(it => rowPassesColumnFilters('contracts', it));
 
   main.innerHTML = `
     <h2 class="section-title">계약서 관리</h2>
