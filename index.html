@@ -6568,9 +6568,9 @@ async function renderInspectionMain(){
     <div class="table-wrap">
       <table style="width:100%; border-collapse:collapse;">
         <thead><tr>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:150px;">대표자 성명</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:150px;">점검년월일</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명${colFilterIconHtml(inspectionFilterTabKey,'fileName')}</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:150px;">대표자 성명${colFilterIconHtml(inspectionFilterTabKey,'extractedName')}</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:150px;">점검년월일${colFilterIconHtml(inspectionFilterTabKey,'extractedDate')}</th>
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:90px;">상태</th>
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:190px;">작업</th>
         </tr></thead>
