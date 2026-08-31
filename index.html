@@ -11567,6 +11567,9 @@ async function patchVehicleTemplate(masterArrayBuffer, vehicles, rowsByVehicle){
 }
 async function renderVehicleMain(){
   const main = document.getElementById('main');
+  // corpCard와 같은 이유로, 다시 그리기 전 .table-wrap-frozen의 스크롤
+  // 위치를 기억했다가 다시 그린 뒤 복원한다.
+  const savedScrollTop = document.getElementById('vehicleTableWrap')?.scrollTop;
   if(!vehicleState.loaded){
     main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
     await ensureVehicleLoaded();
