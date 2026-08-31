@@ -9902,12 +9902,38 @@ function parseApprovalWorkbookForCorpCard(wb){
         approvalNo: colApprovalNo>=0 ? String(row[colApprovalNo]||'').trim() : '',
         cardNoStr,
         isoDate: normalizeDotDate(row[cols.colDate]),
-        amount: Math.abs(Math.round(Number(row[cols.colAmount])||0)),
+        rawAmount: Math.round(Number(row[cols.colAmount])||0), // 부호를 그대로 남겨서 취소 짝을 찾는다
         place: String(row[cols.colPlace]||'').trim(),
       });
     }
   }
-  return rows;
+  return excludeCancelledApprovalPairs(rows);
+}
+// 결제 후 같은 금액을 취소한 건(예: 150,000원 결제 → 150,000원 취소)은 카드사
+// 승인내역에 보통 같은 승인번호로 금액 부호만 반대인 행 2개로 남는다 — 실제로
+// 돈이 나간 게 아니므로 둘 다 대사 대상에서 뺀다. 승인번호가 없는 카드사
+// 양식이면 카드번호·날짜·가맹점이 같고 금액 부호만 반대인 짝으로 대신 찾는다.
+function excludeCancelledApprovalPairs(rows){
+  const cancelled = new Set();
+  for(let i=0;i<rows.length;i++){
+    if(cancelled.has(i)) continue;
+    for(let j=i+1;j<rows.length;j++){
+      if(cancelled.has(j)) continue;
+      const a = rows[i], b = rows[j];
+      if(a.rawAmount === 0 || a.rawAmount !== -b.rawAmount) continue;
+      const samePair = (a.approvalNo && b.approvalNo)
+        ? a.approvalNo === b.approvalNo
+        : (a.cardNoStr===b.cardNoStr && a.isoDate===b.isoDate && a.place===b.place);
+      if(samePair){
+        cancelled.add(i); cancelled.add(j);
+        break;
+      }
+    }
+  }
+  return rows.filter((r,i)=>!cancelled.has(i)).map(r => ({
+    approvalNo: r.approvalNo, cardNoStr: r.cardNoStr, isoDate: r.isoDate,
+    amount: Math.abs(r.rawAmount), place: r.place,
+  }));
 }
 function mergeApprovalEntries(existing, incoming){
   const keyOf = e => e.approvalNo ? ('no:'+e.approvalNo) : `ca:${e.cardNoStr}|${e.isoDate}|${e.amount}|${e.place}`;
