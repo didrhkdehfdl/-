@@ -7456,14 +7456,14 @@ async function renderAgentDocsMain(){
         <table class="agentdoc-table" style="width:100%; border-collapse:collapse;">
           <thead><tr>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:170px;">고객명</th>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:70px;">구분</th>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:130px;">사업자명</th>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">대표자명</th>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:120px;">사업자번호</th>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">업태</th>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">종목</th>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:150px;">이메일</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:170px;">고객명${colFilterIconHtml(agentFilterTabKey,'customerName')}</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:70px;">구분${colFilterIconHtml(agentFilterTabKey,'isCorporate')}</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:130px;">사업자명${colFilterIconHtml(agentFilterTabKey,'bizName')}</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">대표자명${colFilterIconHtml(agentFilterTabKey,'ownerName')}</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:120px;">사업자번호${colFilterIconHtml(agentFilterTabKey,'bizNumber')}</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">업태${colFilterIconHtml(agentFilterTabKey,'bizType')}</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:100px;">종목${colFilterIconHtml(agentFilterTabKey,'bizItem')}</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:150px;">이메일${colFilterIconHtml(agentFilterTabKey,'email')}</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:150px;">세금계산서</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:210px;">작업</th>
           </tr></thead>
