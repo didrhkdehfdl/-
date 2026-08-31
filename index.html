@@ -11462,6 +11462,20 @@ async function saveVehicleList(){
 async function saveVehicleRows(vehicleId){
   await saveWithGenericHistory('vehicle-rows:'+vehicleId, JSON.stringify(vehicleState.rowsByVehicle[vehicleId]||{}));
 }
+// corpCard와 같은 이유로, 지금 보고 있는 차량의 운행기록만 실시간으로 받는다.
+let vehicleRowsSub = null; // { unsub, vehicleId }
+function ensureVehicleRowsSubscribed(vehicleId){
+  if(!vehicleId || (vehicleRowsSub && vehicleRowsSub.vehicleId === vehicleId)) return;
+  if(vehicleRowsSub) vehicleRowsSub.unsub();
+  const sub = subscribeListToStorage('vehicle-rows:'+vehicleId, vehicleState, {
+    migrate: (data) => {
+      vehicleState.rowsByVehicle[vehicleId] = (data && typeof data==='object' && !Array.isArray(data)) ? data : {};
+    },
+    isActive: () => state.activeTab==='vehicle' && vehicleState.activeVehicleId===vehicleId,
+    render: renderVehicleMain,
+  });
+  vehicleRowsSub = { unsub: sub.unsub, vehicleId };
+}
 async function saveVehicleTemplateFile(buffer, fileName){
   const savedAt = new Date().toISOString();
   await saveFileToStorage(VEHICLE_TEMPLATE_B64_KEY, arrayBufferToBase64(buffer), 30000);
