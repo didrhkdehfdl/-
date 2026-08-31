@@ -9276,7 +9276,7 @@ function colLetterToIndex(letter){
   for(const ch of letter) n = n*26 + (ch.charCodeAt(0)-64);
   return n-1;
 }
-let omListState = { rows:[], loaded:false, loading:false, fileName:'', search:'', page:1, sortKey:'', sortDir:'asc' };
+let omListState = { rows:[], loaded:false, loading:false, fileName:'', search:'', page:1, sortKey:'receivedDate', sortDir:'desc' };
 // 행마다 여러 줄 입력칸(textarea)이 4개씩 있어서, 실제 규모(400건대)를 전부
 // 한 번에 그리면(textarea 1,500~2,000개) 브라우저 자체의 레이아웃/페인트
 // 비용이 커서 탭 전환이 눈에 띄게 느려진다(실측 O&M 리스트 렌더 후 처리까지
