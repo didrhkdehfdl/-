@@ -5491,6 +5491,12 @@ function renderProfitMain(){
     const isMoney = inp.dataset.numeric === 'true';
     const handler = () => {
       const key = inp.dataset.pf;
+      // 실적리스트에서 자동으로 만들어진 건이면, 상세 화면에서 직접 고친
+      // 항목은 나중에 실적리스트가 바뀌어도 덮어써지지 않도록 표시해둔다.
+      if(p.sourceRowId){
+        if(!p.touchedFields) p.touchedFields = [];
+        if(!p.touchedFields.includes(key)) p.touchedFields.push(key);
+      }
       let val;
       if(isMoney) val = parseFloat(String(inp.value).replace(/,/g,'')) || 0;
       else if(inp.type==='number') val = (inp.value===''?0:Number(inp.value));
