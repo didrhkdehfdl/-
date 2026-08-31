@@ -757,18 +757,6 @@ function newPerfRow(){
 }
 const PERF_ROWS_KEY = 'perf-rows';
 const IMPORT_DATA_KEY = 'import-upload-data';
-async function loadImportData(){
-  try{
-    const value = await loadFileFromStorage(IMPORT_DATA_KEY);
-    return value ? JSON.parse(value) : null;
-  }catch(e){ return null; }
-}
-async function loadPerfRows(){
-  try{
-    const value = await loadFileFromStorage(PERF_ROWS_KEY);
-    return value ? JSON.parse(value) : [];
-  }catch(e){ return []; }
-}
 const debouncedSavePerfRows = debounce(()=>{
   saveWithGenericHistory(PERF_ROWS_KEY, JSON.stringify(importState.manualRows));
 }, 500);
