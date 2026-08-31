@@ -9633,13 +9633,16 @@ async function renderOMListMain(){
   const omListNextBtn = document.getElementById('omListNextPageBtn');
   if(omListNextBtn) omListNextBtn.addEventListener('click', ()=>{ omListState.page += 1; renderOMListMain(); });
   document.getElementById('omListAddRowBtn').addEventListener('click', async ()=>{
-    omListState.rows.push(newOMListRow());
-    // 검색어나 정렬이 걸려있으면 빈 칸투성이인 새 행이 걸러지거나 엉뚱한
-    // 페이지로 밀려나서 눌러도 아무 반응이 없는 것처럼 보인다 — 새 행이
-    // 확실히 보이도록 검색·정렬을 풀고, 새 행이 있는 마지막 페이지로 이동한다.
+    const row = newOMListRow();
+    row.receivedDate = isoDate(new Date()); // 방금 들어온 건이니 접수일자를 오늘로 기본값 지정
+    omListState.rows.push(row);
+    // 검색어가 걸려있으면 빈 칸투성이인 새 행이 걸러져서 눌러도 아무 반응이
+    // 없는 것처럼 보인다 — 검색은 풀고, 정렬은 접수일자 내림차순으로 맞춰서
+    // 오늘 날짜인 새 행이 제일 최신 쪽(맨 위)에 보이게 한다.
     omListState.search = '';
-    omListState.sortKey = '';
-    omListState.page = Math.max(1, Math.ceil(omListState.rows.length / OM_LIST_PAGE_SIZE));
+    omListState.sortKey = 'receivedDate';
+    omListState.sortDir = 'desc';
+    omListState.page = 1;
     await saveOMListRows();
     renderOMListMain();
   });
