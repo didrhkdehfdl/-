@@ -10496,6 +10496,11 @@ async function renderCorpCardMain(){
   const rows = (activeCard && s.rowsByCard[activeCard.id] && s.rowsByCard[activeCard.id][s.activeMonth]) || [];
   const mismatchMap = (activeCard && s.mismatchByCard[activeCard.id]) || new Map();
   const issueCountInMonth = rows.filter(r=>Object.keys(corpCardRowIssues(r, mismatchMap.get(r.id))).length>0).length;
+  // 카드·달마다 필터 상태를 따로 두어서, 다른 카드나 다른 달로 넘어가면
+  // 필터가 새로 시작된다(엉뚱한 필터가 다른 화면까지 이어지지 않게).
+  const colFilterTabKey = `corpCard:${activeCard?activeCard.id:'none'}:${s.activeMonth}`;
+  if(activeCard) registerColFilterProvider(colFilterTabKey, ()=>rows, renderCorpCardMain);
+  const visibleRows = activeCard ? rows.filter(r=>rowPassesColumnFilters(colFilterTabKey, r)) : rows;
 
   main.innerHTML = `
     <h2 class="section-title">법인카드</h2>
