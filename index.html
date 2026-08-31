@@ -4283,6 +4283,16 @@ async function renderProfitListMain(){
       openCase(btn.dataset.id);
     });
   });
+  main.querySelectorAll('.profit-list-del-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const p = cases.find(c=>c.id===btn.dataset.id);
+      if(!confirm(`"${p?p.customer||'이름 없음':'이 건'}" 이윤정산 건을 삭제할까요? 되돌릴 수 없습니다.`)) return;
+      deleteProfitCaseById(btn.dataset.id);
+      ls.selected.delete(btn.dataset.id);
+      renderSidebar();
+      renderProfitListMain();
+    });
+  });
   const checkAll = document.getElementById('profitListCheckAll');
   if(checkAll) checkAll.addEventListener('change', (e)=>{
     if(e.target.checked) cases.forEach(c=>ls.selected.add(c.id));
