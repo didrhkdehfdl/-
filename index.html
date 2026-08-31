@@ -7973,6 +7973,7 @@ async function renderInquiryMain(){
 
   main.innerHTML = `
     <h2 class="section-title">문의 대응</h2>
+    <p style="font-size:13px; color:var(--muted); margin:0 0 14px;">정확한 주소로 작성해주세요.</p>
     <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
       <input type="file" id="inquiryImportInput" accept=".txt" style="font-size:13px; color:var(--muted);">
       <input id="inquirySearch" placeholder="지역/질문/고객명/연락처 검색" value="${escapeHtml(s.search)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; min-width:220px;">
