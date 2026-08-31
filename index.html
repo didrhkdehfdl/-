@@ -11855,7 +11855,7 @@ function renderUploadMode(){
           <thead><tr>
             <th style="padding:8px 4px; width:28px;"><input type="checkbox" id="importSelectAll"></th>
             <th style="padding:8px 5px; font-size:10.5px; color:var(--muted); width:36px;">No.</th>
-            ${PERF_COLUMNS.map(([f,label])=>`<th style="padding:8px 6px; font-size:10.5px; color:var(--muted); text-align:left; white-space:nowrap;">${label}</th>`).join('')}
+            ${PERF_COLUMNS.map(([f,label])=>`<th style="padding:8px 6px; font-size:10.5px; color:var(--muted); text-align:left; white-space:nowrap;">${label}${colFilterIconHtml('import-upload',f)}</th>`).join('')}
             <th style="padding:8px 6px; font-size:10.5px; color:var(--muted); width:150px;">작업</th>
           </tr></thead>
           <tbody>
