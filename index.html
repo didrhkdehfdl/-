@@ -10202,6 +10202,23 @@ async function ensureCorpCardLoaded(){
   corpCardState.loaded = true;
   corpCardState.loading = false;
 }
+// 지금 보고 있는 카드의 사용내역만 실시간으로 받는다 — 카드마다 문서가
+// 따로 있어서(월별로 나뉜 한 카드 전체가 문서 하나) 모든 카드를 한꺼번에
+// 구독하는 대신, 카드를 바꿀 때마다 이전 카드 구독을 끊고 새 카드를 구독한다.
+let corpCardRowsSub = null; // { unsub, cardId }
+function ensureCorpCardRowsSubscribed(cardId){
+  if(!cardId || (corpCardRowsSub && corpCardRowsSub.cardId === cardId)) return;
+  if(corpCardRowsSub) corpCardRowsSub.unsub();
+  const sub = subscribeListToStorage('corp-card-rows:'+cardId, corpCardState, {
+    migrate: (data) => {
+      corpCardState.rowsByCard[cardId] = (data && typeof data==='object' && !Array.isArray(data)) ? data : {};
+      recomputeCorpCardMismatches();
+    },
+    isActive: () => state.activeTab==='corpCard' && corpCardState.activeCardId===cardId,
+    render: renderCorpCardMain,
+  });
+  corpCardRowsSub = { unsub: sub.unsub, cardId };
+}
 async function saveCorpCardList(){
   await saveFileToStorage(CORP_CARD_LIST_KEY, JSON.stringify({ cards: corpCardState.cards, activeCardId: corpCardState.activeCardId }));
 }
