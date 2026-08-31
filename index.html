@@ -12189,6 +12189,7 @@ function renderUploadMode(){
       });
     }
   });
+  wirePresenceCells(main.querySelectorAll('[data-perf]'), el => importCellKey('import-upload', el));
 
   main.querySelectorAll('.import-row-check').forEach(cb=>{
     cb.addEventListener('change', ()=>{
