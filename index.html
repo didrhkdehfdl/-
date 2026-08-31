@@ -11982,7 +11982,7 @@ function renderManualEntry(){
         <thead><tr>
           <th style="padding:7px 4px; width:28px;"><input type="checkbox" id="perfSelectAll"></th>
           <th style="padding:7px 5px; font-size:10.5px; color:var(--muted); width:36px;">No.</th>
-          ${PERF_COLUMNS.map(([f,label])=>`<th style="padding:7px 6px; font-size:10.5px; color:var(--muted); white-space:nowrap;">${label}</th>`).join('')}
+          ${PERF_COLUMNS.map(([f,label])=>`<th style="padding:7px 6px; font-size:10.5px; color:var(--muted); white-space:nowrap;">${label}${colFilterIconHtml('import-manual',f)}</th>`).join('')}
           <th style="padding:7px 5px; font-size:10.5px; color:var(--muted); width:150px;">건 생성</th>
           <th style="padding:7px 5px; font-size:10.5px; color:var(--muted); width:50px;">삭제</th>
         </tr></thead>
