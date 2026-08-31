@@ -9111,7 +9111,8 @@ function renderInvoicePrepMain(){
           <th style="padding:6px; font-size:10.5px; color:var(--muted);">삭제</th>
         </tr></thead>
         <tbody>
-          ${companyMaster.map(c=>`<tr data-cid="${c.id}">
+          ${(()=>{ registerColFilterProvider('companyMaster', ()=>companyMaster, renderInvoicePrepMain); return ''; })()}
+          ${companyMaster.filter(c=>rowPassesColumnFilters('companyMaster', c)).map(c=>`<tr data-cid="${c.id}">
             <td style="padding:6px; text-align:center;"><input type="color" data-cf="color" data-id="${c.id}" value="${c.color}" style="width:28px; height:24px; border:none; background:none; cursor:pointer;"></td>
             <td style="padding:6px;"><input data-cf="corpName" data-id="${c.id}" value="${escapeHtml(c.corpName)}" style="width:150px; padding:5px 6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;"></td>
             <td style="padding:6px;"><input data-cf="bizNumber" data-id="${c.id}" value="${escapeHtml(c.bizNumber)}" placeholder="000-00-00000" style="width:110px; padding:5px 6px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px;"></td>
