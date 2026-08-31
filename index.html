@@ -9907,7 +9907,7 @@ function parseApprovalWorkbookForCorpCard(wb){
       });
     }
   }
-  return excludeCancelledApprovalPairs(rows);
+  return { rows: excludeCancelledApprovalPairs(rows), totalRaw: rows.length };
 }
 // 결제 후 같은 금액을 취소한 건(예: 150,000원 결제 → 150,000원 취소)은 카드사
 // 승인내역에 보통 같은 승인번호로 금액 부호만 반대인 행 2개로 남는다 — 실제로
