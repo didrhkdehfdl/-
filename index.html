@@ -12908,6 +12908,12 @@ function renderRecordRows(){
     const rec = c.records.find(r=>r.id===id);
     const handler = () => {
       const f = inp.dataset.field;
+      // 실적리스트에서 자동으로 만들어진 건이면, 상세 화면에서 직접 고친
+      // 항목은 나중에 실적리스트가 바뀌어도 덮어써지지 않도록 표시해둔다.
+      if(rec.sourceRowId){
+        if(!rec.touchedFields) rec.touchedFields = [];
+        if(!rec.touchedFields.includes(f)) rec.touchedFields.push(f);
+      }
       // 회계 표시상 000,000 형식으로 보여주는 칸(deposit/companyPrice/extra)은
       // <input type="number">가 아니라 콤마 있는 문자열을 받는 text 칸이라,
       // 콤마·공백을 지우고 숫자로 바꾼 다음 다시 콤마를 넣어 화면에 보여준다.
