@@ -11817,9 +11817,12 @@ async function renderVehicleMain(){
   });
   if(!activeVehicle) return;
   setupStickyHScroll('vehicleTableWrap', 'vehicleStickyScroll');
-  if(savedScrollTop !== undefined){
+  {
     const wrap = document.getElementById('vehicleTableWrap');
-    if(wrap) wrap.scrollTop = savedScrollTop;
+    if(wrap){
+      if(savedScrollTop !== undefined) wrap.scrollTop = savedScrollTop;
+      if(savedScrollLeft !== undefined) wrap.scrollLeft = savedScrollLeft;
+    }
   }
   const addMonthBtn = document.getElementById('vehicleAddMonthBtn');
   if(addMonthBtn) addMonthBtn.addEventListener('click', async ()=>{
