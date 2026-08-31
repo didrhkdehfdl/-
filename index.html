@@ -1867,12 +1867,15 @@ function closeColFilterDropdown(){
   document.getElementById('colFilterDropdown').style.display = 'none';
   colFilterCtx = null;
 }
+// 캡처 단계(capture)에서 가로챈다 — 필터 아이콘이 정렬 가능한 <th> 안에
+// 중첩된 경우가 많아서, 버블 단계에서 막으면 그 전에 th의 정렬 클릭
+// 이벤트가 먼저 발생해버린다(정렬이 같이 토글되는 버그).
 document.body.addEventListener('click', (e)=>{
   const btn = e.target.closest('.col-filter-icon');
   if(btn){ e.stopPropagation(); openColFilterDropdown(btn); return; }
   const dd = document.getElementById('colFilterDropdown');
   if(dd.style.display!=='none' && !dd.contains(e.target)) closeColFilterDropdown();
-});
+}, true);
 document.getElementById('colFilterSearch').addEventListener('input', renderColFilterList);
 document.getElementById('colFilterSelectAll').addEventListener('click', ()=>{
   colFilterVisibleValues().forEach(v=>colFilterCtx.pendingSelected.add(v));
