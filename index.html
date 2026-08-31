@@ -4737,13 +4737,21 @@ const LEDGER_FORMULA_TEMPLATES = {
 // 있는데 이름정의가 92행에서 멈춰있어서 93행부터 전부 #N/A가 났던 사례로 발견).
 // 새 행을 추가할 때마다 이 이름정의의 마지막 행 번호를 새 행 번호까지 넓혀준다.
 function expandLedgerNamedRange(wbDoc, name, newRowNum){
-  const dn = Array.from(wbDoc.getElementsByTagName('definedName')).find(el => el.getAttribute('name') === name);
-  if(!dn) return;
-  const text = dn.textContent || '';
-  const m = text.match(/^(.*\$[A-Za-z]+\$)(\d+)$/);
-  if(!m) return;
-  const endRow = parseInt(m[2], 10);
-  if(Number(newRowNum) > endRow) dn.textContent = m[1] + newRowNum;
+  // 같은 이름의 이름정의가 여러 개 있을 수 있다(예: "화성 15건" 시트 전용
+  // localSheetId 범위 vs "단일갑지" 인쇄 시트들이 실제로 참조하는 워크북
+  // 전체(global) 범위). 첫 번째로 찾은 것만 넓히면 엉뚱한(localSheetId가
+  // 붙은) 이름정의만 넓혀지고, 정작 VLOOKUP이 쓰는 global 이름정의는 계속
+  // 예전 마지막 행에 갇혀 그 뒤에 추가한 고객 행이 전부 #N/A로 뜨는 버그가
+  // 있었다. localSheetId가 없는(워크북 전체 범위) 이름정의를 모두 넓힌다.
+  const candidates = Array.from(wbDoc.getElementsByTagName('definedName'))
+    .filter(el => el.getAttribute('name') === name && !el.hasAttribute('localSheetId'));
+  candidates.forEach(dn => {
+    const text = dn.textContent || '';
+    const m = text.match(/^(.*\$[A-Za-z]+\$)(\d+)$/);
+    if(!m) return;
+    const endRow = parseInt(m[2], 10);
+    if(Number(newRowNum) > endRow) dn.textContent = m[1] + newRowNum;
+  });
 }
 // 이윤정산 건에 연결된 영업비 정산 건(salesMatch)이 없거나(고객명이 안 겹치는
 // 경우) 있어도 일부 값이 비어 있으면, 같은 고객명의 사급 실적리스트 행에서
