@@ -9557,9 +9557,16 @@ async function renderOMListMain(){
     if(state.activeTab !== 'omList') return;
   }
   const s = omListState;
-  const filtered = s.search
+  let filtered = s.search
     ? s.rows.filter(r => (r.customer||'').includes(s.search) || (r.plantName||'').includes(s.search) || (r.requester||'').includes(s.search))
-    : s.rows;
+    : s.rows.slice();
+  if(s.sortKey){
+    filtered = filtered.slice().sort((a,b)=>{
+      const av = String(a[s.sortKey]||''), bv = String(b[s.sortKey]||'');
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return s.sortDir==='asc' ? cmp : -cmp;
+    });
+  }
   const totalPages = Math.max(1, Math.ceil(filtered.length / OM_LIST_PAGE_SIZE));
   if(s.page > totalPages) s.page = totalPages;
   if(s.page < 1) s.page = 1;
