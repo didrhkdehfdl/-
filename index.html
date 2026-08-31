@@ -9811,8 +9811,10 @@ function omListCellHtml(row, field){
 async function renderOMListMain(){
   const main = document.getElementById('main');
   // corpCard/vehicle와 같은 이유로, 다시 그리기 전 .table-wrap-frozen의
-  // 스크롤 위치를 기억했다가 다시 그린 뒤 복원한다.
-  const savedScrollTop = document.getElementById('omListTableWrap')?.scrollTop;
+  // 세로·가로 스크롤 위치를 기억했다가 다시 그린 뒤 복원한다.
+  const omListWrapBefore = document.getElementById('omListTableWrap');
+  const savedScrollTop = omListWrapBefore?.scrollTop;
+  const savedScrollLeft = omListWrapBefore?.scrollLeft;
   if(!omListState.loaded){
     main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
     await ensureOMListLoaded();
