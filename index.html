@@ -10554,7 +10554,7 @@ async function renderCorpCardMain(){
       <button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
     </div>
     <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">
-      ${escapeHtml(s.activeMonth)} · 총 ${rows.length}건 · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다
+      ${escapeHtml(s.activeMonth)} · 총 ${rows.length}건${visibleRows.length!==rows.length?` (필터로 ${visibleRows.length}건 표시 중)`:''} · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다
       ${s.approvalEntries.length ? ` · 승인내역 누적 ${fmtNum(s.approvalEntries.length)}건` : ''}
       ${issueCountInMonth ? ` · <span style="color:var(--neg); font-weight:600;">🔴 확인 필요 ${issueCountInMonth}건(빈칸·승인내역 불일치 등)</span>` : ' · ✅ 이번 달 전부 문제 없음'}
     </div>
