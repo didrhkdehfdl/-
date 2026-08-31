@@ -12576,9 +12576,6 @@ function renderRecordRows(){
       if(f === 'companyPrice' || f === 'extra'){
         rec[f] = rec[f] === 0 ? 0 : -Math.abs(rec[f]);
       }
-      if(inp.classList.contains('num')){
-        inp.value = rec[f] ? Number(rec[f]).toLocaleString('ko-KR') : '';
-      }
       const mainRow = tbody.querySelector(`.main-row[data-id="${id}"]`);
       const cells = mainRow.querySelectorAll('.calc-cell');
       cells[0].textContent = fmtWon(vatOf(rec));
