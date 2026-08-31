@@ -4328,6 +4328,16 @@ async function renderProfitListMain(){
       renderProfitListMain();
     });
   });
+  main.querySelectorAll('.plist-f').forEach(el=>{
+    el.addEventListener('change', ()=>{
+      const p = cases.find(c=>c.id===el.dataset.id);
+      const col = PROFIT_LIST_COLUMNS.find(c=>c.key===el.dataset.key);
+      if(!p || !col) return;
+      applyProfitListFieldChange(p, col, el);
+      persistCase(p);
+      renderProfitListMain();
+    });
+  });
   const checkAll = document.getElementById('profitListCheckAll');
   if(checkAll) checkAll.addEventListener('change', (e)=>{
     if(e.target.checked) cases.forEach(c=>ls.selected.add(c.id));
