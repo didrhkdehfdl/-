@@ -10977,6 +10977,14 @@ async function renderCorpCardMain(){
       } else {
         row[field] = el.value.trim();
         if(field==='date' || field==='place') recomputeCorpCardMismatches();
+        // 사업분류를 "사무실"로 고르면 발전소명을 강제로 "사무실관리"로 맞추고
+        // 잠그고, 지출내역이 바뀌면 비고 입력 가능 여부(식대·접대비만 타이핑
+        // 허용)가 바로 화면에 반영되도록 다시 그린다.
+        if(field==='bizCategory'){
+          if(row.bizCategory==='사무실') row.plantName = '사무실관리';
+          renderCorpCardMain();
+        }
+        if(field==='expenseType') renderCorpCardMain();
       }
       await saveCorpCardRows(activeCard.id);
     });
