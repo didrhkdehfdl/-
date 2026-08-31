@@ -11953,14 +11953,26 @@ function renderImportMain(){
   // 체크박스 하나 누를 때마다 표 전체를 다시 그리는데, innerHTML을 통째로
   // 바꾸면 브라우저가 스크롤 위치를 되돌려버린다. 실제로 스크롤되는 건
   // window가 아니라 표를 감싼 .table-wrap-frozen(overflow-y:auto) 박스라서,
-  // 그 박스의 scrollTop을 기억했다가 다시 그린 뒤 그대로 복원한다.
-  const importScrollTop = document.getElementById('importTableWrap')?.scrollTop;
-  const perfScrollTop = document.getElementById('perfTableWrap')?.scrollTop;
+  // 그 박스의 세로(scrollTop)·가로(scrollLeft) 스크롤 위치를 기억했다가
+  // 다시 그린 뒤 그대로 복원한다(이 표들도 폭이 넓어 가로로 스크롤해서
+  // 보는 경우가 많다).
+  const importWrapBefore = document.getElementById('importTableWrap');
+  const importScrollTop = importWrapBefore?.scrollTop;
+  const importScrollLeft = importWrapBefore?.scrollLeft;
+  const perfWrapBefore = document.getElementById('perfTableWrap');
+  const perfScrollTop = perfWrapBefore?.scrollTop;
+  const perfScrollLeft = perfWrapBefore?.scrollLeft;
   const restoreScroll = () => {
     const importWrap = document.getElementById('importTableWrap');
-    if(importWrap && importScrollTop !== undefined) importWrap.scrollTop = importScrollTop;
+    if(importWrap){
+      if(importScrollTop !== undefined) importWrap.scrollTop = importScrollTop;
+      if(importScrollLeft !== undefined) importWrap.scrollLeft = importScrollLeft;
+    }
     const perfWrap = document.getElementById('perfTableWrap');
-    if(perfWrap && perfScrollTop !== undefined) perfWrap.scrollTop = perfScrollTop;
+    if(perfWrap){
+      if(perfScrollTop !== undefined) perfWrap.scrollTop = perfScrollTop;
+      if(perfScrollLeft !== undefined) perfWrap.scrollLeft = perfScrollLeft;
+    }
   };
 
   main.innerHTML = `
