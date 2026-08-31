@@ -1796,6 +1796,105 @@ async function saveWithGenericHistory(storageKey, value){
   await saveFileToStorage(storageKey, value);
 }
 
+// ---------- 표마다 다시 만들지 않고 재사용하는 엑셀식 열 필터 ----------
+// tabKey(표를 구분하는 이름표) + field(열 키)마다 "선택된 값들"을 Set으로
+// 들고 있는다 — 아예 없으면(undefined) "전체 표시"를 뜻한다. 실제 엑셀처럼
+// 필터 버튼을 누르면 그 열에 있는 모든 값이 체크박스로 뜨고, 체크 해제한
+// 값을 가진 행만 화면에서 빠진다.
+let columnFilters = {}; // tabKey -> { field -> Set(선택된 값들) }
+let colFilterProviders = {}; // tabKey -> { getRows: ()=>array, rerender: ()=>void }
+function registerColFilterProvider(tabKey, getRows, rerender){
+  colFilterProviders[tabKey] = { getRows, rerender };
+}
+function columnFilterValue(row, field){
+  const v = String(row ? (row[field] ?? '') : '').trim();
+  return v === '' ? '(비어있음)' : v;
+}
+function columnUniqueValues(rows, field){
+  const set = new Set();
+  (rows||[]).forEach(r=>set.add(columnFilterValue(r, field)));
+  return [...set].sort((a,b)=>a.localeCompare(b, 'ko'));
+}
+function rowPassesColumnFilters(tabKey, row){
+  const filters = columnFilters[tabKey];
+  if(!filters) return true;
+  return Object.keys(filters).every(field => filters[field].has(columnFilterValue(row, field)));
+}
+// 필터가 걸린 열의 헤더 옆에 붙이는 작은 ▾ 아이콘 — 걸려있으면 금색으로 표시.
+function colFilterIconHtml(tabKey, field){
+  const active = !!(columnFilters[tabKey] && columnFilters[tabKey][field]);
+  return `<button class="col-filter-icon" data-tab="${escapeHtml(tabKey)}" data-field="${escapeHtml(field)}" title="필터" style="margin-left:4px; background:transparent; border:none; cursor:pointer; padding:0 1px; font-size:10px; line-height:1; vertical-align:middle; color:${active?'var(--gold)':'var(--muted)'}; font-weight:${active?'700':'400'};">▾</button>`;
+}
+let colFilterCtx = null;
+function colFilterVisibleValues(){
+  const term = document.getElementById('colFilterSearch').value.trim();
+  return term ? colFilterCtx.allValues.filter(v=>v.includes(term)) : colFilterCtx.allValues;
+}
+function renderColFilterList(){
+  const listEl = document.getElementById('colFilterList');
+  const shown = colFilterVisibleValues();
+  listEl.innerHTML = shown.length ? shown.map(v=>`
+    <label style="display:flex; align-items:center; gap:6px; font-size:12px; padding:3px 0; cursor:pointer;">
+      <input type="checkbox" class="col-filter-check" value="${escapeHtml(v)}" ${colFilterCtx.pendingSelected.has(v)?'checked':''}>
+      <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(v)}</span>
+    </label>`).join('') : `<div style="font-size:11.5px; color:var(--muted); padding:6px 0;">일치하는 값이 없습니다</div>`;
+  listEl.querySelectorAll('.col-filter-check').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      if(cb.checked) colFilterCtx.pendingSelected.add(cb.value);
+      else colFilterCtx.pendingSelected.delete(cb.value);
+    });
+  });
+}
+function openColFilterDropdown(btn){
+  const tabKey = btn.dataset.tab, field = btn.dataset.field;
+  const provider = colFilterProviders[tabKey];
+  if(!provider) return;
+  const allValues = columnUniqueValues(provider.getRows(), field);
+  const existing = columnFilters[tabKey] && columnFilters[tabKey][field];
+  colFilterCtx = { tabKey, field, provider, allValues, pendingSelected: new Set(existing || allValues) };
+  const dd = document.getElementById('colFilterDropdown');
+  document.getElementById('colFilterSearch').value = '';
+  renderColFilterList();
+  const rect = btn.getBoundingClientRect();
+  dd.style.display = 'flex';
+  const left = Math.min(rect.left, window.innerWidth - 240);
+  const top = Math.min(rect.bottom + 4, window.innerHeight - 360);
+  dd.style.left = Math.max(4,left) + 'px';
+  dd.style.top = Math.max(4,top) + 'px';
+  document.getElementById('colFilterSearch').focus();
+}
+function closeColFilterDropdown(){
+  document.getElementById('colFilterDropdown').style.display = 'none';
+  colFilterCtx = null;
+}
+document.body.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.col-filter-icon');
+  if(btn){ e.stopPropagation(); openColFilterDropdown(btn); return; }
+  const dd = document.getElementById('colFilterDropdown');
+  if(dd.style.display!=='none' && !dd.contains(e.target)) closeColFilterDropdown();
+});
+document.getElementById('colFilterSearch').addEventListener('input', renderColFilterList);
+document.getElementById('colFilterSelectAll').addEventListener('click', ()=>{
+  colFilterVisibleValues().forEach(v=>colFilterCtx.pendingSelected.add(v));
+  renderColFilterList();
+});
+document.getElementById('colFilterSelectNone').addEventListener('click', ()=>{
+  colFilterVisibleValues().forEach(v=>colFilterCtx.pendingSelected.delete(v));
+  renderColFilterList();
+});
+document.getElementById('colFilterCancelBtn').addEventListener('click', closeColFilterDropdown);
+document.getElementById('colFilterApplyBtn').addEventListener('click', ()=>{
+  const { tabKey, field, allValues, pendingSelected, provider } = colFilterCtx;
+  if(pendingSelected.size >= allValues.length){
+    if(columnFilters[tabKey]) delete columnFilters[tabKey][field];
+  } else {
+    columnFilters[tabKey] = columnFilters[tabKey] || {};
+    columnFilters[tabKey][field] = new Set(pendingSelected);
+  }
+  closeColFilterDropdown();
+  provider.rerender();
+});
+
 const CONTRACTS_INDEX_KEY = 'contracts-index';
 async function saveContractsIndex(list){
   try{
