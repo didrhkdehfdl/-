@@ -4200,19 +4200,28 @@ async function renderProfitListMain(){
   const caseIds = new Set(cases.map(c=>c.id));
   Array.from(ls.selected).forEach(id=>{ if(!caseIds.has(id)) ls.selected.delete(id); });
 
+  const dupCounts = {};
+  cases.forEach(p => { const k = profitCaseDupKey(p); dupCounts[k] = (dupCounts[k]||0)+1; });
+
   const rowsHtml = cases.map((p, i) => {
     const v = computeProfitListRowValues(p, i);
-    return `<tr data-id="${p.id}">` +
-      `<td style="padding:5px 6px; border:1px solid var(--line); text-align:center;"><input type="checkbox" class="profit-list-check" data-id="${p.id}" ${ls.selected.has(p.id)?'checked':''}></td>` +
+    const isDup = dupCounts[profitCaseDupKey(p)] > 1;
+    const isChecked = ls.selected.has(p.id);
+    return `<tr data-id="${p.id}" style="${isChecked?'background:rgba(224,163,57,.14);':''}">` +
+      `<td style="padding:5px 6px; border:1px solid var(--line); text-align:center;"><input type="checkbox" class="profit-list-check" data-id="${p.id}" ${isChecked?'checked':''}></td>` +
       PROFIT_LIST_COLUMNS.map(col => {
       const val = v[col.key];
       let display;
       if(col.type==='num') display = fmtNum(val);
       else if(col.type==='pct') display = `${(val*100).toFixed(1)}%`;
       else display = escapeHtml(val);
+      if(col.key==='customer' && isDup) display += ` <span title="같은 고객명·시공일자·설치용량·총사업비의 건이 ${dupCounts[profitCaseDupKey(p)]}건 있습니다." style="color:var(--neg); font-size:10.5px; font-weight:700; white-space:nowrap;">⚠ 중복의심</span>`;
       const align = col.type==='text' ? 'left' : 'right';
       return `<td style="padding:5px 6px; border:1px solid var(--line); white-space:pre-line; text-align:${align}; font-size:11.5px;">${display}</td>`;
-    }).join('') + `<td style="padding:5px 6px; border:1px solid var(--line); text-align:center; white-space:nowrap;"><button class="profit-list-open-btn" data-id="${p.id}" style="font-size:11px; padding:4px 9px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">열기</button></td></tr>`;
+    }).join('') + `<td style="padding:5px 6px; border:1px solid var(--line); text-align:center; white-space:nowrap;">` +
+      `<button class="profit-list-open-btn" data-id="${p.id}" style="font-size:11px; padding:4px 9px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">열기</button> ` +
+      `<button class="profit-list-del-btn" data-id="${p.id}" style="font-size:11px; padding:4px 9px; border-radius:5px; border:1px solid rgba(255,80,80,0.4); background:transparent; color:#ff8080; cursor:pointer;">삭제</button>` +
+      `</td></tr>`;
   }).join('');
 
   const lsNeedsAck = !!profitLedgerState.fileName && !profitLedgerState.freshThisSession;
