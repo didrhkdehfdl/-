@@ -4765,9 +4765,15 @@ function resolveProfitLedgerValues(profitCase, rec, salesCase){
   const masterRow = moduleMaster.find(m=>m.modelCode===moduleModel);
   const moduleBuyFormula = masterRow ? `${Number(masterRow.materialBuyPerWatt)||0}*${Number(masterRow.watt)||0}` : null;
   const moduleSellFormula = masterRow ? `${Number(masterRow.materialSellPerWatt)||0}*${Number(masterRow.watt)||0}` : null;
+  // 연결된 영업비 정산 건(rec)이나 업로드해둔 실적리스트 원본(perfRow)에
+  // 회사입금가가 있으면 그 값을 최우선으로 쓰지만(둘 다 없거나 값이 비어있는
+  // 경우), 이윤정산 건 자체에 직접 입력해둔 입금가(profitCase.depositPrice —
+  // 가로 목록·상세 화면에서 바로 고칠 수 있는 값)를 대신 쓴다. 이게 없으면
+  // 화면에는 입금가가 보이는데 정산데이터에는 기록이 안 되는 상황이 생긴다.
   const companyPriceSource = rec ? rec.companyPrice : (perfRow ? perfRow.companyPrice : null);
   const companyPrice = (companyPriceSource !== null && companyPriceSource !== undefined && companyPriceSource !== '')
-    ? Math.abs(Number(companyPriceSource)||0) : '';
+    ? Math.abs(Number(companyPriceSource)||0)
+    : (Number(profitCase.depositPrice) || '');
   const salesDeduction = Number(profitCase.salesDeduction) || Math.abs(Number((rec && rec.extra) || (perfRow && perfRow.extra) || 0)) || 0;
   const salesDeductionNote = profitCase.salesDeductionNote || (rec && rec.note) || (perfRow && perfRow.extraNote) || (perfRow && perfRow.note) || '';
   return { corp, agentName, moduleModel, moduleBuy, moduleSell, moduleBuyFormula, moduleSellFormula, companyPrice, salesDeduction, salesDeductionNote };
