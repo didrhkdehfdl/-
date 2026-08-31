@@ -8061,10 +8061,12 @@ async function renderInquiryMain(){
     if(state.activeTab !== 'inquiry') return;
   }
   const s = inquiryState;
+  registerColFilterProvider('inquiry', ()=>s.items, renderInquiryMain);
   const q = s.search.trim();
   let items = q
     ? s.items.filter(it => [it.region,it.question,it.customer,it.phone,it.sender,it.detail,it.response].some(v=>(v||'').includes(q)))
     : s.items;
+  items = items.filter(it => rowPassesColumnFilters('inquiry', it));
   // 사급 실적리스트 대조는 문의 건마다 매번 처음부터 훑으면 느려지므로
   // (문의 수백~천 건 × 실적 수백 건), 렌더링 한 번에 한 번만 색인을 만들어
   // 재사용한다 — buildPerfMatchIndex 주석 참고.
