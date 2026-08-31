@@ -10563,24 +10563,24 @@ async function renderCorpCardMain(){
         <thead><tr>
           <th style="padding:6px 2px; color:var(--muted); position:sticky; left:0; background:var(--panel-2); width:26px;"><input type="checkbox" id="corpCardSelectAllBox" title="이 달 전체 선택/해제"></th>
           <th style="padding:6px 4px; color:var(--muted); position:sticky; left:26px; background:var(--panel-2);">순번</th>
-          <th style="padding:6px 4px; color:var(--muted); width:100px;">날짜</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">부서</th>
-          <th style="padding:6px 4px; color:var(--muted); width:80px;">성명</th>
-          <th style="padding:6px 4px; color:var(--muted); width:70px;">직급</th>
-          <th style="padding:6px 4px; color:var(--muted); width:100px;">사용장소</th>
-          <th style="padding:6px 4px; color:var(--muted); width:80px;">법인</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">사업분류</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">프로젝트</th>
-          <th style="padding:6px 4px; color:var(--muted); width:120px;">발전소명</th>
-          <th style="padding:6px 4px; color:var(--muted); width:140px;">사용처</th>
-          <th style="padding:6px 4px; color:var(--muted); width:160px;">업무내용</th>
-          <th style="padding:6px 4px; color:var(--muted); width:110px;">지출내역</th>
+          <th style="padding:6px 4px; color:var(--muted); width:100px;">날짜${colFilterIconHtml(colFilterTabKey,'date')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">부서${colFilterIconHtml(colFilterTabKey,'dept')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:80px;">성명${colFilterIconHtml(colFilterTabKey,'name')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:70px;">직급${colFilterIconHtml(colFilterTabKey,'position')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:100px;">사용장소${colFilterIconHtml(colFilterTabKey,'venue')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:80px;">법인${colFilterIconHtml(colFilterTabKey,'corp')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">사업분류${colFilterIconHtml(colFilterTabKey,'bizCategory')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">프로젝트${colFilterIconHtml(colFilterTabKey,'project')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:120px;">발전소명${colFilterIconHtml(colFilterTabKey,'plantName')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:140px;">사용처${colFilterIconHtml(colFilterTabKey,'place')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:160px;">업무내용${colFilterIconHtml(colFilterTabKey,'workDetail')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:110px;">지출내역${colFilterIconHtml(colFilterTabKey,'expenseType')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">공급가액</th>
           <th style="padding:6px 4px; color:var(--muted); width:80px;">부가세</th>
-          <th style="padding:6px 4px; color:var(--muted); width:100px;">금액</th>
-          <th style="padding:6px 4px; color:var(--muted); width:70px;">하이패스<br>사용여부</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">차량번호<br>(끝4자리)</th>
-          <th style="padding:6px 4px; color:var(--muted); width:160px;">비고</th>
+          <th style="padding:6px 4px; color:var(--muted); width:100px;">금액${colFilterIconHtml(colFilterTabKey,'amount')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:70px;">하이패스<br>사용여부${colFilterIconHtml(colFilterTabKey,'hipass')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:90px;">차량번호<br>(끝4자리)${colFilterIconHtml(colFilterTabKey,'carNo')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:160px;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
           <th style="padding:6px 4px; color:var(--muted);">삭제</th>
         </tr></thead>
         <tbody>
