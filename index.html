@@ -5707,6 +5707,10 @@ function sortedContracts(){
 
 async function renderContractsMain(){
   const main = document.getElementById('main');
+  // 체크박스를 누를 때마다 화면 전체(main.innerHTML)를 다시 그리는데, 이
+  // 표는 감싸는 스크롤 박스 없이 페이지 자체가 스크롤되므로 window의 스크롤
+  // 위치를 기억했다가 다시 그린 뒤 복원한다.
+  const savedScrollY = window.scrollY;
   if(!contractsState.loaded){
     main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
     await ensureContractsLoaded();
