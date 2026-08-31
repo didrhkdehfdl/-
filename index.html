@@ -9100,10 +9100,10 @@ function renderInvoicePrepMain(){
       <table style="border-collapse:collapse; min-width:1100px;">
         <thead><tr>
           <th style="padding:6px; font-size:10.5px; color:var(--muted);">색</th>
-          <th style="padding:6px; font-size:10.5px; color:var(--muted);">계약법인명(실적리스트와 동일하게)</th>
-          <th style="padding:6px; font-size:10.5px; color:var(--muted);">사업자등록번호</th>
-          <th style="padding:6px; font-size:10.5px; color:var(--muted);">상호</th>
-          <th style="padding:6px; font-size:10.5px; color:var(--muted);">대표자명</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">계약법인명(실적리스트와 동일하게)${colFilterIconHtml('companyMaster','corpName')}</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">사업자등록번호${colFilterIconHtml('companyMaster','bizNumber')}</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">상호${colFilterIconHtml('companyMaster','bizName')}</th>
+          <th style="padding:6px; font-size:10.5px; color:var(--muted);">대표자명${colFilterIconHtml('companyMaster','ownerName')}</th>
           <th style="padding:6px; font-size:10.5px; color:var(--muted);">사업장주소</th>
           <th style="padding:6px; font-size:10.5px; color:var(--muted);">업태</th>
           <th style="padding:6px; font-size:10.5px; color:var(--muted);">종목</th>
