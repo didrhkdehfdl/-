@@ -13550,16 +13550,31 @@ document.getElementById('printLandscapeBtn').addEventListener('click', ()=>{
 });
 document.getElementById('pdfSaveBtn').addEventListener('click', savePdf);
 
+let manualRowsSub = null;
+let importRowsSub = null;
 async function init(){
   state.cases = await loadIndex();
-  importState.manualRows = await loadPerfRows();
-  const savedImport = await loadImportData();
-  if(savedImport){
-    importState.fileName = savedImport.fileName || '';
-    importState.sheetNames = savedImport.sheetNames || [];
-    importState.sheetName = savedImport.sheetName || '';
-    importState.rows = (savedImport.rows || []).map(r => r.id ? r : { ...r, id: rid() });
-  }
+  // 실적리스트(엑셀 업로드/직접 입력)는 여러 명이 같이 쓰는 핵심 표라 실시간
+  // 구독으로 불러온다 — 다른 사람이 값을 고치면 이 화면도 자동으로 따라간다.
+  manualRowsSub = subscribeListToStorage(PERF_ROWS_KEY, importState, {
+    field: 'manualRows',
+    isActive: () => state.activeTab==='import' && importState.mode==='manual',
+    render: renderImportMain,
+  });
+  await manualRowsSub.firstLoad;
+  importRowsSub = subscribeListToStorage(IMPORT_DATA_KEY, importState, {
+    migrate: (data) => {
+      if(data && typeof data==='object' && !Array.isArray(data)){
+        importState.fileName = data.fileName || '';
+        importState.sheetNames = data.sheetNames || [];
+        importState.sheetName = data.sheetName || '';
+        importState.rows = (data.rows || []).map(r => r.id ? r : { ...r, id: rid() });
+      }
+    },
+    isActive: () => state.activeTab==='import' && importState.mode==='upload',
+    render: renderImportMain,
+  });
+  await importRowsSub.firstLoad;
   const savedModuleMaster = await loadModuleMaster();
   if(Array.isArray(savedModuleMaster) && savedModuleMaster.length){
     moduleMaster = savedModuleMaster;
