@@ -9624,6 +9624,13 @@ async function renderOMListMain(){
 
   document.getElementById('omListFile').addEventListener('change', handleOMListFile);
   document.getElementById('omListSearch').addEventListener('input', (e)=>{ omListState.search = e.target.value; omListState.page = 1; renderOMListMain(); });
+  const sortTh = main.querySelector('th[data-sort-field="receivedDate"]');
+  if(sortTh) sortTh.addEventListener('click', ()=>{
+    if(s.sortKey==='receivedDate'){ s.sortDir = s.sortDir==='asc' ? 'desc' : 'asc'; }
+    else { s.sortKey = 'receivedDate'; s.sortDir = 'asc'; }
+    s.page = 1;
+    renderOMListMain();
+  });
   const omListPrevBtn = document.getElementById('omListPrevPageBtn');
   if(omListPrevBtn) omListPrevBtn.addEventListener('click', ()=>{ omListState.page -= 1; renderOMListMain(); });
   const omListNextBtn = document.getElementById('omListNextPageBtn');
