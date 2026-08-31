@@ -10871,9 +10871,12 @@ async function renderCorpCardMain(){
   });
   if(!activeCard || !tmpl) return;
   setupStickyHScroll('corpCardTableWrap', 'corpCardStickyScroll');
-  if(savedScrollTop !== undefined){
+  {
     const wrap = document.getElementById('corpCardTableWrap');
-    if(wrap) wrap.scrollTop = savedScrollTop;
+    if(wrap){
+      if(savedScrollTop !== undefined) wrap.scrollTop = savedScrollTop;
+      if(savedScrollLeft !== undefined) wrap.scrollLeft = savedScrollLeft;
+    }
   }
   main.querySelectorAll('.corpcard-namemode-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{ s.nameMode = btn.dataset.mode; renderCorpCardMain(); });
