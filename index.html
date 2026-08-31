@@ -12404,46 +12404,50 @@ function computeFinalSalesCost(customerDeposit, companyPrice, extra){
   return pay; // 3.3% 공제 전 금액 (사업 이윤정산의 영업비는 세전 금액을 사용)
 }
 
+function buildProfitCaseFromRow(row){
+  const p = newProfitCase();
+  const modulePrices = PROFIT_MODULE_PRICES[row.moduleModel];
+  const inverterPrices = PROFIT_INVERTER_PRICES[String(row.inverterModel||'').trim()];
+  Object.assign(p, {
+    customer: row.customer,
+    constructionDate: row.date,
+    capacityKw: parseFloat(row.capacity)||0,
+    agentName: row.agent,
+    teamName: row.team,
+    totalBusinessCost: row.supplyAmount || (row.totalAmount ? Math.round(row.totalAmount/1.1) : 0),
+    depositPrice: row.companyPrice ? Math.abs(row.companyPrice) : (computePerfCompanyPrice(row) || 0),
+    moduleModel: row.moduleModel,
+    moduleQty: row.moduleQty || 0,
+    moduleBuy: modulePrices ? modulePrices.buy : 0,
+    moduleSell: modulePrices ? modulePrices.sell : 0,
+    inverterModel: row.inverterModel,
+    inverterQty: row.inverterQty || 0,
+    inverterBuy: inverterPrices ? inverterPrices.buy : 0,
+    inverterSell: inverterPrices ? inverterPrices.sell : 0,
+    structureNote: row.structureType,
+    // 부착형이면 이 뒤의 applyAttachedStructurePricing(p)이 고정 단가(3kW당
+    // 구매 187,495원/판매 220,000원)로 덮어쓴다 — 부착형이 아닐 때만 실적리스트에
+    // 실제로 적힌 구조물 구매가/판매가가 그대로 쓰인다. 50만원 상한은 그 뒤의
+    // computeProfitCase 계산 단계에서 그대로 적용된다(값의 출처와 무관).
+    structureBuy: row.structureBuy || 0,
+    structureSell: row.structureSell || 0,
+    customerDeposit: row.deposit || row.totalAmount || 0,
+    salesCost: (row.deposit || row.totalAmount)
+      ? computeFinalSalesCost(row.deposit || row.totalAmount, row.companyPrice || computePerfCompanyPrice(row) || 0, row.extra)
+      : (row.salesCost || row.finalSalesCost || 0),
+    salesDeduction: Math.abs(row.extra) || 0,
+    salesDeductionNote: row.extraNote || '',
+    constructionCost: computeConstructionCost(parseFloat(row.capacity)||0),
+  });
+  applyAttachedStructurePricing(p);
+  return p;
+}
 function createCaseFromImportRow(row, type){
   if(!row) return;
   if(type === 'sales'){
     createSalesCaseFromRows([row]);
   } else {
-    const p = newProfitCase();
-    const modulePrices = PROFIT_MODULE_PRICES[row.moduleModel];
-    const inverterPrices = PROFIT_INVERTER_PRICES[String(row.inverterModel||'').trim()];
-    Object.assign(p, {
-      customer: row.customer,
-      constructionDate: row.date,
-      capacityKw: parseFloat(row.capacity)||0,
-      agentName: row.agent,
-      teamName: row.team,
-      totalBusinessCost: row.supplyAmount || (row.totalAmount ? Math.round(row.totalAmount/1.1) : 0),
-      depositPrice: row.companyPrice ? Math.abs(row.companyPrice) : (computePerfCompanyPrice(row) || 0),
-      moduleModel: row.moduleModel,
-      moduleQty: row.moduleQty || 0,
-      moduleBuy: modulePrices ? modulePrices.buy : 0,
-      moduleSell: modulePrices ? modulePrices.sell : 0,
-      inverterModel: row.inverterModel,
-      inverterQty: row.inverterQty || 0,
-      inverterBuy: inverterPrices ? inverterPrices.buy : 0,
-      inverterSell: inverterPrices ? inverterPrices.sell : 0,
-      structureNote: row.structureType,
-      // 부착형이면 이 뒤의 applyAttachedStructurePricing(p)이 고정 단가(3kW당
-      // 구매 187,495원/판매 220,000원)로 덮어쓴다 — 부착형이 아닐 때만 실적리스트에
-      // 실제로 적힌 구조물 구매가/판매가가 그대로 쓰인다. 50만원 상한은 그 뒤의
-      // computeProfitCase 계산 단계에서 그대로 적용된다(값의 출처와 무관).
-      structureBuy: row.structureBuy || 0,
-      structureSell: row.structureSell || 0,
-      customerDeposit: row.deposit || row.totalAmount || 0,
-      salesCost: (row.deposit || row.totalAmount)
-        ? computeFinalSalesCost(row.deposit || row.totalAmount, row.companyPrice || computePerfCompanyPrice(row) || 0, row.extra)
-        : (row.salesCost || row.finalSalesCost || 0),
-      salesDeduction: Math.abs(row.extra) || 0,
-      salesDeductionNote: row.extraNote || '',
-      constructionCost: computeConstructionCost(parseFloat(row.capacity)||0),
-    });
-    applyAttachedStructurePricing(p);
+    const p = buildProfitCaseFromRow(row);
     state.activeTab = 'profit';
     activeCase = p;
     state.activeId = p.id;
@@ -12451,6 +12455,23 @@ function createCaseFromImportRow(row, type){
     renderSidebar();
     renderMain();
   }
+}
+// 선택한 여러 행을 각각 별개의 사업 이윤정산 건으로 한번에 만든다 — 영업비
+// 정산과 달리 이윤정산은 건별로 관리하므로 하나로 합치지 않고 건건이 생성한다.
+function createProfitCasesFromRows(rows){
+  if(!rows || rows.length===0) return;
+  let last = null;
+  rows.forEach(row => {
+    const p = buildProfitCaseFromRow(row);
+    persistCase(p);
+    last = p;
+  });
+  if(!last) return;
+  state.activeTab = 'profit';
+  activeCase = last;
+  state.activeId = last.id;
+  renderSidebar();
+  renderMain();
 }
 
 // Creates a single 영업비 정산 case containing one record per given row —
