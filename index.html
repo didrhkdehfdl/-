@@ -11766,6 +11766,7 @@ async function renderVehicleMain(){
   }
   const s = vehicleState;
   const activeVehicle = s.vehicles.find(v=>v.id===s.activeVehicleId);
+  if(activeVehicle) ensureVehicleRowsSubscribed(activeVehicle.id);
   const months = activeVehicle ? Object.keys(s.rowsByVehicle[activeVehicle.id]||{}).sort() : [];
   if(activeVehicle && !months.includes(s.activeMonth)) s.activeMonth = pickDefaultVehicleMonth(s.rowsByVehicle[activeVehicle.id]);
   const rows = activeVehicle ? ((s.rowsByVehicle[activeVehicle.id]||{})[s.activeMonth]||[]) : [];
