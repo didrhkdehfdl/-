@@ -1211,6 +1211,13 @@ const PROFIT_LIST_COLUMNS = [
   { group:'정산내역', field:'영업이익률', sub:null, key:'rawProfitRate', width:9, type:'pct' },
 ];
 
+// 고객명·시공일자·설치용량·총사업비가 모두 같으면 같은 건이 실수로 두 번
+// 등록된 것으로 본다 — 이 네 값이 전부 우연히 같은 서로 다른 실제 계약이
+// 있을 가능성은 거의 없다.
+function profitCaseDupKey(p){
+  return [String(p.customer||'').trim(), String(p.constructionDate||'').trim(), Number(p.capacityKw)||0, Number(p.totalBusinessCost)||0].join('|');
+}
+
 // Computes every PROFIT_LIST_COLUMNS value for one profit case, reusing
 // computeProfitCase()'s own figures throughout so the list/export always
 // agrees with what the case's own detail screen and 정산내역서 show.
