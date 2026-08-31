@@ -9595,7 +9595,10 @@ async function renderOMListMain(){
       <table style="border-collapse:collapse; min-width:2400px; font-size:12px;">
         <thead><tr>
           <th style="padding:6px 4px; color:var(--muted); position:sticky; left:0; background:var(--panel-2);">순번</th>
-          ${OM_LIST_COLUMNS.map(([f,label,w])=>`<th style="padding:6px 4px; color:var(--muted); width:${w}px; min-width:${w}px;">${escapeHtml(label)}</th>`).join('')}
+          ${OM_LIST_COLUMNS.map(([f,label,w])=> f==='receivedDate'
+            ? `<th data-sort-field="receivedDate" title="접수일자 순으로 정렬" style="padding:6px 4px; color:var(--muted); width:${w}px; min-width:${w}px; cursor:pointer; user-select:none;">${escapeHtml(label)} ${s.sortKey==='receivedDate' ? (s.sortDir==='asc'?'▲':'▼') : ''}</th>`
+            : `<th style="padding:6px 4px; color:var(--muted); width:${w}px; min-width:${w}px;">${escapeHtml(label)}</th>`
+          ).join('')}
           <th style="padding:6px 4px; color:var(--muted);">삭제</th>
         </tr></thead>
         <tbody>
