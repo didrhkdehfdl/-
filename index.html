@@ -7025,7 +7025,9 @@ async function renderDepositConfirmTab(){
     await ensureDepositConfirmLoaded();
     if((state.activeTab !== 'agentDocs' && state.activeTab !== 'omTeam') || agentDocsState.category !== 'deposit') return;
   }
-  const items = depositConfirmState.items;
+  const depositFilterTabKey = 'depositConfirm:'+state.activeTab;
+  registerColFilterProvider(depositFilterTabKey, ()=>depositConfirmState.items, renderDepositConfirmTab);
+  const items = depositConfirmState.items.filter(it=>rowPassesColumnFilters(depositFilterTabKey, it));
   const requestedCount = items.filter(it=>it.requested && !it.depositAmount).length;
   const doneCount = items.filter(it=>Number(it.depositAmount)>0).length;
   const sectionTitle = state.activeTab === 'omTeam' ? 'O&M팀 서류 관리' : '영업자용 서류 관리';
