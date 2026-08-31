@@ -10815,9 +10815,16 @@ async function renderCorpCardMain(){
                 <input type="text" inputmode="numeric" class="corpcard-f corpcard-money" data-id="${row.id}" data-field="amount" value="${row.amount?Number(row.amount).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right; ${issues.amount?errBorder:''}">
                 ${issues.amount ? `<div style="font-size:10px; color:var(--neg); margin-top:2px; text-align:right;">${escapeHtml(issues.amount)}</div>` : ''}
               </td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="hipass" value="${escapeHtml(row.hipass)}" style="width:100%; text-align:center; ${issues.hipass?errBorder:''}">${note('hipass')}</td>
+              <td style="padding:3px 4px;">
+                <select class="corpcard-f" data-id="${row.id}" data-field="hipass" style="width:100%; text-align:center; ${issues.hipass?errBorder:''}">
+                  <option value="" ${!row.hipass?'selected':''}>-</option>
+                  <option value="O" ${row.hipass==='O'?'selected':''}>O</option>
+                  <option value="X" ${row.hipass==='X'?'selected':''}>X</option>
+                </select>
+                ${note('hipass')}
+              </td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="carNo" value="${escapeHtml(row.carNo)}" style="width:100%; text-align:center; ${issues.carNo?errBorder:''}">${note('carNo')}</td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" style="width:100%; ${issues.note?errBorder:''}">${note('note')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" ${noteLocked?`readonly style="width:100%; ${lockedStyle}"`:`style="width:100%; ${issues.note?errBorder:''}"`}>${note('note')}</td>
               <td style="padding:5px 4px; text-align:center;"><button class="corpcard-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button></td>
             </tr>
           `;}).join('')}
