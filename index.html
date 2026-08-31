@@ -4434,9 +4434,10 @@ async function renderProfitListMain(){
     renderProfitListMain();
   });
   setupStickyHScroll('profitListTableWrap', 'profitListStickyScroll');
-  if(savedScrollTop !== undefined){
-    const wrap = document.getElementById('profitListTableWrap');
-    if(wrap) wrap.scrollTop = savedScrollTop;
+  const scrollWrapAfter = document.getElementById('profitListTableWrap');
+  if(scrollWrapAfter){
+    if(savedScrollTop !== undefined) scrollWrapAfter.scrollTop = savedScrollTop;
+    if(savedScrollLeft !== undefined) scrollWrapAfter.scrollLeft = savedScrollLeft;
   }
 }
 
