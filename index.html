@@ -2846,6 +2846,8 @@ function switchTab(tab){
   state.activeId = null;
   renderSidebar();
   renderMain();
+  setPresenceCell(''); // 탭을 옮기면 이전 탭에서 보던 칸은 더 이상 보고 있는 게 아니다
+  renderPresenceBanner();
   // 영업비 정산/사업 이윤정산 탭으로 옮길 때마다 목록을 새로 불러온다 —
   // 다른 사람이 그 사이 새로 만든 건도 놓치지 않고 보이도록 하기 위함이다
   // (계약서/사용전점검/영업자용 탭은 이미 "이번 세션에서 처음 열 때 한 번
@@ -13567,6 +13569,7 @@ function startApp(allowedTabs){
   renderSidebar();
   renderMain();
   init();
+  startPresence();
 }
 
 // ---------- Firebase 로그인 / 가입 승인 ----------
