@@ -10898,6 +10898,10 @@ async function renderCorpCardMain(){
   if(fixedNameInp) fixedNameInp.addEventListener('input', (e)=>{ s.fixedName = e.target.value; });
   const fixedPositionInp = document.getElementById('corpCardFixedPositionInput');
   if(fixedPositionInp) fixedPositionInp.addEventListener('input', (e)=>{ s.fixedPosition = e.target.value; });
+  const fixedDeptInp = document.getElementById('corpCardFixedDeptInput');
+  if(fixedDeptInp) fixedDeptInp.addEventListener('input', (e)=>{ s.fixedDept = e.target.value; });
+  const fixedCorpInp = document.getElementById('corpCardFixedCorpInput');
+  if(fixedCorpInp) fixedCorpInp.addEventListener('input', (e)=>{ s.fixedCorp = e.target.value; });
   const addRowBtn = document.getElementById('corpCardAddRowBtn');
   if(addRowBtn) addRowBtn.addEventListener('click', async ()=>{
     s.rowsByCard[activeCard.id] = s.rowsByCard[activeCard.id] || {};
@@ -10908,6 +10912,8 @@ async function renderCorpCardMain(){
     // 성명·부서 등을 미리 채워두는 방식이라 이걸 그대로 흉내낸 것.
     if(s.nameMode === 'fixed' && s.fixedName.trim()) newRow.name = s.fixedName.trim();
     if(s.nameMode === 'fixed' && s.fixedPosition.trim()) newRow.position = s.fixedPosition.trim();
+    if(s.nameMode === 'fixed' && s.fixedDept.trim()) newRow.dept = s.fixedDept.trim();
+    if(s.nameMode === 'fixed' && s.fixedCorp.trim()) newRow.corp = s.fixedCorp.trim();
     s.rowsByCard[activeCard.id][s.activeMonth].push(newRow);
     await saveCorpCardRows(activeCard.id);
     renderCorpCardMain();
