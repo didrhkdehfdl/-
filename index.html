@@ -12507,10 +12507,10 @@ function renderRecordRows(){
       <td class="seq-cell">${i+1}</td>
       <td><input type="text" value="${escapeHtml(r.date)}" data-field="date" placeholder="YYYY-MM-DD"></td>
       <td><input type="text" value="${escapeHtml(r.customer)}" data-field="customer" placeholder="고객명"></td>
-      <td><input type="number" class="num" value="${r.deposit}" data-field="deposit"></td>
+      <td><input type="text" inputmode="numeric" class="num" value="${r.deposit?Number(r.deposit).toLocaleString('ko-KR'):''}" data-field="deposit"></td>
       <td class="calc-cell">${fmtWon(vat)}</td>
-      <td><input type="number" class="num" value="${r.companyPrice}" data-field="companyPrice"></td>
-      <td><input type="number" class="num" value="${r.extra}" data-field="extra"></td>
+      <td><input type="text" inputmode="numeric" class="num" value="${r.companyPrice?Number(r.companyPrice).toLocaleString('ko-KR'):''}" data-field="companyPrice"></td>
+      <td><input type="text" inputmode="numeric" class="num" value="${r.extra?Number(r.extra).toLocaleString('ko-KR'):''}" data-field="extra"></td>
       <td class="calc-cell pay">${fmtWon(pay)}</td>
       <td class="manage-cell">
         <button class="expand-btn" title="상세정보 펼치기/접기">상세 ▾</button>
