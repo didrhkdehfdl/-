@@ -11958,7 +11958,8 @@ function renderUploadMode(){
 
 function renderManualEntry(){
   const main = document.getElementById('importModeBody');
-  const rows = importState.manualRows;
+  registerColFilterProvider('import-manual', ()=>importState.manualRows, renderImportMain);
+  const rows = importState.manualRows.filter(r => rowPassesColumnFilters('import-manual', r));
 
   main.innerHTML = `
     <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
