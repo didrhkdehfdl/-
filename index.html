@@ -9668,9 +9668,11 @@ async function renderOMListMain(){
     if(state.activeTab !== 'omList') return;
   }
   const s = omListState;
+  registerColFilterProvider('omList', ()=>s.rows, renderOMListMain);
   let filtered = s.search
     ? s.rows.filter(r => (r.customer||'').includes(s.search) || (r.plantName||'').includes(s.search) || (r.requester||'').includes(s.search))
     : s.rows.slice();
+  filtered = filtered.filter(r => rowPassesColumnFilters('omList', r));
   if(s.sortKey){
     filtered = filtered.slice().sort((a,b)=>{
       const av = String(a[s.sortKey]||''), bv = String(b[s.sortKey]||'');
