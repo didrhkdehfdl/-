@@ -13791,6 +13791,119 @@ let isAdminUser = false;
 // 보여주기"를 판단할 때 CORP_CARD_ASSIGNED_NAMES와 이 값을 비교한다.
 let currentUserName = '';
 
+// ---------- 실시간 접속 현황(프레즌스) ----------
+// 법인카드·차량관리·실적리스트처럼 여러 명이 자주 같이 쓰는 탭에서, 지금
+// 이 화면에 누가 같이 들어와 있고 어느 칸을 클릭하고 있는지 보여준다.
+// 세션(브라우저 탭)마다 별도 문서를 쓰기 때문에, 동시에 여러 명이 움직여도
+// 서로의 기록을 덮어쓸 위험이 없다. 브라우저를 그냥 닫아버리면 정리
+// 이벤트가 안 올 수 있어서(beforeunload는 시도만 하고 보장되지 않는다),
+// updatedAt이 오래된(45초 이상) 세션은 화면에서 "끊긴 것"으로 보고 걸러낸다.
+const PRESENCE_HEARTBEAT_MS = 20000;
+const PRESENCE_STALE_MS = 45000;
+const presenceSessionId = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+let presenceSessions = {}; // sessionId -> {userName, tab, cellKey, updatedAt(ms)}
+let presenceUnsub = null;
+let presenceHeartbeatTimer = null;
+let presenceCurrentCellKey = '';
+// 이 탭에서 프레즌스를 실제로 보여주는(칸 단위 추적을 붙여둔) 탭 목록.
+const PRESENCE_ENABLED_TABS = ['corpCard','vehicle','import'];
+function presenceDisplayName(){
+  return currentUserName || (fbAuth.currentUser && (fbAuth.currentUser.displayName || fbAuth.currentUser.email)) || '이름 미상';
+}
+const PRESENCE_COLORS = ['#e0a339','#4fa3e3','#7fd08a','#e37f9d','#c48ef0','#f0b45c','#5fc9c0','#e57373'];
+function presenceColorFor(name){
+  let hash = 0;
+  for(let i=0;i<String(name).length;i++) hash = (hash*31 + String(name).charCodeAt(i)) >>> 0;
+  return PRESENCE_COLORS[hash % PRESENCE_COLORS.length];
+}
+function startPresence(){
+  if(presenceUnsub) return;
+  presenceUnsub = fbDb.collection('presence').onSnapshot(snap=>{
+    const next = {};
+    snap.forEach(doc=>{
+      if(doc.id === presenceSessionId) return; // 내 세션은 표시할 필요 없음
+      const d = doc.data();
+      const ts = d.updatedAt && d.updatedAt.toMillis ? d.updatedAt.toMillis() : 0;
+      if(Date.now() - ts > PRESENCE_STALE_MS) return;
+      next[doc.id] = { userName: d.userName||'이름 미상', tab: d.tab||'', cellKey: d.cellKey||'' };
+    });
+    presenceSessions = next;
+    renderPresenceBanner();
+    refreshPresenceHighlights();
+  }, err=>console.error('presence snapshot', err));
+  updatePresence();
+  presenceHeartbeatTimer = setInterval(updatePresence, PRESENCE_HEARTBEAT_MS);
+  window.addEventListener('beforeunload', clearPresence);
+}
+function updatePresence(){
+  if(!fbAuth.currentUser) return;
+  fbDb.collection('presence').doc(presenceSessionId).set({
+    userName: presenceDisplayName(),
+    tab: state.activeTab,
+    cellKey: presenceCurrentCellKey,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+  }).catch(()=>{});
+}
+function clearPresence(){
+  try{ fbDb.collection('presence').doc(presenceSessionId).delete(); }catch(e){}
+}
+// 지금 클릭(포커스)해 들어간 칸을 다른 사람 화면에 알린다. cellKey가
+// 비어있으면(포커스를 벗어남) "지금 아무 칸도 안 보고 있음"으로 알린다.
+function setPresenceCell(cellKey){
+  presenceCurrentCellKey = cellKey || '';
+  updatePresence();
+}
+function presenceUsersOnCell(cellKey){
+  return Object.values(presenceSessions).filter(s=>s.cellKey===cellKey);
+}
+// 표를 다시 그릴 때(자기 자신의 렌더링 포함) 호출해서, [data-presence-key]가
+// 붙은 입력칸마다 지금 그 칸을 보고 있는 다른 사람이 있으면 색 테두리와
+// 이름 툴팁을 붙이고, 포커스가 들어오고 나갈 때 내 프레즌스도 갱신하도록
+// 이벤트를 연결한다.
+function wirePresenceCells(container){
+  if(!container) return;
+  container.querySelectorAll('[data-presence-key]').forEach(el=>{
+    const key = el.dataset.presenceKey;
+    const users = presenceUsersOnCell(key);
+    if(users.length){
+      const color = presenceColorFor(users[0].userName);
+      el.style.outline = `2px solid ${color}`;
+      el.style.outlineOffset = '-1px';
+      el.title = `${users.map(u=>u.userName).join(', ')} 입력 중`;
+    }
+    el.addEventListener('focus', ()=> setPresenceCell(key));
+    el.addEventListener('blur', ()=> { if(presenceCurrentCellKey===key) setPresenceCell(''); });
+  });
+}
+// 다른 사람의 프레즌스가 바뀌었을 때(색칠 갱신) 지금 활성 탭을 다시 그린다
+// — 단, 내가 지금 입력 중이면 화면을 건드려 타이핑을 방해하지 않는다.
+function refreshPresenceHighlights(){
+  if(!PRESENCE_ENABLED_TABS.includes(state.activeTab)) return;
+  const focusInMain = document.activeElement && document.activeElement.closest && document.activeElement.closest('#main');
+  if(focusInMain) return;
+  if(state.activeTab==='corpCard') renderCorpCardMain();
+  else if(state.activeTab==='vehicle') renderVehicleMain();
+  else if(state.activeTab==='import') renderImportMain();
+}
+// 화면 위쪽 배너에 "지금 이 탭을 같이 보고 있는 사람"을 보여준다 — 프레즌스
+// 기능이 없는 탭에서는 배너 자체를 숨긴다.
+function renderPresenceBanner(){
+  const el = document.getElementById('presenceBanner');
+  if(!el) return;
+  if(!PRESENCE_ENABLED_TABS.includes(state.activeTab)){
+    el.style.display = 'none';
+    return;
+  }
+  const others = Object.values(presenceSessions).filter(s=>s.tab===state.activeTab);
+  if(!others.length){
+    el.style.display = 'none';
+    return;
+  }
+  const names = [...new Set(others.map(s=>s.userName))];
+  el.innerHTML = names.map(n=>`<span style="display:inline-flex; align-items:center; gap:5px; margin-right:12px;"><span style="width:8px; height:8px; border-radius:50%; background:${presenceColorFor(n)}; display:inline-block;"></span>${escapeHtml(n)}님이 사용 중</span>`).join('');
+  el.style.display = 'block';
+}
+
 fbAuth.onAuthStateChanged(async (user) => {
   if(!user){
     isAdminUser = false;
