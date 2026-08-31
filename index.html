@@ -12610,7 +12610,7 @@ function renderRecordRows(){
           rec.companyPrice = -Math.abs(MODULE_OPTION_PRICES[idx]);
           const mainRowForPrice = tbody.querySelector(`.main-row[data-id="${id}"]`);
           const priceInput = mainRowForPrice.querySelector('[data-field="companyPrice"]');
-          if(priceInput) priceInput.value = rec.companyPrice;
+          if(priceInput) priceInput.value = rec.companyPrice ? Number(rec.companyPrice).toLocaleString('ko-KR') : '';
           const priceCells = mainRowForPrice.querySelectorAll('.calc-cell');
           priceCells[0].textContent = fmtWon(vatOf(rec));
           priceCells[1].textContent = fmtWon(payOf(rec));
