@@ -5890,6 +5890,24 @@ async function handleContractUpload(e){
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
+      // 파일명이 같은 기존 항목이 있으면 실제 내용까지 같은지 확인해서, 완전히
+      // 같은 파일을 실수로 다시 올리는 걸 막는다(제목만 같고 내용이 다르면
+      // 계약 갱신본 등일 수 있으니 그냥 통과시킨다).
+      const sameName = contractsState.items.filter(it=>it.fileName===file.name);
+      if(sameName.length){
+        let exactDup = false;
+        for(const existing of sameName){
+          const existingData = await loadContractFileData(existing.id);
+          if(existingData && existingData === base64){ exactDup = true; break; }
+        }
+        if(exactDup){
+          const proceed = confirm(`"${file.name}" 파일과 제목·내용이 모두 동일한 파일이 이미 등록되어 있습니다.\n그래도 중복으로 업로드할까요?`);
+          if(!proceed){
+            skipped.push(`${file.name} (중복이라 건너뜀)`);
+            continue;
+          }
+        }
+      }
       const id = rid();
       const saveResult = await saveContractFileData(id, base64);
       if(!saveResult.ok){
@@ -5907,7 +5925,7 @@ async function handleContractUpload(e){
   contractsState.loading = false;
   renderContractsMain();
   if(skipped.length){
-    alert(`다음 파일은 저장하지 못했습니다 (PDF는 3.5MB 이하 권장):\n${skipped.join('\n')}`);
+    alert(`다음 파일은 반영되지 않았습니다 (PDF는 3.5MB 이하 권장):\n${skipped.join('\n')}`);
   }
 }
 
