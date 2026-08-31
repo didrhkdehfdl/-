@@ -7398,6 +7398,9 @@ async function renderAgentDocsMain(){
     if(state.activeTab !== 'omTeam' || agentDocsState.category !== 'contract') return;
   }
   const items = agentDocsState.items.filter(it => it.category === agentDocsState.category);
+  const agentFilterTabKey = `agentDocs:${state.activeTab}:${agentDocsState.category}`;
+  registerColFilterProvider(agentFilterTabKey, ()=>agentDocsState.items.filter(it=>it.category===agentDocsState.category), renderAgentDocsMain);
+  const filteredItems = items.filter(it => rowPassesColumnFilters(agentFilterTabKey, it));
   const isBizreg = agentDocsState.category === 'bizreg';
   const sectionTitle = state.activeTab === 'omTeam' ? 'O&M팀 서류 관리' : '영업자용 서류 관리';
 
