@@ -13907,6 +13907,7 @@ function renderPresenceBanner(){
 fbAuth.onAuthStateChanged(async (user) => {
   if(!user){
     isAdminUser = false;
+    clearPresence();
     document.getElementById('adminApprovalTabBtn').style.display = 'none';
     document.getElementById('app').classList.remove('show');
     document.getElementById('authOverlay').style.display = 'flex';
@@ -13916,6 +13917,7 @@ fbAuth.onAuthStateChanged(async (user) => {
   }
   if(isAdminEmail(user.email)){
     isAdminUser = true;
+    currentUserName = user.displayName || user.email || '관리자';
     document.getElementById('adminApprovalTabBtn').style.display = 'flex';
     startApp();
     setupAdminPushNotifications();
@@ -13928,7 +13930,7 @@ fbAuth.onAuthStateChanged(async (user) => {
     const approved = data.approved === true;
     const rejected = data.rejected === true;
     if(approved){
-      currentUserName = data.name || '';
+      currentUserName = data.name || user.email || '';
       startApp(Array.isArray(data.allowedTabs) ? data.allowedTabs : null);
       setupUserPushNotifications(user);
     } else {
