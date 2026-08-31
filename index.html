@@ -4367,6 +4367,10 @@ async function renderProfitListMain(){
     renderProfitListMain();
   });
   setupStickyHScroll('profitListTableWrap', 'profitListStickyScroll');
+  if(savedScrollTop !== undefined){
+    const wrap = document.getElementById('profitListTableWrap');
+    if(wrap) wrap.scrollTop = savedScrollTop;
+  }
 }
 
 // Builds an .xlsx that mirrors the reference workbook's "정산데이터" sheet
