@@ -10550,6 +10550,10 @@ function openCorpCardMonthPrintPreview(card, month, rows){
 }
 async function renderCorpCardMain(){
   const main = document.getElementById('main');
+  // 체크박스나 필터를 건드릴 때마다 표 전체를 다시 그리는데, innerHTML을
+  // 통째로 바꾸면 브라우저가 .table-wrap-frozen(overflow-y:auto)의 스크롤
+  // 위치를 되돌려버린다 — 그 스크롤 위치를 기억했다가 다시 그린 뒤 복원한다.
+  const savedScrollTop = document.getElementById('corpCardTableWrap')?.scrollTop;
   if(!corpCardState.loaded){
     main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
     await ensureCorpCardLoaded();
@@ -10783,6 +10787,10 @@ async function renderCorpCardMain(){
   });
   if(!activeCard || !tmpl) return;
   setupStickyHScroll('corpCardTableWrap', 'corpCardStickyScroll');
+  if(savedScrollTop !== undefined){
+    const wrap = document.getElementById('corpCardTableWrap');
+    if(wrap) wrap.scrollTop = savedScrollTop;
+  }
   main.querySelectorAll('.corpcard-namemode-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{ s.nameMode = btn.dataset.mode; renderCorpCardMain(); });
   });
