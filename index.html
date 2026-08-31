@@ -6529,14 +6529,17 @@ async function renderInspectionMain(){
   const items = matches.map(x => x.item);
   const matchCount = matches.filter(x => x.m.overall).length;
   const mismatchCount = items.length - matchCount;
+  const inspectionFilterTabKey = 'inspection:'+inspectionState.category;
+  registerColFilterProvider(inspectionFilterTabKey, ()=>inspectionState.items.filter(it=>it.category===inspectionState.category), renderInspectionMain);
+  const filteredMatches = matches.filter(x => rowPassesColumnFilters(inspectionFilterTabKey, x.item));
   // 탭을 바꿀 때마다 몇 백 건씩 되는 표를 통째로 새로 그리면 그때마다 화면이
   // 멈칫거린다 — 한 번에 다 그리지 않고 페이지 단위로 나눠서, 탭 전환 시
   // 실제로 만들어지는 화면 요소 수를 일정하게 유지한다.
-  const totalPages = Math.max(1, Math.ceil(matches.length / INSPECTION_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(filteredMatches.length / INSPECTION_PAGE_SIZE));
   if(inspectionState.page > totalPages) inspectionState.page = totalPages;
   if(inspectionState.page < 1) inspectionState.page = 1;
   const pageStart = (inspectionState.page-1) * INSPECTION_PAGE_SIZE;
-  const pageMatches = matches.slice(pageStart, pageStart + INSPECTION_PAGE_SIZE);
+  const pageMatches = filteredMatches.slice(pageStart, pageStart + INSPECTION_PAGE_SIZE);
 
   main.innerHTML = `
     <h2 class="section-title">사용전점검(검사) 확인증 관리</h2>
