@@ -12775,7 +12775,7 @@ async function syncCasesFromImportRows(rows){
     }
   }
   // 지금 열어서 보고 있는 건이 방금 갱신됐으면 화면도 새로고침해서 바로 보여준다.
-  if(anyChanged && activeCase && (state.activeTab==='sales' || state.activeTab==='profit')) renderMain();
+  if(anyChanged && (state.activeTab==='sales' || state.activeTab==='profit')) renderMain();
 }
 const debouncedSyncFromImportRows = debounce(()=> syncCasesFromImportRows(importState.rows), 600);
 const debouncedSyncFromManualRows = debounce(()=> syncCasesFromImportRows(importState.manualRows), 600);
