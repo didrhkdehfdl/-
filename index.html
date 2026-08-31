@@ -8103,13 +8103,13 @@ async function renderInquiryMain(){
     <div class="table-wrap">
       <table style="width:100%; border-collapse:collapse;">
         <thead><tr>
-          <th data-sort-key="date" style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:100px; cursor:pointer; user-select:none;">접수일 ${s.sortKey==='date' ? (s.sortDir==='desc'?'▼':'▲') : ''}</th>
-          <th data-sort-key="region" style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:180px; cursor:pointer; user-select:none;">지역 ${s.sortKey==='region' ? (s.sortDir==='desc'?'▼':'▲') : ''}</th>
+          <th data-sort-key="date" style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:100px; cursor:pointer; user-select:none;">접수일 ${s.sortKey==='date' ? (s.sortDir==='desc'?'▼':'▲') : ''}${colFilterIconHtml('inquiry','date')}</th>
+          <th data-sort-key="region" style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:180px; cursor:pointer; user-select:none;">지역 ${s.sortKey==='region' ? (s.sortDir==='desc'?'▼':'▲') : ''}${colFilterIconHtml('inquiry','region')}</th>
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:100px;">지도</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:120px;">고객명</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:130px;">연락처</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:200px;">문의내용</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:200px;">대응내용</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:120px;">고객명${colFilterIconHtml('inquiry','customer')}</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:130px;">연락처${colFilterIconHtml('inquiry','phone')}</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:200px;">문의내용${colFilterIconHtml('inquiry','detail')}</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:200px;">대응내용${colFilterIconHtml('inquiry','response')}</th>
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:60px;">삭제</th>
         </tr></thead>
         <tbody>
