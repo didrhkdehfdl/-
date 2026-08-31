@@ -7792,7 +7792,8 @@ function renderModulePricesMain(){
           </tr>
         </thead>
         <tbody>
-          ${moduleMaster.map(m=>{
+          ${(()=>{ registerColFilterProvider('moduleprices', ()=>moduleMaster, renderModulePricesMain); return ''; })()}
+          ${moduleMaster.filter(m=>rowPassesColumnFilters('moduleprices', m)).map(m=>{
             const buyAmt = Math.round((Number(m.materialBuyPerWatt)||0)*(Number(m.watt)||0));
             const sellAmt = Math.round((Number(m.materialSellPerWatt)||0)*(Number(m.watt)||0));
             return `<tr data-row-id="${m.id}">
