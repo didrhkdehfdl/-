@@ -12626,8 +12626,11 @@ function renderRecordRows(){
     };
     inp.addEventListener('input', handler);
     inp.addEventListener('change', handler);
-    if(inp.dataset.field === 'companyPrice' || inp.dataset.field === 'extra'){
-      inp.addEventListener('blur', ()=>{ inp.value = rec[inp.dataset.field]; });
+    // 타이핑 중에는 원래 입력한 대로 두고(콤마를 매 글자마다 끼워 넣으면
+    // 커서 위치가 튀어버린다), 칸에서 빠져나갈 때만 000,000 형식으로 다시
+    // 표시해준다.
+    if(inp.classList.contains('num')){
+      inp.addEventListener('blur', ()=>{ inp.value = rec[inp.dataset.field] ? Number(rec[inp.dataset.field]).toLocaleString('ko-KR') : ''; });
     }
   });
 
