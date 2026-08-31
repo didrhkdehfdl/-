@@ -12643,6 +12643,7 @@ function buildSalesRecordFromRow(row, defaultCorp){
     else lines.push(`추가비 : ${oneLine}`);
     rec.note = lines.join('\n');
   }
+  rec.sourceRowId = row.id || rec.sourceRowId;
   return rec;
 }
 
