@@ -12693,8 +12693,77 @@ function buildProfitCaseFromRow(row){
     constructionCost: computeConstructionCost(parseFloat(row.capacity)||0),
   });
   applyAttachedStructurePricing(p);
+  p.sourceRowId = row.id || p.sourceRowId;
   return p;
 }
+
+// 실적리스트 행에서 만들어진 영업비 레코드/이윤정산 건이 자동으로 따라갈
+// 항목 — buildSalesRecordFromRow/buildProfitCaseFromRow가 실제로 row에서
+// 채우는 값만 넣는다(newRecord/newProfitCase의 나머지 기본값, 특히
+// draftDate처럼 "지금 시각" 기준으로 매번 새로 계산되는 값은 절대 포함하지
+// 않는다 — 안 그러면 다시 동기화할 때마다 엉뚱하게 덮어써진다).
+const SALES_ROW_SYNCED_FIELDS = ['date','contractDate','customer','address','team','structureType','capacity','inverter','module','deposit','companyPrice','extra','note','corp'];
+const PROFIT_ROW_SYNCED_FIELDS = ['customer','constructionDate','capacityKw','agentName','teamName','totalBusinessCost','depositPrice','moduleModel','moduleQty','moduleBuy','moduleSell','inverterModel','inverterQty','inverterBuy','inverterSell','structureNote','structureBuy','structureSell','structureQty','customerDeposit','salesCost','salesDeduction','salesDeductionNote','constructionCost'];
+// 만들어진 뒤 상세 화면에서 직접 고친 항목(touchedFields)은 절대 덮어쓰지
+// 않는다 — 실적리스트 값이 바뀌어도 사람이 이미 손댄 값은 그대로 둔다.
+function syncSalesRecordFromRow(rec, row){
+  const fresh = buildSalesRecordFromRow(row, rec.corp);
+  const touched = new Set(rec.touchedFields||[]);
+  let changed = false;
+  SALES_ROW_SYNCED_FIELDS.forEach(key=>{
+    if(touched.has(key)) return;
+    if(JSON.stringify(rec[key]) !== JSON.stringify(fresh[key])){
+      rec[key] = fresh[key];
+      changed = true;
+    }
+  });
+  return changed;
+}
+function syncProfitCaseFromRow(p, row){
+  const fresh = buildProfitCaseFromRow(row);
+  const touched = new Set(p.touchedFields||[]);
+  let changed = false;
+  PROFIT_ROW_SYNCED_FIELDS.forEach(key=>{
+    if(touched.has(key)) return;
+    if(JSON.stringify(p[key]) !== JSON.stringify(fresh[key])){
+      p[key] = fresh[key];
+      changed = true;
+    }
+  });
+  return changed;
+}
+// 실적리스트(엑셀 업로드·직접 입력 모두)의 행이 바뀔 때마다 호출한다 — 그
+// 행에서 만들어둔 영업비 정산 레코드·사업 이윤정산 건을 찾아 자동으로
+// 최신값으로 갱신한다. 아직 한 번도 안 열어본 건은 caseCache에 없을 수
+// 있어서 필요하면 저장소에서 불러온 뒤 검사한다.
+async function syncCasesFromImportRows(rows){
+  if(!rows || !rows.length) return;
+  const rowById = new Map(rows.map(r=>[r.id, r]));
+  let anyChanged = false;
+  for(const entry of state.cases){
+    const caseType = entry.caseType || 'sales';
+    const c = caseCache[entry.id] || await loadCase(entry.id);
+    if(!c) continue;
+    caseCache[entry.id] = c;
+    if(caseType === 'profit'){
+      const row = c.sourceRowId && rowById.get(c.sourceRowId);
+      if(!row) continue;
+      if(syncProfitCaseFromRow(c, row)){ persistCase(c); anyChanged = true; }
+    } else {
+      let changed = false;
+      (c.records||[]).forEach(rec=>{
+        const row = rec.sourceRowId && rowById.get(rec.sourceRowId);
+        if(!row) return;
+        if(syncSalesRecordFromRow(rec, row)) changed = true;
+      });
+      if(changed){ persistCase(c); anyChanged = true; }
+    }
+  }
+  // 지금 열어서 보고 있는 건이 방금 갱신됐으면 화면도 새로고침해서 바로 보여준다.
+  if(anyChanged && activeCase && (state.activeTab==='sales' || state.activeTab==='profit')) renderMain();
+}
+const debouncedSyncFromImportRows = debounce(()=> syncCasesFromImportRows(importState.rows), 600);
+const debouncedSyncFromManualRows = debounce(()=> syncCasesFromImportRows(importState.manualRows), 600);
 function createCaseFromImportRow(row, type){
   if(!row) return;
   if(type === 'sales'){
