@@ -12157,6 +12157,7 @@ function renderUploadMode(){
         }
       }
       debouncedSaveImportRows();
+      debouncedSyncFromImportRows();
     };
     inp.addEventListener('input', handler);
     inp.addEventListener('change', handler);
