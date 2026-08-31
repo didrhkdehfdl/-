@@ -11497,6 +11497,9 @@ async function renderVehicleMain(){
   if(activeVehicle && !months.includes(s.activeMonth)) s.activeMonth = pickDefaultVehicleMonth(s.rowsByVehicle[activeVehicle.id]);
   const rows = activeVehicle ? ((s.rowsByVehicle[activeVehicle.id]||{})[s.activeMonth]||[]) : [];
   const vehicleIssueCount = rows.filter(r=>Object.keys(vehicleRowIssues(r)).length>0).length;
+  const colFilterTabKey = `vehicle:${activeVehicle?activeVehicle.id:'none'}:${s.activeMonth}`;
+  if(activeVehicle) registerColFilterProvider(colFilterTabKey, ()=>rows, renderVehicleMain);
+  const visibleRows = activeVehicle ? rows.filter(r=>rowPassesColumnFilters(colFilterTabKey, r)) : rows;
 
   main.innerHTML = `
     <h2 class="section-title">
