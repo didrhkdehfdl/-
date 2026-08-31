@@ -10584,7 +10584,7 @@ async function renderCorpCardMain(){
           <th style="padding:6px 4px; color:var(--muted);">삭제</th>
         </tr></thead>
         <tbody>
-          ${rows.map((row,i)=>{
+          ${visibleRows.map((row,i)=>{
             const sv = corpCardSupplyVat(row.amount);
             const mm = mismatchMap.get(row.id);
             const issues = corpCardRowIssues(row, mm);
