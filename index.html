@@ -9881,6 +9881,10 @@ async function renderOMListMain(){
       renderOMListMain();
     });
   });
+  if(savedScrollTop !== undefined){
+    const wrap = document.getElementById('omListTableWrap');
+    if(wrap) wrap.scrollTop = savedScrollTop;
+  }
 }
 
 // ---------- 법인카드 (카드별 "법인카드 사용 관리대장" 엑셀을 그대로 관리) ----------
