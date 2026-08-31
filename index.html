@@ -1222,6 +1222,35 @@ function profitCaseDupKey(p){
   return [String(p.customer||'').trim(), String(p.constructionDate||'').trim(), Number(p.capacityKw)||0, Number(p.totalBusinessCost)||0].join('|');
 }
 
+// 가로 목록에서 입력칸(class="plist-f")을 고쳤을 때 실제 이윤정산 건(p)에
+// 반영한다 — 상세 화면의 [data-pf] 핸들러와 같은 자동 계산(모듈/인버터
+// 모델 선택 시 단가 자동 채움, 구조물 분류에 "부착형" 있으면 고정단가 적용,
+// 구조물 구매가를 고치면 판매가를 자동으로 20% 마진 처리)을 그대로 따라간다.
+function applyProfitListFieldChange(p, col, inputEl){
+  const pfield = col.pfield || col.key;
+  let val;
+  if(col.edit === 'money') val = Number(String(inputEl.value).replace(/[^0-9.-]/g,'')) || 0;
+  else if(col.edit === 'number') val = inputEl.value === '' ? 0 : Number(inputEl.value);
+  else val = inputEl.value;
+  p[pfield] = val;
+
+  if(pfield === 'moduleModel'){
+    const prices = PROFIT_MODULE_PRICES[val];
+    if(prices){ p.moduleBuy = prices.buy; p.moduleSell = prices.sell; }
+  }
+  if(pfield === 'inverterModel'){
+    const prices = PROFIT_INVERTER_PRICES[String(val).trim()];
+    if(prices){ p.inverterBuy = prices.buy; p.inverterSell = prices.sell; }
+  }
+  if(pfield === 'moduleModel' || pfield === 'structureNote'){
+    const price = computePerfCompanyPrice({ moduleModel: p.moduleModel, structureType: p.structureNote, capacityKw: p.capacityKw });
+    if(price !== null) p.depositPrice = price;
+  }
+  if(pfield === 'structureNote') applyAttachedStructurePricing(p);
+  if(pfield === 'structureBuy') p.structureSell = Math.round((Number(p.structureBuy)||0) * 1.2);
+  if(pfield === 'capacityKw') p.constructionCost = computeConstructionCost(p.capacityKw);
+}
+
 // Computes every PROFIT_LIST_COLUMNS value for one profit case, reusing
 // computeProfitCase()'s own figures throughout so the list/export always
 // agrees with what the case's own detail screen and 정산내역서 show.
