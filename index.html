@@ -13862,14 +13862,16 @@ function setPresenceCell(cellKey){
 function presenceUsersOnCell(cellKey){
   return Object.values(presenceSessions).filter(s=>s.cellKey===cellKey);
 }
-// 표를 다시 그릴 때(자기 자신의 렌더링 포함) 호출해서, [data-presence-key]가
-// 붙은 입력칸마다 지금 그 칸을 보고 있는 다른 사람이 있으면 색 테두리와
-// 이름 툴팁을 붙이고, 포커스가 들어오고 나갈 때 내 프레즌스도 갱신하도록
-// 이벤트를 연결한다.
-function wirePresenceCells(container){
-  if(!container) return;
-  container.querySelectorAll('[data-presence-key]').forEach(el=>{
-    const key = el.dataset.presenceKey;
+// 표를 다시 그릴 때(자기 자신의 렌더링 포함) 호출해서, elements로 넘긴 입력칸
+// 하나하나마다 keyFn(el)로 계산한 cellKey를 기준으로: 지금 그 칸을 보고 있는
+// 다른 사람이 있으면 색 테두리·이름 툴팁을 붙이고, 포커스가 들어오고 나갈 때
+// 내 프레즌스도 갱신하도록 이벤트를 연결한다. 기존 표 렌더링 코드(법인카드·
+// 차량관리·실적리스트)를 하나하나 고치지 않고, data-id/data-field처럼 이미
+// 붙어있는 속성에서 cellKey를 계산해내는 방식이라 손댈 곳이 최소화된다.
+function wirePresenceCells(elements, keyFn){
+  elements.forEach(el=>{
+    const key = keyFn(el);
+    if(!key) return;
     const users = presenceUsersOnCell(key);
     if(users.length){
       const color = presenceColorFor(users[0].userName);
@@ -13880,6 +13882,15 @@ function wirePresenceCells(container){
     el.addEventListener('focus', ()=> setPresenceCell(key));
     el.addEventListener('blur', ()=> { if(presenceCurrentCellKey===key) setPresenceCell(''); });
   });
+}
+// 실적리스트 표(엑셀 업로드/직접 입력 공용)에서 [data-perf] 입력칸의 cellKey를
+// 계산한다 — 이 칸들은 행 id가 자기 자신이 아니라 감싼 <tr>에 있다(업로드
+// 표는 data-row-id, 직접 입력 표는 data-id를 쓴다).
+function importCellKey(prefix, el){
+  const tr = el.closest('tr[data-row-id]') || el.closest('tr[data-id]');
+  if(!tr) return null;
+  const rowId = tr.dataset.rowId || tr.dataset.id;
+  return `${prefix}:${rowId}:${el.dataset.perf}`;
 }
 // 다른 사람의 프레즌스가 바뀌었을 때(색칠 갱신) 지금 활성 탭을 다시 그린다
 // — 단, 내가 지금 입력 중이면 화면을 건드려 타이핑을 방해하지 않는다.
