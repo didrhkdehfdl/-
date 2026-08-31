@@ -9737,6 +9737,9 @@ function omListCellHtml(row, field){
 }
 async function renderOMListMain(){
   const main = document.getElementById('main');
+  // corpCard/vehicle와 같은 이유로, 다시 그리기 전 .table-wrap-frozen의
+  // 스크롤 위치를 기억했다가 다시 그린 뒤 복원한다.
+  const savedScrollTop = document.getElementById('omListTableWrap')?.scrollTop;
   if(!omListState.loaded){
     main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
     await ensureOMListLoaded();
@@ -11728,6 +11731,10 @@ async function renderVehicleMain(){
   });
   if(!activeVehicle) return;
   setupStickyHScroll('vehicleTableWrap', 'vehicleStickyScroll');
+  if(savedScrollTop !== undefined){
+    const wrap = document.getElementById('vehicleTableWrap');
+    if(wrap) wrap.scrollTop = savedScrollTop;
+  }
   const addMonthBtn = document.getElementById('vehicleAddMonthBtn');
   if(addMonthBtn) addMonthBtn.addEventListener('click', async ()=>{
     const input = prompt('추가할 월을 "YYYY-MM" 형식으로 입력해주세요 (예: 2026-09)', isoDate(new Date()).slice(0,7));
