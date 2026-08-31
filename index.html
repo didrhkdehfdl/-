@@ -4220,10 +4220,13 @@ async function loadAllProfitCases(){
 async function renderProfitListMain(){
   const main = document.getElementById('main');
   // 체크박스 하나 누를 때마다 표 전체를 다시 그리는데, innerHTML을 통째로
-  // 바꾸면 브라우저가 스크롤 위치를 되돌려버린다. 표를 감싼
-  // .table-wrap-frozen(overflow-y:auto) 박스의 scrollTop을 기억했다가
-  // 다시 그린 뒤 그대로 복원한다.
-  const savedScrollTop = document.getElementById('profitListTableWrap')?.scrollTop;
+  // 바꾸면 브라우저가 스크롤 위치를 되돌려버린다. 이 표는 가로 폭이 매우
+  // 넓어서(5200px+) 세로(scrollTop)뿐 아니라 가로(scrollLeft)도 같이
+  // 기억했다가 복원해야, 오른쪽으로 스크롤해서 보던 중 체크해도 화면이
+  // 왼쪽 맨 앞으로 튀어버리지 않는다.
+  const scrollWrapBefore = document.getElementById('profitListTableWrap');
+  const savedScrollTop = scrollWrapBefore?.scrollTop;
+  const savedScrollLeft = scrollWrapBefore?.scrollLeft;
   main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
   const cases = await loadAllProfitCases();
   if(state.activeTab !== 'profit' || state.profitView !== 'list') return; // user navigated away while loading
