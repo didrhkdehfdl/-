@@ -7436,7 +7436,8 @@ async function renderAgentDocsMain(){
           <th style="padding:7px 6px; font-size:11px; color:var(--muted); width:60px;">삭제</th>
         </tr></thead>
         <tbody>
-          ${omCashReceiptState.items.slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(r=>`
+          ${(()=>{ registerColFilterProvider('omCashReceiptInline', ()=>omCashReceiptState.items, renderAgentDocsMain); return ''; })()}
+          ${omCashReceiptState.items.filter(r=>rowPassesColumnFilters('omCashReceiptInline', r)).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(r=>`
             <tr>
               <td style="padding:6px;">${escapeHtml(r.date)}</td>
               <td style="padding:6px;">${escapeHtml(r.customer)}</td>
