@@ -12457,6 +12457,7 @@ function wirePerfRowEvents(){
       });
     }
   });
+  wirePresenceCells(tbody.querySelectorAll('[data-perf]'), el => importCellKey('import-manual', el));
 
   tbody.querySelectorAll('.perf-del-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
