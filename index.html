@@ -7530,8 +7530,8 @@ async function renderAgentDocsMain(){
       <div class="table-wrap">
         <table class="agentdoc-table" style="width:100%; border-collapse:collapse;">
           <thead><tr>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
-            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:130px;">고객명</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명${colFilterIconHtml(agentFilterTabKey,'fileName')}</th>
+            <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; width:130px;">고객명${colFilterIconHtml(agentFilterTabKey,'customerName')}</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:90px;">용량</th>
             <th style="padding:8px 6px; font-size:11px; color:var(--muted); width:170px;">작업</th>
           </tr></thead>
