@@ -445,6 +445,9 @@
       <button class="tab-btn" data-tab="import" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">📥</span> 사급 실적리스트
       </button>
+      <button class="tab-btn" data-tab="worklog" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
+        <span style="width:18px; text-align:center;">📝</span> 일일업무일지
+      </button>
       <button class="tab-btn" data-tab="contracts" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">📄</span> 계약서
       </button>
@@ -2774,11 +2777,13 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'vehicle' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
+  if(state.activeTab === 'import' || state.activeTab === 'worklog' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'vehicle' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
       ? '<div class="empty-side">왼쪽 메뉴에서 실적 파일을 업로드하면<br>여기에 목록이 아닌 가져오기 화면이 표시됩니다.</div>'
+      : state.activeTab === 'worklog'
+        ? '<div class="empty-side">근태·업무 기록을<br>여기가 아닌 일일업무일지 화면에서 작성·조회할 수 있습니다.</div>'
       : state.activeTab === 'contracts'
         ? '<div class="empty-side">계약서 PDF를 업로드하면<br>여기에 목록이 아닌 계약서 관리 화면이 표시됩니다.</div>'
         : state.activeTab === 'inspection'
@@ -3544,6 +3549,10 @@ function renderMain(loading){
   }
   if(state.activeTab === 'import'){
     renderImportMain();
+    return;
+  }
+  if(state.activeTab === 'worklog'){
+    renderWorklogMain();
     return;
   }
   if(state.activeTab === 'contracts'){
@@ -6959,6 +6968,7 @@ const ALL_TABS = [
   { key:'sales', label:'영업비 정산' },
   { key:'profit', label:'사업 이윤정산' },
   { key:'import', label:'사급 실적리스트' },
+  { key:'worklog', label:'일일업무일지' },
   { key:'contracts', label:'계약서' },
   { key:'inspection', label:'사용전점검' },
   { key:'agentDocs', label:'영업자용' },
@@ -8494,6 +8504,14 @@ function simpleHistoryTargets(){
     { key: INQUIRY_KEY, icon:'💬', label:'문의 대응', onRestore: async raw => {
         inquiryState.items = JSON.parse(raw);
         if(state.activeTab==='inquiry') renderInquiryMain();
+      } },
+    { key: WORKLOG_ENTRIES_KEY, icon:'📝', label:'일일업무일지 (작성 내역)', onRestore: async raw => {
+        worklogState.entries = JSON.parse(raw);
+        if(state.activeTab==='worklog') renderWorklogMain();
+      } },
+    { key: WORKLOG_DUTY_ITEMS_KEY, icon:'📝', label:'일일업무일지 (업무분담표)', onRestore: async raw => {
+        worklogState.dutyItems = JSON.parse(raw);
+        if(state.activeTab==='worklog') renderWorklogMain();
       } },
   ];
 }
@@ -13185,6 +13203,578 @@ function setupStickyHScroll(wrapId, stickyId){
   });
 }
 
+// ---------- 일일업무일지 (worklog) ----------
+// Firestore app_data에 다른 탭들과 같은 방식(JSON 문자열 통째로 저장)으로
+// 둔다. "users" 컬렉션은 관리자만 전체 조회가 가능하도록 규칙이 걸려있어
+// (알림 보내기 기능 참고) 일반 사용자 전체 명단을 거기서 가져올 수 없다 —
+// 그래서 전체 취합/차량현황/보고서의 "인원 목록"은 users 컬렉션이 아니라
+// 이미 작성된 업무일지·업무분담표에 등장한 이름들을 모아서 만든다.
+const WORKLOG_ENTRIES_KEY = 'worklog-entries';
+const WORKLOG_DUTY_ITEMS_KEY = 'worklog-duty-items';
+const WORKLOG_TASK_LINKS_KEY = 'worklog-task-links';
+const WORKLOG_WEEKLY_NOTES_KEY = 'worklog-weekly-notes';
+const WORKLOG_STATUS_OPTIONS = ['정상근무','연차','기타'];
+const WORKLOG_HOUR_OPTIONS = (()=>{ const arr=[]; for(let h=0.5; h<=8.5; h+=0.5) arr.push(Math.round(h*10)/10); return arr; })();
+const WL_INPUT_STYLE = "background:var(--panel-2); border:1px solid var(--line); border-radius:7px; padding:7px 9px; color:var(--text); font-size:12.5px; font-family:'Noto Sans KR', sans-serif;";
+
+let worklogEntriesSub = null, worklogDutySub = null, worklogLinksSub = null, worklogNotesSub = null;
+let worklogState = {
+  loaded:false,
+  entries: [], dutyItems: [], taskLinks: [], weeklyNotes: [],
+  subTab: 'write',
+  writeDate: isoDate(new Date()),
+  aggregateDate: isoDate(new Date()),
+  vehicleDate: isoDate(new Date()),
+  weeklyPerson: '', weeklyWeekStart: '',
+  monthlyPerson: '', monthlyMonth: '', monthlyExpandedCat: '',
+  dutyManageOpen: false, dutyManagePerson: '',
+};
+
+function worklogNewTask(){ return { id: rid(), text:'', hours: 1 }; }
+function worklogNewEntry(userName, date){
+  return {
+    id: rid(), userName, date, status:'정상근무', leaveStart:'', leaveEnd:'',
+    today:[worklogNewTask()], tomorrow:[worklogNewTask()],
+    vehicleId:'', createdAt: Date.now(), updatedAt: Date.now(),
+  };
+}
+function worklogFindEntry(userName, date){
+  return worklogState.entries.find(e=>e.userName===userName && e.date===date);
+}
+// ISO 기준 월요일 시작 주(週)의 월요일 날짜를 구한다.
+function worklogWeekStart(dateStr){
+  const d = new Date(dateStr+'T00:00:00');
+  const day = d.getDay();
+  const diff = (day===0 ? -6 : 1-day);
+  d.setDate(d.getDate()+diff);
+  return isoDate(d);
+}
+function worklogWeekDates(weekStart){
+  const out=[];
+  const d = new Date(weekStart+'T00:00:00');
+  for(let i=0;i<7;i++){ out.push(isoDate(d)); d.setDate(d.getDate()+1); }
+  return out;
+}
+function worklogRoster(){
+  const names = new Set();
+  worklogState.entries.forEach(e=>{ if(e.userName) names.add(e.userName); });
+  worklogState.dutyItems.forEach(d=>{ if(d.userName) names.add(d.userName); });
+  if(currentUserName) names.add(currentUserName);
+  return Array.from(names).sort((a,b)=>a.localeCompare(b,'ko'));
+}
+async function worklogSaveEntries(){ await saveWithGenericHistory(WORKLOG_ENTRIES_KEY, JSON.stringify(worklogState.entries)); }
+async function worklogSaveDutyItems(){ await saveWithGenericHistory(WORKLOG_DUTY_ITEMS_KEY, JSON.stringify(worklogState.dutyItems)); }
+async function worklogSaveTaskLinks(){ await saveWithGenericHistory(WORKLOG_TASK_LINKS_KEY, JSON.stringify(worklogState.taskLinks)); }
+async function worklogSaveWeeklyNotes(){ await saveWithGenericHistory(WORKLOG_WEEKLY_NOTES_KEY, JSON.stringify(worklogState.weeklyNotes)); }
+
+// 업무 재분류 자동 매칭용 최소 bigram 유사도 — 정확한 형태소 분석이 아니라
+// 의도된 대략적 매칭이다(원본 grandsunsp-groupware 설계와 동일한 발상).
+function worklogBigrams(s){
+  const t = String(s||'').replace(/\s+/g,'');
+  const grams = [];
+  for(let i=0;i<t.length-1;i++) grams.push(t.slice(i,i+2));
+  return grams;
+}
+function worklogSimilarity(a,b){
+  const ga = worklogBigrams(a), gb = worklogBigrams(b).slice();
+  if(!ga.length || !gb.length) return 0;
+  let matches = 0;
+  ga.forEach(g=>{ const idx = gb.indexOf(g); if(idx>=0){ matches++; gb.splice(idx,1); } });
+  return (2*matches) / (worklogBigrams(a).length + worklogBigrams(b).length);
+}
+function worklogMatchDutyItem(userName, text){
+  const items = worklogState.dutyItems.filter(d=>d.userName===userName && d.label);
+  let best=null, bestScore=0;
+  items.forEach(d=>{
+    const score = worklogSimilarity(text, d.label);
+    if(score>bestScore){ bestScore=score; best=d; }
+  });
+  return bestScore>=0.34 ? best : null;
+}
+// 사람이 직접 재분류(taskLinks)해둔 게 있으면 그걸 최우선으로, 없으면 자동
+// bigram 매칭 결과를 쓴다. dutyItemId==='__NONE__'는 "분담표 외로 지정"을
+// 사람이 확정한 것 — 자동 매칭을 다시 시도하지 않는다.
+function worklogResolveTaskDuty(entry, slot, task){
+  const link = worklogState.taskLinks.find(l=>l.entryId===entry.id && l.slot===slot && l.taskId===task.id);
+  if(link){
+    if(link.dutyItemId==='__NONE__') return null;
+    return worklogState.dutyItems.find(d=>d.id===link.dutyItemId) || null;
+  }
+  return worklogMatchDutyItem(entry.userName, task.text);
+}
+
+async function renderWorklogMain(){
+  const main = document.getElementById('main');
+  if(!worklogState.loaded){
+    main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+    return;
+  }
+  const tabs = [
+    ['write','✍️ 작성'], ['aggregate','👥 전체 취합'], ['vehicle','🚗 차량현황'],
+    ['weekly','📅 주간보고서'], ['monthly','📈 월간보고서'],
+  ];
+  main.innerHTML = `
+    <div style="padding:22px 26px;">
+      <div style="font-size:19px; font-weight:700; margin-bottom:16px;">📝 일일업무일지</div>
+      <div style="display:flex; gap:6px; margin-bottom:18px; border-bottom:1px solid var(--line); padding-bottom:10px; flex-wrap:wrap;">
+        ${tabs.map(([key,label])=>`<button class="worklog-subtab-btn" data-sub="${key}" style="padding:8px 14px; border-radius:7px; border:1px solid ${worklogState.subTab===key?'var(--gold)':'var(--line)'}; background:${worklogState.subTab===key?'rgba(224,163,57,.12)':'transparent'}; color:${worklogState.subTab===key?'var(--gold)':'var(--muted)'}; cursor:pointer; font-size:12.5px; font-weight:${worklogState.subTab===key?'600':'400'};">${label}</button>`).join('')}
+      </div>
+      <div id="worklogSubBody"></div>
+    </div>
+  `;
+  main.querySelectorAll('.worklog-subtab-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ worklogState.subTab = btn.dataset.sub; renderWorklogMain(); });
+  });
+  const body = document.getElementById('worklogSubBody');
+  if(worklogState.subTab==='write') renderWorklogWriteTab(body);
+  else if(worklogState.subTab==='aggregate') renderWorklogAggregateTab(body);
+  else if(worklogState.subTab==='vehicle') renderWorklogVehicleTab(body);
+  else if(worklogState.subTab==='weekly') renderWorklogWeeklyTab(body);
+  else if(worklogState.subTab==='monthly') renderWorklogMonthlyTab(body);
+}
+
+function worklogRenderVehicleConflict(entry){
+  const el = document.getElementById('wlVehicleConflict');
+  if(!el) return;
+  if(!entry.vehicleId){ el.innerHTML=''; return; }
+  const conflicts = worklogState.entries.filter(e=>e.vehicleId===entry.vehicleId && e.date===entry.date && e.userName!==entry.userName);
+  const monthKey = entry.date.slice(0,7);
+  const logRow = ((vehicleState.rowsByVehicle[entry.vehicleId]||{})[monthKey]||[]).find(r=>r.date===entry.date && r.driver && r.driver.trim() && r.driver.trim()!==entry.userName);
+  const msgs = [];
+  if(conflicts.length) msgs.push(`⚠ 같은 날짜에 ${escapeHtml(conflicts.map(c=>c.userName).join(', '))}님도 이 업무일지에서 같은 차량을 선택했습니다.`);
+  if(logRow) msgs.push(`⚠ 차량운행일지에 이미 ${escapeHtml(logRow.driver)}님이 운행자로 기록되어 있습니다.`);
+  el.innerHTML = msgs.length ? `<div style="margin:-6px 0 14px; padding:8px 12px; border-radius:7px; background:rgba(224,163,57,.1); border:1px solid var(--gold-dim); color:var(--gold); font-size:12px;">${msgs.join('<br>')}</div>` : '';
+}
+
+async function renderWorklogWriteTab(body){
+  await ensureVehicleLoaded();
+  const date = worklogState.writeDate;
+  let entry = worklogFindEntry(currentUserName, date);
+  const isNew = !entry;
+  if(!entry) entry = worklogNewEntry(currentUserName, date);
+  const weekStart = worklogWeekStart(date);
+  const myNote = worklogState.weeklyNotes.find(n=>n.userName===currentUserName && n.weekStart===weekStart);
+
+  const taskRowsHtml = (slot, tasks) => tasks.map((t,i)=>`
+    <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+      <input type="text" class="wl-task-text" data-slot="${slot}" data-tidx="${i}" value="${escapeHtml(t.text)}" placeholder="업무 내용" style="${WL_INPUT_STYLE} flex:1;">
+      <select class="wl-task-hours" data-slot="${slot}" data-tidx="${i}" style="${WL_INPUT_STYLE} width:78px;">
+        ${WORKLOG_HOUR_OPTIONS.map(h=>`<option value="${h}" ${Number(t.hours)===h?'selected':''}>${h}h</option>`).join('')}
+      </select>
+      <button class="wl-task-remove" data-slot="${slot}" data-tidx="${i}" title="삭제" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px;" ${tasks.length<=1?'disabled':''}>✕</button>
+    </div>
+  `).join('');
+
+  body.innerHTML = `
+    <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:8px;">
+      <div class="field" style="width:170px;"><label>날짜</label><input type="date" id="wlWriteDate" value="${date}"></div>
+      <div class="field" style="width:150px;"><label>근태</label>
+        <select id="wlStatus" style="${WL_INPUT_STYLE}">
+          ${WORKLOG_STATUS_OPTIONS.map(s=>`<option value="${s}" ${entry.status===s?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      ${entry.status!=='정상근무' ? `
+      <div class="field" style="width:150px;"><label>시작일</label><input type="date" id="wlLeaveStart" value="${entry.leaveStart||date}"></div>
+      <div class="field" style="width:150px;"><label>종료일</label><input type="date" id="wlLeaveEnd" value="${entry.leaveEnd||date}"></div>` : ''}
+      <div class="field" style="width:220px;"><label>차량</label>
+        <select id="wlVehicle" style="${WL_INPUT_STYLE}">
+          <option value="">선택 안 함</option>
+          ${(vehicleState.vehicles||[]).map(v=>`<option value="${v.id}" ${entry.vehicleId===v.id?'selected':''}>${escapeHtml(v.plate)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div id="wlVehicleConflict"></div>
+    <div style="display:flex; gap:20px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:320px;">
+        <div style="font-size:13.5px; font-weight:600; margin-bottom:8px;">금일 업무</div>
+        <div id="wlTodayList">${taskRowsHtml('today', entry.today)}</div>
+        <button id="wlAddToday" style="margin-top:4px; padding:6px 10px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:11.5px;">+ 업무 추가</button>
+      </div>
+      <div style="flex:1; min-width:320px;">
+        <div style="font-size:13.5px; font-weight:600; margin-bottom:8px;">익일 업무</div>
+        <div id="wlTomorrowList">${taskRowsHtml('tomorrow', entry.tomorrow)}</div>
+        <button id="wlAddTomorrow" style="margin-top:4px; padding:6px 10px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:11.5px;">+ 업무 추가</button>
+      </div>
+    </div>
+    <div class="field" style="margin-top:20px; max-width:640px;">
+      <label>차주 중요업무 (${weekStart} 주, 본인만 작성)</label>
+      <textarea id="wlWeeklyNote" rows="3" style="${WL_INPUT_STYLE} resize:vertical;">${escapeHtml(myNote ? myNote.note : '')}</textarea>
+    </div>
+    <div style="margin-top:18px; display:flex; align-items:center; gap:10px;">
+      <button id="wlSaveBtn" style="padding:9px 18px; border-radius:7px; border:none; background:var(--gold); color:#fff; cursor:pointer; font-weight:600; font-size:13px;">저장</button>
+      <span id="wlSaveStatus" style="font-size:12px; color:var(--muted);"></span>
+    </div>
+  `;
+  document.getElementById('wlWriteDate').addEventListener('change', e=>{ worklogState.writeDate = e.target.value; renderWorklogWriteTab(body); });
+  document.getElementById('wlStatus').addEventListener('change', e=>{ entry.status = e.target.value; renderWorklogWriteTab(body); });
+  const vehicleSel = document.getElementById('wlVehicle');
+  vehicleSel.addEventListener('change', e=>{ entry.vehicleId = e.target.value; worklogRenderVehicleConflict(entry); });
+  worklogRenderVehicleConflict(entry);
+  document.getElementById('wlAddToday').addEventListener('click', ()=>{ entry.today.push(worklogNewTask()); renderWorklogWriteTab(body); });
+  document.getElementById('wlAddTomorrow').addEventListener('click', ()=>{ entry.tomorrow.push(worklogNewTask()); renderWorklogWriteTab(body); });
+  body.querySelectorAll('.wl-task-remove').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ entry[btn.dataset.slot].splice(Number(btn.dataset.tidx),1); renderWorklogWriteTab(body); });
+  });
+  body.querySelectorAll('.wl-task-text').forEach(inp=>{
+    inp.addEventListener('input', ()=>{ entry[inp.dataset.slot][Number(inp.dataset.tidx)].text = inp.value; });
+  });
+  body.querySelectorAll('.wl-task-hours').forEach(sel=>{
+    sel.addEventListener('change', ()=>{ entry[sel.dataset.slot][Number(sel.dataset.tidx)].hours = Number(sel.value); });
+  });
+  const leaveStartEl = document.getElementById('wlLeaveStart');
+  const leaveEndEl = document.getElementById('wlLeaveEnd');
+  if(leaveStartEl) leaveStartEl.addEventListener('change', e=>{ entry.leaveStart = e.target.value; });
+  if(leaveEndEl) leaveEndEl.addEventListener('change', e=>{ entry.leaveEnd = e.target.value; });
+  document.getElementById('wlSaveBtn').addEventListener('click', async ()=>{
+    const statusEl = document.getElementById('wlSaveStatus');
+    entry.today = entry.today.filter(t=>t.text.trim());
+    entry.tomorrow = entry.tomorrow.filter(t=>t.text.trim());
+    if(!entry.today.length) entry.today = [worklogNewTask()];
+    if(!entry.tomorrow.length) entry.tomorrow = [worklogNewTask()];
+    entry.updatedAt = Date.now();
+    if(isNew) worklogState.entries.push(entry);
+    else worklogState.entries[worklogState.entries.findIndex(x=>x.id===entry.id)] = entry;
+    statusEl.textContent = '저장 중…';
+    try{
+      await worklogSaveEntries();
+      const noteText = document.getElementById('wlWeeklyNote').value;
+      const existingNote = worklogState.weeklyNotes.find(n=>n.userName===currentUserName && n.weekStart===weekStart);
+      if(existingNote){ existingNote.note = noteText; existingNote.updatedAt = Date.now(); }
+      else if(noteText.trim()) worklogState.weeklyNotes.push({ id: rid(), userName: currentUserName, weekStart, note: noteText, updatedAt: Date.now() });
+      await worklogSaveWeeklyNotes();
+      statusEl.textContent = '저장되었습니다.';
+      renderWorklogWriteTab(body);
+    }catch(err){ statusEl.textContent = '저장 실패: '+err.message; }
+  });
+}
+
+function renderWorklogAggregateTab(body){
+  const date = worklogState.aggregateDate;
+  const entries = worklogState.entries.filter(e=>e.date===date).sort((a,b)=>a.userName.localeCompare(b.userName,'ko'));
+  const taskSummary = tasks => tasks.filter(t=>t.text&&t.text.trim()).map(t=>`${escapeHtml(t.text)}(${t.hours}h)`).join(', ') || '-';
+  body.innerHTML = `
+    <div class="field" style="width:180px; margin-bottom:16px;"><label>날짜</label><input type="date" id="wlAggDate" value="${date}"></div>
+    <div class="table-wrap"><table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr style="background:var(--panel-2);">
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line);">성명</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line); width:80px;">근태</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line);">금일 업무</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line);">익일 업무</th>
+      </tr></thead>
+      <tbody>
+        ${entries.length ? entries.map(e=>`
+          <tr>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${escapeHtml(e.userName)}</td>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${escapeHtml(e.status)}</td>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${taskSummary(e.today)}</td>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${taskSummary(e.tomorrow)}</td>
+          </tr>`).join('') : `<tr><td colspan="4" style="padding:16px; text-align:center; color:var(--muted);">이 날짜에 작성된 업무일지가 없습니다.</td></tr>`}
+      </tbody>
+    </table></div>
+  `;
+  document.getElementById('wlAggDate').addEventListener('change', e=>{ worklogState.aggregateDate = e.target.value; renderWorklogAggregateTab(body); });
+}
+
+async function renderWorklogVehicleTab(body){
+  await ensureVehicleLoaded();
+  const date = worklogState.vehicleDate;
+  const byVehicle = {};
+  worklogState.entries.filter(e=>e.date===date && e.vehicleId).forEach(e=>{ (byVehicle[e.vehicleId]=byVehicle[e.vehicleId]||[]).push(e.userName); });
+  const monthKey = date.slice(0,7);
+  const rows = (vehicleState.vehicles||[]).map(v=>{
+    const users = byVehicle[v.id] || [];
+    const logRow = ((vehicleState.rowsByVehicle[v.id]||{})[monthKey]||[]).find(r=>r.date===date);
+    return { v, users, logDriver: logRow ? logRow.driver : '', conflict: users.length>1 };
+  });
+  body.innerHTML = `
+    <div class="field" style="width:180px; margin-bottom:16px;"><label>날짜</label><input type="date" id="wlVehDate" value="${date}"></div>
+    <div class="table-wrap"><table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr style="background:var(--panel-2);">
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line);">차량</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line);">업무일지에서 선택한 사람</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line);">운행일지 기록된 운행자</th>
+      </tr></thead>
+      <tbody>
+        ${rows.length ? rows.map(r=>`
+          <tr style="${r.conflict?'background:rgba(224,80,80,.08);':''}">
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${escapeHtml(r.v.plate)}</td>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line); ${r.conflict?'color:#e05050; font-weight:600;':''}">${r.users.length?escapeHtml(r.users.join(', '))+(r.conflict?' ⚠ 중복':''):'-'}</td>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${r.logDriver?escapeHtml(r.logDriver):'-'}</td>
+          </tr>`).join('') : `<tr><td colspan="3" style="padding:16px; text-align:center; color:var(--muted);">등록된 차량이 없습니다.</td></tr>`}
+      </tbody>
+    </table></div>
+  `;
+  document.getElementById('wlVehDate').addEventListener('change', e=>{ worklogState.vehicleDate = e.target.value; renderWorklogVehicleTab(body); });
+}
+
+function renderWorklogWeeklyTab(body){
+  if(!isAdminUser){ body.innerHTML = `<div class="no-case"><div class="big">관리자만 볼 수 있습니다</div></div>`; return; }
+  const roster = worklogRoster();
+  if(!worklogState.weeklyPerson) worklogState.weeklyPerson = roster[0] || '';
+  if(!worklogState.weeklyWeekStart) worklogState.weeklyWeekStart = worklogWeekStart(isoDate(new Date()));
+  const person = worklogState.weeklyPerson;
+  const weekStart = worklogState.weeklyWeekStart;
+  const dates = worklogWeekDates(weekStart);
+  const entries = dates.map(d=>worklogFindEntry(person,d));
+  const note = worklogState.weeklyNotes.find(n=>n.userName===person && n.weekStart===weekStart);
+  const allTasks = [];
+  entries.forEach(e=>{ if(!e) return; [...e.today, ...e.tomorrow].forEach(t=>{ if(t.text&&t.text.trim()) allTasks.push({ text:t.text, hours:Number(t.hours)||0 }); }); });
+  const merged = {};
+  allTasks.forEach(t=>{ merged[t.text] = (merged[t.text]||0)+t.hours; });
+  const top5 = Object.entries(merged).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const totalHours = entries.reduce((sum,e)=> sum + (e ? e.today.reduce((s,t)=>s+(Number(t.hours)||0),0) : 0), 0);
+  body.innerHTML = `
+    <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; align-items:flex-end;">
+      <div class="field" style="width:150px;"><label>인원</label>
+        <select id="wlWeeklyPerson" style="${WL_INPUT_STYLE}">${roster.map(n=>`<option value="${escapeHtml(n)}" ${n===person?'selected':''}>${escapeHtml(n)}</option>`).join('')}</select>
+      </div>
+      <div class="field" style="width:170px;"><label>주(아무 날짜나 선택)</label><input type="date" id="wlWeeklyDate" value="${weekStart}"></div>
+      <button id="wlWeeklyExcelBtn" style="padding:8px 14px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12px;">엑셀 다운로드</button>
+      <button id="wlWeeklyWordBtn" style="padding:8px 14px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12px;">워드 다운로드</button>
+    </div>
+    <div style="font-size:13px; color:var(--muted); margin-bottom:8px;">${weekStart} ~ ${dates[6]} (${escapeHtml(person)})</div>
+    <div class="table-wrap" style="margin-bottom:20px;"><table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr style="background:var(--panel-2);">
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line); width:90px;">날짜</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line); width:70px;">근태</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line);">금일 업무</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line); width:60px;">시간</th>
+      </tr></thead>
+      <tbody>
+        ${dates.map((d,i)=>{ const e=entries[i]; const hours = e?e.today.reduce((s,t)=>s+(Number(t.hours)||0),0):0;
+          return `<tr>
+            <td style="padding:6px 8px; border-bottom:1px solid var(--line);">${d}</td>
+            <td style="padding:6px 8px; border-bottom:1px solid var(--line);">${e?escapeHtml(e.status):'-'}</td>
+            <td style="padding:6px 8px; border-bottom:1px solid var(--line);">${e?(e.today.filter(t=>t.text&&t.text.trim()).map(t=>escapeHtml(t.text)).join(', ')||'-'):'-'}</td>
+            <td style="padding:6px 8px; border-bottom:1px solid var(--line);">${hours}h</td>
+          </tr>`; }).join('')}
+        <tr style="font-weight:600; background:var(--panel-2);"><td colspan="3" style="padding:6px 8px;">합계</td><td style="padding:6px 8px;">${totalHours}h</td></tr>
+      </tbody>
+    </table></div>
+    <div style="display:flex; gap:20px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:280px;">
+        <div style="font-size:13px; font-weight:600; margin-bottom:6px;">금주 중요업무 (시간 기준 상위 5개)</div>
+        ${top5.length ? `<ul style="margin:0; padding-left:18px; font-size:12.5px;">${top5.map(([t,h])=>`<li>${escapeHtml(t)} (${h}h)</li>`).join('')}</ul>` : `<div style="font-size:12.5px; color:var(--muted);">기록 없음</div>`}
+      </div>
+      <div style="flex:1; min-width:280px;">
+        <div style="font-size:13px; font-weight:600; margin-bottom:6px;">차주 중요업무</div>
+        <div style="font-size:12.5px; white-space:pre-wrap;">${note&&note.note?escapeHtml(note.note):'<span style="color:var(--muted);">작성된 내용 없음</span>'}</div>
+      </div>
+    </div>
+  `;
+  document.getElementById('wlWeeklyPerson').addEventListener('change', e=>{ worklogState.weeklyPerson = e.target.value; renderWorklogWeeklyTab(body); });
+  document.getElementById('wlWeeklyDate').addEventListener('change', e=>{ worklogState.weeklyWeekStart = worklogWeekStart(e.target.value); renderWorklogWeeklyTab(body); });
+  document.getElementById('wlWeeklyExcelBtn').addEventListener('click', ()=> worklogExportWeeklyExcel(person, weekStart, dates, entries, top5, note));
+  document.getElementById('wlWeeklyWordBtn').addEventListener('click', ()=> worklogExportWeeklyWord(person, weekStart, dates, entries, top5, note));
+}
+function worklogExportWeeklyExcel(person, weekStart, dates, entries, top5, note){
+  const aoa = [[`${person} 주간보고서`], [`${weekStart} ~ ${dates[6]}`], [], ['날짜','근태','금일 업무','시간']];
+  dates.forEach((d,i)=>{ const e=entries[i]; const hours = e?e.today.reduce((s,t)=>s+(Number(t.hours)||0),0):0;
+    aoa.push([d, e?e.status:'-', e?e.today.filter(t=>t.text&&t.text.trim()).map(t=>t.text).join(', '):'-', hours]); });
+  aoa.push([]); aoa.push(['금주 중요업무']);
+  top5.forEach(([t,h])=> aoa.push([t, h+'h']));
+  aoa.push([]); aoa.push(['차주 중요업무']); aoa.push([note ? note.note : '']);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '주간보고서');
+  XLSX.writeFile(wb, `${person}_주간보고서_${weekStart}.xlsx`);
+}
+function worklogExportWeeklyWord(person, weekStart, dates, entries, top5, note){
+  const rowsHtml = dates.map((d,i)=>{ const e=entries[i]; const hours = e?e.today.reduce((s,t)=>s+(Number(t.hours)||0),0):0;
+    return `<tr><td>${d}</td><td>${escapeHtml(e?e.status:'-')}</td><td>${escapeHtml(e?e.today.filter(t=>t.text&&t.text.trim()).map(t=>t.text).join(', '):'-')}</td><td>${hours}h</td></tr>`; }).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>table{border-collapse:collapse;width:100%;} td,th{border:1px solid #999;padding:6px;font-size:13px;}</style></head><body>
+    <h2>${escapeHtml(person)} 주간보고서 (${weekStart} ~ ${dates[6]})</h2>
+    <table><tr><th>날짜</th><th>근태</th><th>금일 업무</th><th>시간</th></tr>${rowsHtml}</table>
+    <h3>금주 중요업무</h3><ul>${top5.map(([t,h])=>`<li>${escapeHtml(t)} (${h}h)</li>`).join('')}</ul>
+    <h3>차주 중요업무</h3><p>${escapeHtml(note?note.note:'')}</p>
+  </body></html>`;
+  const blob = new Blob(['﻿', html], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = `${person}_주간보고서_${weekStart}.doc`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function worklogMonthEntries(person, month){ return worklogState.entries.filter(e=>e.userName===person && e.date.startsWith(month)); }
+function worklogMonthlyStats(person, month){
+  const entries = worklogMonthEntries(person, month);
+  const workDays = entries.filter(e=>e.status==='정상근무').length;
+  let totalHours = 0, matchedHours = 0;
+  const byCategory = {}, bySub = {};
+  entries.forEach(e=>{
+    e.today.forEach(t=>{
+      if(!t.text || !t.text.trim()) return;
+      const hours = Number(t.hours)||0;
+      totalHours += hours;
+      const duty = worklogResolveTaskDuty(e, 'today', t);
+      const category = duty ? duty.category : '분담표 외';
+      const subcategory = duty ? duty.subcategory : (t.text.length>18 ? t.text.slice(0,18)+'…' : t.text);
+      if(duty) matchedHours += hours;
+      byCategory[category] = (byCategory[category]||0) + hours;
+      const key = category+'||'+subcategory;
+      (bySub[key] = bySub[key] || { category, subcategory, hours:0, tasks:[] });
+      bySub[key].hours += hours;
+      bySub[key].tasks.push({ date:e.date, entryId:e.id, taskId:t.id, text:t.text, hours, dutyItemId: duty?duty.id:null });
+    });
+  });
+  const coverage = totalHours ? Math.round((matchedHours/totalHours)*1000)/10 : 0;
+  return { entries, workDays, totalHours, matchedHours, coverage, byCategory, bySub };
+}
+function worklogBuildFeedback(stats){
+  const lines = [];
+  if(stats.totalHours===0){ lines.push('이번 달 기록된 업무가 없습니다.'); return lines; }
+  if(stats.coverage>=80) lines.push(`업무분담표 커버리지가 ${stats.coverage}%로 높아, 대부분의 업무가 사전에 계획된 분담 범위 안에서 이뤄졌습니다.`);
+  else if(stats.coverage>=50) lines.push(`업무분담표 커버리지가 ${stats.coverage}%로, 절반 이상은 분담표 범위 안이지만 분담표 외 업무 비중도 적지 않습니다.`);
+  else lines.push(`업무분담표 커버리지가 ${stats.coverage}%로 낮은 편이라, 분담표 외 돌발/추가 업무 비중이 큰 달이었습니다.`);
+  const catEntries = Object.entries(stats.byCategory).sort((a,b)=>b[1]-a[1]);
+  if(catEntries.length){
+    const [topCat, topHours] = catEntries[0];
+    const pct = Math.round((topHours/stats.totalHours)*100);
+    lines.push(`가장 많은 시간을 쓴 분류는 "${topCat}"(${pct}%, ${topHours}h)입니다.`);
+  }
+  if(stats.workDays>0){
+    const avg = Math.round((stats.totalHours/stats.workDays)*10)/10;
+    lines.push(`근무일당 평균 ${avg}시간이 기록되었습니다.`);
+  }
+  return lines;
+}
+function renderWorklogMonthlyTab(body){
+  const roster = worklogRoster();
+  if(!worklogState.monthlyPerson) worklogState.monthlyPerson = currentUserName || roster[0] || '';
+  if(!worklogState.monthlyMonth) worklogState.monthlyMonth = isoDate(new Date()).slice(0,7);
+  const person = worklogState.monthlyPerson;
+  const month = worklogState.monthlyMonth;
+  const stats = worklogMonthlyStats(person, month);
+  const canPickPerson = isAdminUser;
+  const catRows = Object.entries(stats.byCategory).sort((a,b)=>b[1]-a[1]);
+  body.innerHTML = `
+    <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; align-items:flex-end;">
+      ${canPickPerson ? `<div class="field" style="width:150px;"><label>인원</label>
+        <select id="wlMonthlyPerson" style="${WL_INPUT_STYLE}">${roster.map(n=>`<option value="${escapeHtml(n)}" ${n===person?'selected':''}>${escapeHtml(n)}</option>`).join('')}</select>
+      </div>` : ''}
+      <div class="field" style="width:150px;"><label>월</label><input type="month" id="wlMonthlyMonth" value="${month}"></div>
+      <button id="wlDutyManageBtn" style="padding:8px 14px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12px;">📋 업무분담표 관리</button>
+    </div>
+    <div id="wlDutyManageBody"></div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:22px;">
+      ${[['근무일', stats.workDays+'일'],['총 업무시간', stats.totalHours+'h'],['분담표 커버리지', stats.coverage+'%'],['분담표 외 업무', (100-stats.coverage).toFixed(1)+'%']]
+        .map(([label,val])=>`<div style="padding:14px; border:1px solid var(--line); border-radius:9px; background:var(--panel-2);">
+          <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">${label}</div>
+          <div style="font-size:19px; font-weight:700;">${val}</div>
+        </div>`).join('')}
+    </div>
+    <div style="font-size:13.5px; font-weight:600; margin-bottom:8px;">대분류별 시간 비중 (클릭하면 상세 업무가 펼쳐집니다)</div>
+    <div style="margin-bottom:20px;">
+      ${catRows.length ? catRows.map(([cat,hours])=>{ const pct = stats.totalHours?Math.round((hours/stats.totalHours)*1000)/10:0;
+        return `<div class="wl-cat-row" data-cat="${escapeHtml(cat)}" style="cursor:pointer; margin-bottom:8px;">
+          <div style="display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:3px;"><span>${escapeHtml(cat)}${worklogState.monthlyExpandedCat===cat?' ▲':' ▾'}</span><span style="color:var(--muted);">${hours}h (${pct}%)</span></div>
+          <div style="height:8px; border-radius:4px; background:var(--line); overflow:hidden;"><div style="width:${pct}%; height:100%; background:var(--gold);"></div></div>
+        </div>`; }).join('') : `<div style="font-size:12.5px; color:var(--muted);">이번 달 기록된 업무가 없습니다.</div>`}
+    </div>
+    <div id="wlSubBreakdown"></div>
+    <div style="margin-top:24px;">
+      <button id="wlFeedbackBtn" style="padding:8px 14px; border-radius:7px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; font-size:12.5px;">💡 분석 피드백 보기</button>
+      <div id="wlFeedbackBody" style="margin-top:10px; font-size:12.5px; line-height:1.7;"></div>
+    </div>
+  `;
+  if(canPickPerson) document.getElementById('wlMonthlyPerson').addEventListener('change', e=>{ worklogState.monthlyPerson = e.target.value; worklogState.monthlyExpandedCat=''; renderWorklogMonthlyTab(body); });
+  document.getElementById('wlMonthlyMonth').addEventListener('change', e=>{ worklogState.monthlyMonth = e.target.value; worklogState.monthlyExpandedCat=''; renderWorklogMonthlyTab(body); });
+  document.getElementById('wlDutyManageBtn').addEventListener('click', ()=>{ worklogState.dutyManageOpen = !worklogState.dutyManageOpen; renderWorklogDutyManage(document.getElementById('wlDutyManageBody'), person, body); });
+  if(worklogState.dutyManageOpen) renderWorklogDutyManage(document.getElementById('wlDutyManageBody'), person, body);
+  body.querySelectorAll('.wl-cat-row').forEach(row=>{
+    row.addEventListener('click', ()=>{ worklogState.monthlyExpandedCat = worklogState.monthlyExpandedCat===row.dataset.cat ? '' : row.dataset.cat; renderWorklogMonthlyTab(body); });
+  });
+  renderWorklogSubBreakdown(document.getElementById('wlSubBreakdown'), stats, worklogState.monthlyExpandedCat, person, month, body);
+  const feedbackBtn = document.getElementById('wlFeedbackBtn');
+  const feedbackBody = document.getElementById('wlFeedbackBody');
+  const showFeedback = () => { feedbackBody.innerHTML = worklogBuildFeedback(stats).map(l=>`<div>• ${escapeHtml(l)}</div>`).join(''); };
+  if(isAdminUser){ feedbackBtn.style.display = 'none'; showFeedback(); }
+  else feedbackBtn.addEventListener('click', showFeedback);
+}
+function renderWorklogSubBreakdown(el, stats, expandedCat, person, month, mainBody){
+  if(!el) return;
+  if(!expandedCat){ el.innerHTML=''; return; }
+  const subs = Object.values(stats.bySub).filter(s=>s.category===expandedCat);
+  const dutyOptions = worklogState.dutyItems.filter(d=>d.userName===person);
+  el.innerHTML = `
+    <div style="border:1px solid var(--line); border-radius:9px; padding:14px; margin-bottom:20px; background:var(--panel-2);">
+      <div style="font-size:13px; font-weight:600; margin-bottom:10px;">"${escapeHtml(expandedCat)}" 상세 업무</div>
+      ${subs.map(s=>`<div style="margin-bottom:10px;">
+        <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">${escapeHtml(s.subcategory)} — ${s.hours}h</div>
+        ${s.tasks.map(t=>`<div style="display:flex; align-items:center; gap:8px; padding:4px 0; font-size:12px; flex-wrap:wrap;">
+          <span style="width:80px; color:var(--muted);">${t.date}</span>
+          <span style="flex:1; min-width:120px;">${escapeHtml(t.text)} (${t.hours}h)</span>
+          <select class="wl-reclassify" data-entry="${t.entryId}" data-task="${t.taskId}" style="${WL_INPUT_STYLE} font-size:11px; width:190px;">
+            <option value="">(자동 매칭 유지)</option>
+            <option value="__NONE__">분담표 외로 지정</option>
+            ${dutyOptions.map(d=>`<option value="${d.id}" ${t.dutyItemId===d.id?'selected':''}>${escapeHtml(d.category)}/${escapeHtml(d.subcategory)}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+      </div>`).join('')}
+    </div>
+  `;
+  el.querySelectorAll('.wl-reclassify').forEach(sel=>{
+    sel.addEventListener('change', async ()=>{
+      const entryId = sel.dataset.entry, taskId = sel.dataset.task, val = sel.value;
+      if(!val) return;
+      const entry = worklogState.entries.find(e=>e.id===entryId);
+      if(!entry) return;
+      const slot = entry.today.some(t=>t.id===taskId) ? 'today' : 'tomorrow';
+      const existingIdx = worklogState.taskLinks.findIndex(l=>l.entryId===entryId && l.taskId===taskId);
+      const link = { id: rid(), entryId, taskId, slot, userName: person, month, dutyItemId: val };
+      if(existingIdx>=0) worklogState.taskLinks[existingIdx] = link; else worklogState.taskLinks.push(link);
+      await worklogSaveTaskLinks();
+      if(mainBody) renderWorklogMonthlyTab(mainBody);
+    });
+  });
+}
+function renderWorklogDutyManage(el, person, mainBody){
+  if(!el) return;
+  if(!worklogState.dutyManageOpen){ el.innerHTML=''; return; }
+  const roster = worklogRoster();
+  const managePerson = isAdminUser ? (worklogState.dutyManagePerson || person) : currentUserName;
+  worklogState.dutyManagePerson = managePerson;
+  const items = worklogState.dutyItems.filter(d=>d.userName===managePerson);
+  el.innerHTML = `
+    <div style="border:1px solid var(--line); border-radius:9px; padding:14px; margin-bottom:18px; background:var(--panel-2);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <div style="font-size:13px; font-weight:600;">업무분담표${isAdminUser?'':` (본인: ${escapeHtml(currentUserName)})`}</div>
+        ${isAdminUser ? `<select id="wlDutyManagePerson" style="${WL_INPUT_STYLE} width:140px;">${roster.map(n=>`<option value="${escapeHtml(n)}" ${n===managePerson?'selected':''}>${escapeHtml(n)}</option>`).join('')}</select>` : ''}
+      </div>
+      <div id="wlDutyItemsList">
+        ${items.map(d=>`<div style="display:flex; gap:6px; align-items:center; margin-bottom:6px; flex-wrap:wrap;">
+          <input type="text" class="wl-duty-cat" data-id="${d.id}" value="${escapeHtml(d.category)}" placeholder="대분류" style="${WL_INPUT_STYLE} width:110px;">
+          <input type="text" class="wl-duty-sub" data-id="${d.id}" value="${escapeHtml(d.subcategory)}" placeholder="중분류" style="${WL_INPUT_STYLE} width:110px;">
+          <input type="text" class="wl-duty-label" data-id="${d.id}" value="${escapeHtml(d.label)}" placeholder="업무명(재분류 매칭용 텍스트)" style="${WL_INPUT_STYLE} flex:1; min-width:160px;">
+          <button class="wl-duty-remove" data-id="${d.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px;">✕</button>
+        </div>`).join('')}
+      </div>
+      <button id="wlDutyAddBtn" style="margin-top:4px; padding:6px 10px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:11.5px;">+ 업무 추가</button>
+      <div style="margin-top:10px;"><button id="wlDutySaveBtn" style="padding:7px 14px; border-radius:7px; border:none; background:var(--gold); color:#fff; cursor:pointer; font-weight:600; font-size:12px;">저장</button> <span id="wlDutySaveStatus" style="font-size:11.5px; color:var(--muted);"></span></div>
+    </div>
+  `;
+  if(isAdminUser) document.getElementById('wlDutyManagePerson').addEventListener('change', e=>{ worklogState.dutyManagePerson = e.target.value; renderWorklogDutyManage(el, person, mainBody); });
+  document.getElementById('wlDutyAddBtn').addEventListener('click', ()=>{ worklogState.dutyItems.push({ id: rid(), userName: managePerson, category:'', subcategory:'', label:'' }); renderWorklogDutyManage(el, person, mainBody); });
+  el.querySelectorAll('.wl-duty-remove').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ worklogState.dutyItems = worklogState.dutyItems.filter(d=>d.id!==btn.dataset.id); renderWorklogDutyManage(el, person, mainBody); });
+  });
+  el.querySelectorAll('.wl-duty-cat, .wl-duty-sub, .wl-duty-label').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      const d = worklogState.dutyItems.find(x=>x.id===inp.dataset.id);
+      if(!d) return;
+      if(inp.classList.contains('wl-duty-cat')) d.category = inp.value;
+      else if(inp.classList.contains('wl-duty-sub')) d.subcategory = inp.value;
+      else d.label = inp.value;
+    });
+  });
+  document.getElementById('wlDutySaveBtn').addEventListener('click', async ()=>{
+    const statusEl = document.getElementById('wlDutySaveStatus');
+    statusEl.textContent = '저장 중…';
+    try{ await worklogSaveDutyItems(); statusEl.textContent = '저장되었습니다.'; if(mainBody) renderWorklogMonthlyTab(mainBody); }
+    catch(err){ statusEl.textContent = '저장 실패: '+err.message; }
+  });
+}
+
 // ---------- 표 열 너비 드래그 조절 (엑셀처럼) ----------
 // .table-wrap 안의 모든 표(No./A/S 등 모든 탭의 목록 표 포함)에 공통 적용된다.
 // main.innerHTML로 다시 그릴 때마다 <table>이 통째로 새로 생기므로, #main을
@@ -13582,6 +14172,21 @@ async function init(){
   await restoreSalesLedgerTemplate();
   await restoreOMListTemplate();
   await restoreProfitLedgerTemplate();
+  // 일일업무일지 — 여러 명이 같이 쓰는 표라 실시간 구독으로 불러온다.
+  worklogEntriesSub = subscribeListToStorage(WORKLOG_ENTRIES_KEY, worklogState, {
+    field: 'entries', isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
+  });
+  worklogDutySub = subscribeListToStorage(WORKLOG_DUTY_ITEMS_KEY, worklogState, {
+    field: 'dutyItems', isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
+  });
+  worklogLinksSub = subscribeListToStorage(WORKLOG_TASK_LINKS_KEY, worklogState, {
+    field: 'taskLinks', isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
+  });
+  worklogNotesSub = subscribeListToStorage(WORKLOG_WEEKLY_NOTES_KEY, worklogState, {
+    field: 'weeklyNotes', isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
+  });
+  await Promise.all([worklogEntriesSub.firstLoad, worklogDutySub.firstLoad, worklogLinksSub.firstLoad, worklogNotesSub.firstLoad]);
+  worklogState.loaded = true;
   renderSidebar();
   renderMain();
 }
