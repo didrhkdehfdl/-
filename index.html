@@ -11535,8 +11535,19 @@ async function ensureVehicleLoaded(){
 async function saveVehicleList(){
   await saveFileToStorage(VEHICLE_LIST_KEY, JSON.stringify({ vehicles: vehicleState.vehicles, activeVehicleId: vehicleState.activeVehicleId }));
 }
-async function saveVehicleRows(vehicleId){
-  await saveWithGenericHistory('vehicle-rows:'+vehicleId, JSON.stringify(vehicleState.rowsByVehicle[vehicleId]||{}));
+// change(blur)와 input 디바운스 자동저장이 동시에 겹쳐 호출될 수 있어(예:
+// A칸에서 벗어나며 저장이 시작된 사이 B칸을 입력해 또 저장이 걸리는 경우),
+// 요청을 한 번에 하나씩 순서대로만 실행되게 줄세운다 — 그냥 각자 병렬로
+// 실행하면, 먼저 시작했지만 네트워크가 느려 나중에 도착한 "오래된(B칸이
+// 아직 안 담긴) 내용"이 뒤늦게 덮어써서 방금 입력한 내용이 사라질 수 있다.
+// 순서대로 실행하면 매번 실행되는 시점의 최신 rowsByVehicle을 저장하므로
+// 마지막에 도착하는 저장도 항상 최신 내용이 된다.
+let vehicleSaveQueue = Promise.resolve();
+function saveVehicleRows(vehicleId){
+  vehicleSaveQueue = vehicleSaveQueue.catch(()=>{}).then(
+    () => saveWithGenericHistory('vehicle-rows:'+vehicleId, JSON.stringify(vehicleState.rowsByVehicle[vehicleId]||{}))
+  );
+  return vehicleSaveQueue;
 }
 // corpCard와 같은 이유로, 지금 보고 있는 차량의 운행기록만 실시간으로 받는다.
 let vehicleRowsSub = null; // { unsub, vehicleId }
