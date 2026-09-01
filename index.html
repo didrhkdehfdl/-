@@ -13938,16 +13938,28 @@ function renderLunchStatusTab(body, date, label){
       <thead><tr style="background:var(--panel-2);">
         <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line);">성명</th>
         <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line); width:120px;">근무형태</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line); width:50px;"></th>
       </tr></thead>
       <tbody>
-        ${entries.length ? entries.map(({name,entry})=>`
+        ${entries.length ? entries.map(({name,entry})=>{
+          const canDelete = entry && (isAdminUser || entry.userName===currentUserName);
+          return `
           <tr>
             <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${escapeHtml(name)}</td>
             <td style="padding:7px 8px; border-bottom:1px solid var(--line); ${entry?'':'color:var(--muted);'}">${entry ? `${LUNCH_WORK_TYPES.find(t=>t.key===entry.workType)?.icon||''} ${escapeHtml(entry.workType)}` : '미제출'}</td>
-          </tr>`).join('') : `<tr><td colspan="2" style="padding:16px; text-align:center; color:var(--muted);">아직 아무도 체크인하지 않았습니다.</td></tr>`}
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${canDelete ? `<button class="lunch-entry-delete" data-id="${entry.id}" title="체크 삭제" style="background:transparent; border:none; color:var(--neg); cursor:pointer; font-size:13px;">✕</button>` : ''}</td>
+          </tr>`; }).join('') : `<tr><td colspan="3" style="padding:16px; text-align:center; color:var(--muted);">아직 아무도 체크인하지 않았습니다.</td></tr>`}
       </tbody>
     </table></div>
   `;
+  body.querySelectorAll('.lunch-entry-delete').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 체크를 삭제할까요?')) return;
+      lunchState.entries = lunchState.entries.filter(e=>e.id!==btn.dataset.id);
+      try{ await lunchSaveEntries(); renderLunchStatusTab(body, date, label); }
+      catch(err){ alert('삭제 실패: '+err.message); }
+    });
+  });
 }
 
 function renderLunchMonthlyTab(body){
