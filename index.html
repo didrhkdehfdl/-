@@ -509,9 +509,6 @@
       <button class="tab-btn" data-tab="history" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">🕒</span> 변동내역
       </button>
-      <button class="tab-btn" data-tab="printer" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
-        <span style="width:18px; text-align:center;">🖨️</span> 복합기
-      </button>
       <button class="tab-btn" data-tab="adminApproval" id="adminApprovalTabBtn" style="display:none; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">✅</span> 승인관리
       </button>
@@ -522,6 +519,9 @@
     <button id="appLogoutBtn" style="margin:0 18px 16px; padding:9px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:12px; cursor:pointer;">로그아웃</button>
   </aside>
   <div style="display:flex; flex-direction:column; flex:1; min-width:0;">
+    <div style="display:flex; align-items:center; justify-content:flex-end; padding:8px 22px; border-bottom:1px solid var(--line); min-height:16px;">
+      <div id="printerCounterBar" style="display:none; font-size:12px; color:var(--muted); gap:18px; align-items:center;"></div>
+    </div>
     <div id="presenceBanner" style="display:none; padding:8px 22px; font-size:12.5px; background:rgba(224,163,57,.08); border-bottom:1px solid var(--gold-dim); color:var(--gold);"></div>
     <main id="main" style="flex:1;"></main>
   </div>
@@ -2789,7 +2789,7 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'lunch' || state.activeTab === 'worklog' || state.activeTab === 'printer' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'vehicle' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
+  if(state.activeTab === 'import' || state.activeTab === 'lunch' || state.activeTab === 'worklog' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'vehicle' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
@@ -2822,8 +2822,6 @@ function renderSidebar(){
                     ? '<div class="empty-side">카카오톡 문의 대화를 올리거나 직접 입력하면<br>여기가 아닌 문의 대응 화면에 표로 표시됩니다.</div>'
                   : state.activeTab === 'history'
                     ? '<div class="empty-side">모든 정산 건의 변동내역을<br>한 곳에서 확인하고 복원할 수 있습니다.</div>'
-                    : state.activeTab === 'printer'
-                      ? '<div class="empty-side">사무실 PC에서 자동으로 올려주는<br>복합기 출력매수를 여기가 아닌 복합기 화면에서 확인할 수 있습니다.</div>'
                     : state.activeTab === 'none'
                       ? '<div class="empty-side">접근 가능한 메뉴가 없습니다.<br>관리자에게 문의해주세요.</div>'
                       : '<div class="empty-side">가입 신청한 사용자들을 여기가 아닌<br>승인관리 화면에서 확인할 수 있습니다.</div>';
@@ -3569,10 +3567,6 @@ function renderMain(loading){
   }
   if(state.activeTab === 'lunch'){
     renderLunchMain();
-    return;
-  }
-  if(state.activeTab === 'printer'){
-    renderPrinterMain();
     return;
   }
   if(state.activeTab === 'worklog'){
@@ -7030,7 +7024,6 @@ const ALL_TABS = [
   { key:'invoiceprep', label:'세금계산서/현금영수증' },
   { key:'inquiry', label:'문의 대응' },
   { key:'history', label:'변동내역' },
-  { key:'printer', label:'복합기' },
 ];
 
 async function renderAdminApprovalList(){
@@ -13997,49 +13990,59 @@ function renderLunchMonthlyTab(body){
   document.getElementById('lunchMonthlyMonth').addEventListener('change', e=>{ lunchState.monthlyMonth = e.target.value; renderLunchMonthlyTab(body); });
 }
 
-// ---------- 복합기 카운터 ----------
+// ---------- 복합기 카운터 (헤더에 항상 떠있는 작은 표시줄) ----------
 // 브라우저는 SNMP 같은 저수준 네트워크 프로토콜을 쓸 수 없고, Firebase
 // Cloud Functions도 사무실 내부망(로컬 LAN)에 있는 복합기에는 닿지 못한다.
-// 그래서 이 값은 사무실 PC에서 주기적으로 도는 별도 스크립트(SNMP로 복합기
-// 조회 → Firestore에 기록)가 채워주고, 여기서는 그 값을 실시간으로 읽어서
-// 보여주기만 한다. 다른 탭들과 달리 이 문서는 목록이 아니라 값 하나짜리라
-// subscribeListToStorage를 쓰지 않고 onSnapshot을 직접 건다.
+// 그래서 흑백/컬러 "현재 매수"는 사무실 PC에서 주기적으로 도는 별도
+// 스크립트(SNMP로 복합기 조회 → Firestore에 기록)가 채워주고, 여기서는 그
+// 값을 실시간으로 읽어서 보여주기만 한다. "최대 매수"는 복합기가 알려주는
+// 값이 아니라 회사에서 정한 월 한도(계약 매수)라 관리자가 이 표시줄에서
+// 직접 입력해서 정한다. 특정 탭 화면이 아니라 사이드바 옆 상단 표시줄이라
+// 탭을 넘나들어도 항상 보인다.
 const PRINTER_COUNTER_DOC = 'printer-counter';
 let printerCounterUnsub = null;
-let printerCounterState = { loaded:false, totalCount: null, updatedAt: null };
+let printerCounterState = { loaded:false, monoCount:null, colorCount:null, maxMono:null, maxColor:null, updatedAt:null };
 function ensurePrinterCounterSub(){
   if(printerCounterUnsub) return;
   printerCounterUnsub = appDataDoc(PRINTER_COUNTER_DOC).onSnapshot(snap=>{
     if(snap && snap.exists){
       const d = snap.data();
-      printerCounterState.totalCount = typeof d.totalCount==='number' ? d.totalCount : null;
+      printerCounterState.monoCount = typeof d.monoCount==='number' ? d.monoCount : null;
+      printerCounterState.colorCount = typeof d.colorCount==='number' ? d.colorCount : null;
+      printerCounterState.maxMono = typeof d.maxMono==='number' ? d.maxMono : null;
+      printerCounterState.maxColor = typeof d.maxColor==='number' ? d.maxColor : null;
       printerCounterState.updatedAt = typeof d.updatedAt==='number' ? d.updatedAt : null;
     }
     printerCounterState.loaded = true;
-    if(state.activeTab==='printer') renderPrinterMain();
-  }, err=>{ console.error('printer counter snapshot', err); printerCounterState.loaded = true; if(state.activeTab==='printer') renderPrinterMain(); });
+    renderPrinterCounterBar();
+  }, err=>{ console.error('printer counter snapshot', err); printerCounterState.loaded = true; renderPrinterCounterBar(); });
 }
-function renderPrinterMain(){
-  ensurePrinterCounterSub();
-  const main = document.getElementById('main');
+async function savePrinterCounterMax(field, value){
+  await appDataDoc(PRINTER_COUNTER_DOC).set({ [field]: value }, { merge: true });
+}
+function renderPrinterCounterBar(){
+  const el = document.getElementById('printerCounterBar');
+  if(!el) return;
   const s = printerCounterState;
-  main.innerHTML = `
-    <div style="padding:22px 26px; max-width:960px; margin:0 auto;">
-      <div style="font-size:19px; font-weight:700; margin-bottom:16px;">🖨️ 복합기 카운터</div>
-      ${!s.loaded ? `<div style="color:var(--muted); font-size:12.5px;">불러오는 중…</div>` : `
-      <div style="max-width:360px; padding:22px; border:1px solid var(--line); border-radius:10px; background:var(--panel);">
-        <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">누적 출력 매수</div>
-        <div style="font-size:34px; font-weight:700;">${s.totalCount!=null ? fmtNum(s.totalCount)+'매' : '데이터 없음'}</div>
-        <div style="font-size:11.5px; color:var(--muted); margin-top:10px;">${s.updatedAt ? '마지막 갱신: '+escapeHtml(new Date(s.updatedAt).toLocaleString('ko-KR')) : '아직 사무실 PC에서 값을 올리지 않았습니다.'}</div>
-      </div>
-      <div style="margin-top:18px; max-width:520px; font-size:12px; color:var(--muted); line-height:1.7;">
-        이 값은 앱이 직접 조회하는 게 아니라, 사무실 PC에서 주기적으로 실행되는
-        스크립트가 복합기(SNMP)에서 읽어와 자동으로 올려주는 값입니다.
-        30분 넘게 값이 갱신되지 않으면 그 PC의 스크립트(작업 스케줄러)가
-        멈춰있는지 확인해주세요.
-      </div>`}
-    </div>
-  `;
+  if(!s.loaded || (s.monoCount==null && s.colorCount==null)){ el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  const piece = (label, count, maxField, maxVal) => `
+    <span style="display:inline-flex; align-items:center; gap:4px;">
+      <span style="color:var(--text); font-weight:600;">${label}</span>
+      <span>${count!=null ? fmtNum(count) : '-'}</span>
+      <span>/</span>
+      ${isAdminUser ? `<input type="text" inputmode="numeric" class="printer-max-input" data-field="${maxField}" value="${maxVal!=null?maxVal:''}" placeholder="최대매수" style="width:64px; padding:2px 5px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:11.5px;">`
+        : `<span>${maxVal!=null ? fmtNum(maxVal) : '미설정'}</span>`}
+    </span>`;
+  el.innerHTML = piece('흑백', s.monoCount, 'maxMono', s.maxMono) + piece('컬러', s.colorCount, 'maxColor', s.maxColor);
+  if(isAdminUser){
+    el.querySelectorAll('.printer-max-input').forEach(inp=>{
+      inp.addEventListener('change', async ()=>{
+        const n = Number(inp.value.replace(/[^0-9]/g,''));
+        await savePrinterCounterMax(inp.dataset.field, n>0 ? n : null);
+      });
+    });
+  }
 }
 
 // ---------- 표 열 너비 드래그 조절 (엑셀처럼) ----------
@@ -14499,6 +14502,7 @@ function startApp(allowedTabs){
   renderMain();
   init();
   startPresence();
+  ensurePrinterCounterSub();
 }
 
 // ---------- Firebase 로그인 / 가입 승인 ----------
