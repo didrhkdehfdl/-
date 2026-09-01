@@ -13201,6 +13201,15 @@ function setupStickyHScroll(wrapId, stickyId){
 // (알림 보내기 기능 참고) 일반 사용자 전체 명단을 거기서 가져올 수 없다 —
 // 그래서 전체 취합/차량현황/보고서의 "인원 목록"은 users 컬렉션이 아니라
 // 이미 작성된 업무일지·업무분담표에 등장한 이름들을 모아서 만든다.
+// 로그인 계정에 성명(이름)을 아직 안 넣어서 예전 기록에 이메일 그대로
+// 저장돼버린 경우를 위한 강제 표시 이름 매핑. 여기 등록해두면 이미 저장된
+// 기록이든 새로 저장하는 기록이든 전부 이 이름으로 통일해서 보여준다.
+const FORCED_DISPLAY_NAMES = { 'chanho@admin.com': '찬호' };
+function applyForcedDisplayNames(items){
+  (items||[]).forEach(item=>{
+    if(item && item.userName && FORCED_DISPLAY_NAMES[item.userName]) item.userName = FORCED_DISPLAY_NAMES[item.userName];
+  });
+}
 const WORKLOG_ENTRIES_KEY = 'worklog-entries';
 const WORKLOG_DUTY_ITEMS_KEY = 'worklog-duty-items';
 const WORKLOG_TASK_LINKS_KEY = 'worklog-task-links';
@@ -13251,7 +13260,7 @@ function worklogRoster(){
   const names = new Set();
   worklogState.entries.forEach(e=>{ if(e.userName) names.add(e.userName); });
   worklogState.dutyItems.forEach(d=>{ if(d.userName) names.add(d.userName); });
-  if(currentUserName) names.add(currentUserName);
+  if(currentUserName) names.add(FORCED_DISPLAY_NAMES[currentUserName] || currentUserName);
   return Array.from(names).sort((a,b)=>a.localeCompare(b,'ko'));
 }
 async function worklogSaveEntries(){ await saveWithGenericHistory(WORKLOG_ENTRIES_KEY, JSON.stringify(worklogState.entries)); }
@@ -14456,22 +14465,22 @@ async function init(){
   await restoreProfitLedgerTemplate();
   // 일일업무일지 — 여러 명이 같이 쓰는 표라 실시간 구독으로 불러온다.
   worklogEntriesSub = subscribeListToStorage(WORKLOG_ENTRIES_KEY, worklogState, {
-    field: 'entries', isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
+    field: 'entries', migrate: applyForcedDisplayNames, isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
   });
   worklogDutySub = subscribeListToStorage(WORKLOG_DUTY_ITEMS_KEY, worklogState, {
-    field: 'dutyItems', isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
+    field: 'dutyItems', migrate: applyForcedDisplayNames, isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
   });
   worklogLinksSub = subscribeListToStorage(WORKLOG_TASK_LINKS_KEY, worklogState, {
-    field: 'taskLinks', isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
+    field: 'taskLinks', migrate: applyForcedDisplayNames, isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
   });
   worklogNotesSub = subscribeListToStorage(WORKLOG_WEEKLY_NOTES_KEY, worklogState, {
-    field: 'weeklyNotes', isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
+    field: 'weeklyNotes', migrate: applyForcedDisplayNames, isActive: () => state.activeTab==='worklog', render: renderWorklogMain,
   });
   await Promise.all([worklogEntriesSub.firstLoad, worklogDutySub.firstLoad, worklogLinksSub.firstLoad, worklogNotesSub.firstLoad]);
   worklogState.loaded = true;
   // 점심체크 — 마찬가지로 여러 명이 같이 쓰는 표라 실시간 구독.
   lunchCheckSub = subscribeListToStorage(LUNCH_CHECK_KEY, lunchState, {
-    field: 'entries', isActive: () => state.activeTab==='lunch', render: renderLunchMain,
+    field: 'entries', migrate: applyForcedDisplayNames, isActive: () => state.activeTab==='lunch', render: renderLunchMain,
   });
   await lunchCheckSub.firstLoad;
   lunchState.loaded = true;
@@ -14889,7 +14898,7 @@ fbAuth.onAuthStateChanged(async (user) => {
     const approved = data.approved === true;
     const rejected = data.rejected === true;
     if(approved){
-      currentUserName = data.name || user.email || '';
+      currentUserName = FORCED_DISPLAY_NAMES[data.name || user.email || ''] || data.name || user.email || '';
       startApp(Array.isArray(data.allowedTabs) ? data.allowedTabs : null);
       setupUserPushNotifications(user);
     } else {
