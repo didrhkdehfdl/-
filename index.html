@@ -12057,10 +12057,10 @@ async function renderVehicleMain(){
   if(pdfBtn) pdfBtn.addEventListener('click', ()=> openVehiclePrintPreview(activeVehicle, rows, s.activeMonth));
   // 모바일에서는 다음 칸을 탭하지 않고 바로 뒤로가기/화면전환을 하는 경우가
   // 많아 change(blur)만 기다리면 저장 직전에 입력이 그대로 날아갈 수 있다 —
-  // 그래서 타이핑 중에도 잠깐 멈추면(800ms) 자동으로 저장해둔다. 이 자동
-  // 저장은 화면을 다시 그리지 않아(타이핑 중 포커스가 끊기지 않음) change에서
-  // 하는 숫자 정리·다음 행 이어받기·재렌더링은 그대로 blur 시점에만 한다.
-  const vehicleDebouncedSave = debounce(()=>{ saveVehicleRows(activeVehicle.id); }, 800);
+  // 그래서 타이핑 중에도 잠깐(500ms, 1초 이내) 멈추면 자동으로 저장해둔다.
+  // 이 자동저장은 화면을 다시 그리지 않아(타이핑 중 포커스가 끊기지 않음)
+  // change에서 하는 숫자 정리·다음 행 이어받기·재렌더링은 그대로 blur 시점에만 한다.
+  const vehicleDebouncedSave = debounce(()=>{ saveVehicleRows(activeVehicle.id); }, 500);
   main.querySelectorAll('.vehicle-f').forEach(el=>{
     el.addEventListener('input', ()=>{
       const row = rows.find(r=>r.id===el.dataset.id);
