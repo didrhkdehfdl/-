@@ -2111,16 +2111,23 @@ function subscribeListToStorage(key, targetState, opts){
         // 안 된 다른 항목들의 최신 상태가 통째로 옛날 값으로 덮일 수 있다.
         return;
       }
+      if(!wasFirst && opts.isActive && opts.isActive()){
+        // 최초 로딩이 아니라 그 뒤에 생긴 변경(내 저장이 되돌아온 echo 포함) —
+        // 지금 이 화면에서 실제로 입력 중이면 화면을 다시 그리지 않는 건
+        // 물론이고, migrate로 배열을 통째로 새로 바꿔치기하는 것도 건너뛴다.
+        // 안 그러면 방금 이 칸 저장의 echo가 도착한 순간, 지금 다른 칸에서
+        // 타이핑 중인 행 객체가 조용히 "서버에서 막 받아온 새 배열"로
+        // 교체되어버려서, 화면엔 계속 타이핑한 게 보이는데 그 값은 이제
+        // 아무도 저장하지 않는 고아 객체에 적히는 상태가 된다(다음 저장 때
+        // 그 칸만 통째로 빠짐). 포커스가 빠져나가면 그 다음 변경 감지 때
+        // 최신 내용이 정상적으로 반영된다.
+        const focusInMain = document.activeElement && document.activeElement.closest && document.activeElement.closest('#main');
+        if(focusInMain){ settleFirst(); return; }
+      }
       if(opts.migrate) opts.migrate(items);
       targetState[opts.field || 'items'] = items;
       settleFirst();
-      if(!wasFirst){
-        // 최초 로딩이 아니라 그 뒤에 생긴 변경(다른 사람의 저장 포함) —
-        // 지금 이 화면을 보고 있고, 입력 중이 아닐 때만 다시 그려서 타이핑을
-        // 방해하지 않는다.
-        const focusInMain = document.activeElement && document.activeElement.closest && document.activeElement.closest('#main');
-        if(!focusInMain && opts.isActive && opts.isActive() && opts.render) opts.render();
-      }
+      if(!wasFirst && opts.isActive && opts.isActive() && opts.render) opts.render();
     }catch(e){
       console.error('subscribeListToStorage', key, e);
       settleFirst();
