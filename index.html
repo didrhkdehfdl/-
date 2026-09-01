@@ -13303,7 +13303,7 @@ async function renderWorklogMain(){
     ['weekly','📅 주간보고서'], ['monthly','📈 월간보고서'],
   ];
   main.innerHTML = `
-    <div style="padding:22px 26px;">
+    <div style="padding:22px 26px; max-width:960px; margin:0 auto;">
       <div style="font-size:19px; font-weight:700; margin-bottom:16px;">📝 일일업무일지</div>
       <div style="display:flex; gap:6px; margin-bottom:18px; border-bottom:1px solid var(--line); padding-bottom:10px; flex-wrap:wrap;">
         ${tabs.map(([key,label])=>`<button class="worklog-subtab-btn" data-sub="${key}" style="padding:8px 14px; border-radius:7px; border:1px solid ${worklogState.subTab===key?'var(--gold)':'var(--line)'}; background:${worklogState.subTab===key?'rgba(224,163,57,.12)':'transparent'}; color:${worklogState.subTab===key?'var(--gold)':'var(--muted)'}; cursor:pointer; font-size:12.5px; font-weight:${worklogState.subTab===key?'600':'400'};">${label}</button>`).join('')}
@@ -13842,7 +13842,7 @@ async function renderLunchMain(){
     ['checkin','✅ 체크인'], ['today','📊 오늘 현황'], ['tomorrow','📅 내일 현황'], ['monthly','📈 월간 분석'],
   ];
   main.innerHTML = `
-    <div style="padding:22px 26px;">
+    <div style="padding:22px 26px; max-width:960px; margin:0 auto;">
       <div style="font-size:19px; font-weight:700; margin-bottom:16px;">🍱 점심체크</div>
       <div style="display:flex; gap:6px; margin-bottom:18px; border-bottom:1px solid var(--line); padding-bottom:10px; flex-wrap:wrap;">
         ${tabs.map(([key,label])=>`<button class="lunch-subtab-btn" data-sub="${key}" style="padding:8px 14px; border-radius:7px; border:1px solid ${lunchState.subTab===key?'var(--gold)':'var(--line)'}; background:${lunchState.subTab===key?'rgba(34,51,90,.08)':'transparent'}; color:${lunchState.subTab===key?'var(--gold)':'var(--muted)'}; cursor:pointer; font-size:12.5px; font-weight:${lunchState.subTab===key?'600':'400'};">${label}</button>`).join('')}
