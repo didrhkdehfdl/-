@@ -10464,8 +10464,14 @@ async function handleCorpCardApprovalUpload(file){
   notifyApprovalUpload(parsedRows.length, added, corpCardState.approvalEntries.length);
   alert(`승인내역 ${parsedRows.length}건을 확인해서 ${added}건을 새로 추가했습니다. (누적 ${corpCardState.approvalEntries.length}건)${cancelledCount ? `\n결제 후 취소된 건 ${cancelledCount}건은 대사 대상에서 제외했습니다.` : ''}`);
 }
-async function saveCorpCardRows(cardId){
-  await saveWithGenericHistory('corp-card-rows:'+cardId, JSON.stringify(corpCardState.rowsByCard[cardId]||{}));
+// change(blur)와 input 디바운스 자동저장이 겹쳐 호출될 수 있어(차량관리와
+// 같은 이유), 저장 요청을 한 번에 하나씩 순서대로만 실행되게 줄세운다.
+let corpCardSaveQueue = Promise.resolve();
+function saveCorpCardRows(cardId){
+  corpCardSaveQueue = corpCardSaveQueue.catch(()=>{}).then(
+    () => saveWithGenericHistory('corp-card-rows:'+cardId, JSON.stringify(corpCardState.rowsByCard[cardId]||{}))
+  );
+  return corpCardSaveQueue;
 }
 async function saveCorpCardTemplate(cardId, buffer, fileName, months){
   const savedAt = new Date().toISOString();
@@ -11086,7 +11092,24 @@ async function renderCorpCardMain(){
       renderCorpCardMain();
     });
   });
+  // 차량관리와 같은 이유로(모바일에서 다음 칸으로 옮기지 않고 바로 화면을
+  // 벗어나면 change/blur가 안 와서 입력이 유실될 수 있음), 타이핑 중에도
+  // 잠깐(500ms) 멈추면 화면을 다시 그리지 않고 자동으로 저장해둔다. change에서
+  // 하는 최종 정리(금액 반올림, 발전소명 자동입력, 비고 입력가능 여부 등)와
+  // 재렌더링은 그대로 blur 시점에만 한다.
+  const corpCardDebouncedSave = debounce(()=>{ saveCorpCardRows(activeCard.id); }, 500);
   main.querySelectorAll('.corpcard-f').forEach(el=>{
+    el.addEventListener('input', ()=>{
+      const row = rows.find(r=>r.id===el.dataset.id);
+      if(!row) return;
+      const field = el.dataset.field;
+      if(el.classList.contains('corpcard-money')){
+        row[field] = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
+      } else {
+        row[field] = el.value;
+      }
+      corpCardDebouncedSave();
+    });
     el.addEventListener('change', async ()=>{
       const row = rows.find(r=>r.id===el.dataset.id);
       if(!row) return;
