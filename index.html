@@ -2052,8 +2052,16 @@ async function loadFileFromStorage(key, timeoutMs){
   }
 }
 
+// 이 키로 마지막에 "내가" 보낸 저장 내용(원문 그대로) — subscribeListToStorage가
+// 돌아온 echo가 정확히 "내가 방금 보낸 그 내용"인지(=안전하게 건너뛰어도 되는
+// 진짜 자기 echo인지) 판단하는 데 쓴다. 시간 기준(예: "최근 4초 이내")으로
+// 판단하면, 마침 그 시간 안에 남이 보낸 변경까지 전부 내 echo로 착각해
+// 건너뛰게 되어(여러 명이 같이 쓸 때 남의 변경을 놓침) 위험하다 — 내용을
+// 그대로 비교하면 "정말 내가 쓴 그대로 돌아온 것"만 정확히 걸러낼 수 있다.
+let recentOwnWriteValue = {};
 async function saveFileToStorage(key, value, timeoutMs){
   timeoutMs = timeoutMs || 20000;
+  recentOwnWriteValue[key] = value;
   try{
     if(value.length > FIRESTORE_VALUE_LIMIT){
       // 파일용량이 커서 Firestore 문서 한도를 넘으므로, 실제 내용은 Firebase
@@ -2112,22 +2120,33 @@ function subscribeListToStorage(key, targetState, opts){
         return;
       }
       if(!wasFirst && opts.isActive && opts.isActive()){
-        // 최초 로딩이 아니라 그 뒤에 생긴 변경(내 저장이 되돌아온 echo 포함) —
-        // 지금 이 화면에서 실제로 입력 중이면 화면을 다시 그리지 않는 건
-        // 물론이고, migrate로 배열을 통째로 새로 바꿔치기하는 것도 건너뛴다.
-        // 안 그러면 방금 이 칸 저장의 echo가 도착한 순간, 지금 다른 칸에서
-        // 타이핑 중인 행 객체가 조용히 "서버에서 막 받아온 새 배열"로
-        // 교체되어버려서, 화면엔 계속 타이핑한 게 보이는데 그 값은 이제
-        // 아무도 저장하지 않는 고아 객체에 적히는 상태가 된다(다음 저장 때
-        // 그 칸만 통째로 빠짐). 포커스가 빠져나가면 그 다음 변경 감지 때
-        // 최신 내용이 정상적으로 반영된다.
-        const focusInMain = document.activeElement && document.activeElement.closest && document.activeElement.closest('#main');
-        if(focusInMain){ settleFirst(); return; }
+        // 최초 로딩이 아니라 그 뒤에 생긴 변경 — "내가 방금 보낸 그 내용 그대로
+        // 돌아온 echo"라면(raw가 recentOwnWriteValue[key]와 똑같음) 이미 내
+        // 로컬 상태가 이 내용 그대로이므로 통째로 다시 반영할 필요가 없다.
+        // 이걸 그대로 migrate에 흘려보내면, 지금 다른 칸에서 타이핑 중인 행
+        // 객체가 "막 받아온(하지만 이미 알고 있던) 새 배열"로 조용히
+        // 교체되어버려서 그 이후 입력이 고아 객체에 적히는 문제가 생긴다.
+        const likelyOwnEcho = raw !== null && raw === recentOwnWriteValue[key];
+        if(likelyOwnEcho){ settleFirst(); return; }
       }
+      // 그 외(내가 보낸 적 없는 내용 = 다른 사람이 보낸 변경일 가능성이 높음)는
+      // 항상 migrate로 반영한다 — 지금 이 문서를 편집 중이라고 해서 무조건
+      // 건너뛰면, 내가 한 칸을 오래 붙들고 있는 동안 다른 사람이 다른 행에
+      // 저장한 내용을 계속 못 받아 내 로컬 상태가 점점 낡고, 그 상태로 내가
+      // 저장하면 그 사이 다른 사람이 넣은 변경을 통째로 덮어써버릴 수 있다.
+      // (지금 편집 중인 바로 그 행/칸을 서버 값으로 되돌리지 않는 건 각
+      // migrate 콜백이 알아서 보존한다 — 예: 차량관리·법인카드는 지금
+      // 포커스가 있는 행만 로컬 값을 지키고 나머지는 서버 값으로 갱신한다.)
       if(opts.migrate) opts.migrate(items);
       targetState[opts.field || 'items'] = items;
       settleFirst();
-      if(!wasFirst && opts.isActive && opts.isActive() && opts.render) opts.render();
+      if(!wasFirst && opts.isActive && opts.isActive() && opts.render){
+        // 화면을 통째로 다시 그리는 건, 지금 타이핑 중인 입력칸의 포커스와
+        // 커서 위치를 끊어버리므로(데이터는 안전해도 UX상 방해가 됨) 포커스가
+        // #main 밖으로 나갔을 때만 한다.
+        const focusInMain = document.activeElement && document.activeElement.closest && document.activeElement.closest('#main');
+        if(!focusInMain) opts.render();
+      }
     }catch(e){
       console.error('subscribeListToStorage', key, e);
       settleFirst();
@@ -2137,6 +2156,31 @@ function subscribeListToStorage(key, targetState, opts){
     settleFirst();
   });
   return { firstLoad, unsub };
+}
+
+// 여러 명이 같이 편집하는 "행 배열(월별로 나뉜)" 문서에 서버에서 새 내용이
+// 왔을 때 쓰는 공통 병합 함수 — 지금 화면에서 실제로 포커스가 가 있는
+// 행(=아직 저장 안 된 입력이 있을 수 있는 행)만 로컬 값을 그대로 지키고
+// 나머지 행/달은 서버 값으로 갱신한다. 이렇게 해야 내가 어떤 행을 한창
+// 입력하는 동안에도 다른 사람이 다른 행에 저장한 내용을 놓치지 않으면서,
+// 동시에 내가 아직 저장 안 한 이 행의 입력이 사라지지도 않는다(차량관리·
+// 법인카드에서 사용).
+function mergeIncomingRowsByMonth(incomingByMonth, currentByMonth, activeMonth, inputSelector){
+  const merged = (incomingByMonth && typeof incomingByMonth==='object' && !Array.isArray(incomingByMonth)) ? incomingByMonth : {};
+  const activeEl = document.activeElement;
+  const editingId = (activeEl && activeEl.matches && activeEl.closest && activeEl.matches(inputSelector) && activeEl.closest('#main')) ? activeEl.dataset.id : null;
+  if(editingId && activeMonth){
+    const currentRows = (currentByMonth && currentByMonth[activeMonth]) || [];
+    const editingRow = currentRows.find(r=>r.id===editingId);
+    if(editingRow){
+      const monthRows = merged[activeMonth] || [];
+      const idx = monthRows.findIndex(r=>r.id===editingId);
+      merged[activeMonth] = idx>=0
+        ? monthRows.map((r,i)=> i===idx ? editingRow : r)
+        : [...monthRows, editingRow]; // 새로 추가한 행이라 서버엔 아직 없을 수 있음
+    }
+  }
+  return merged;
 }
 
 // 인덱스/케이스/파일 삭제가 모두 이 하나의 함수로 통일된다 (Firestore 문서 +
@@ -10294,7 +10338,8 @@ function ensureCorpCardRowsSubscribed(cardId){
   if(corpCardRowsSub) corpCardRowsSub.unsub();
   const sub = subscribeListToStorage('corp-card-rows:'+cardId, corpCardState, {
     migrate: (data) => {
-      corpCardState.rowsByCard[cardId] = (data && typeof data==='object' && !Array.isArray(data)) ? data : {};
+      const incoming = (data && typeof data==='object' && !Array.isArray(data)) ? data : {};
+      corpCardState.rowsByCard[cardId] = mergeIncomingRowsByMonth(incoming, corpCardState.rowsByCard[cardId], corpCardState.activeMonth, '.corpcard-f');
       recomputeCorpCardMismatches();
     },
     isActive: () => state.activeTab==='corpCard' && corpCardState.activeCardId===cardId,
@@ -11586,7 +11631,8 @@ function ensureVehicleRowsSubscribed(vehicleId){
   if(vehicleRowsSub) vehicleRowsSub.unsub();
   const sub = subscribeListToStorage('vehicle-rows:'+vehicleId, vehicleState, {
     migrate: (data) => {
-      vehicleState.rowsByVehicle[vehicleId] = (data && typeof data==='object' && !Array.isArray(data)) ? data : {};
+      const incoming = (data && typeof data==='object' && !Array.isArray(data)) ? data : {};
+      vehicleState.rowsByVehicle[vehicleId] = mergeIncomingRowsByMonth(incoming, vehicleState.rowsByVehicle[vehicleId], vehicleState.activeMonth, '.vehicle-f');
     },
     isActive: () => state.activeTab==='vehicle' && vehicleState.activeVehicleId===vehicleId,
     render: renderVehicleMain,
