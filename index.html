@@ -512,12 +512,6 @@
     </nav>
     <button id="newCaseBtn">+ 새 정산 건 추가</button>
     <button id="profitListToggleBtn" style="display:none; margin:0 18px 10px; padding:8px 12px; border-radius:7px; border:1px dashed var(--sky); background:transparent; color:var(--sky); font-size:12.5px; font-weight:500; cursor:pointer; text-align:left;">📋 가로 목록으로 보기</button>
-    <div style="display:flex; gap:6px; margin:0 18px 10px;">
-      <button id="exportBtn" style="flex:1; font-size:11.5px; padding:7px 4px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">내보내기</button>
-      <button id="importBtn" style="flex:1; font-size:11.5px; padding:7px 4px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">가져오기</button>
-      <input type="file" id="importFile" accept="application/json" style="display:none;">
-    </div>
-    <button id="migrateOldDataBtn" style="margin:0 18px 10px; padding:8px 12px; border-radius:7px; border:1px dashed var(--sky); background:transparent; color:var(--sky); font-size:12px; font-weight:500; cursor:pointer; text-align:left;">📦 이 기기의 이전 데이터 복구하기</button>
     <div id="caseList"></div>
     <button id="appLogoutBtn" style="margin:0 18px 16px; padding:9px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:12px; cursor:pointer;">로그아웃</button>
   </aside>
@@ -665,16 +659,6 @@
         <button id="approvalAlertSaveBtn" style="flex:1; padding:10px 14px; border-radius:8px; border:none; background:var(--gold); color:#fff; font-weight:600; cursor:pointer;">저장</button>
       </div>
     </div>
-  </div>
-</div>
-
-<div id="migrateOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:95; display:none; align-items:center; justify-content:center; padding:20px;">
-  <div style="background:var(--bg); border-radius:12px; width:520px; max-width:100%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
-    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line);">
-      <div style="font-family:'Noto Sans KR', sans-serif; font-weight:700; font-size:15px;">📦 이전 데이터 복구</div>
-      <button id="migrateCloseBtn" style="border:none; background:transparent; font-size:18px; color:var(--muted); cursor:pointer;">✕</button>
-    </div>
-    <div id="migrateBody" style="padding:18px 20px; overflow-y:auto; flex:1; font-size:13px; line-height:1.7;"></div>
   </div>
 </div>
 
@@ -13130,76 +13114,6 @@ document.body.addEventListener('click', (e)=>{
   if(wrap) wrap.scrollBy({ left: Number(btn.dataset.dir) * 500, behavior: 'smooth' });
 });
 
-document.getElementById('migrateOldDataBtn').addEventListener('click', async ()=>{
-  if(!confirm('이 기기(브라우저)에 예전에 저장되어 있던 정산 건·계약서·사용전점검·영업자용 서류·모듈 단가·카드관리 데이터를 지금 로그인 계정으로 옮깁니다.\n\n반드시 예전에 실제로 사용하시던 그 기기/브라우저에서 눌러주세요 (다른 기기에는 옮길 데이터가 없습니다). 계속할까요?')) return;
-  const overlay = document.getElementById('migrateOverlay');
-  const body = document.getElementById('migrateBody');
-  overlay.style.display = 'flex';
-  body.innerHTML = '<div style="color:var(--muted);">시작하는 중…</div>';
-  try{
-    const report = await migrateAllDataToCloud((msg)=>{ body.innerHTML = `<div style="color:var(--muted);">${escapeHtml(msg)}</div>`; });
-    const lines = [];
-    lines.push(`<div style="font-weight:700; color:var(--pos); margin-bottom:10px;">✅ 옮긴 항목: ${report.migrated.length}건</div>`);
-    if(report.migrated.length) lines.push(`<div style="font-size:12px; color:var(--muted); margin-bottom:14px; white-space:pre-line;">${report.migrated.map(escapeHtml).join('\n')}</div>`);
-    if(report.skipped.length){
-      lines.push(`<div style="font-weight:700; color:var(--muted); margin-bottom:6px;">⏭️ 이 기기에 없던 항목: ${report.skipped.length}건</div>`);
-      lines.push(`<div style="font-size:12px; color:var(--muted); margin-bottom:14px; white-space:pre-line;">${report.skipped.map(escapeHtml).join('\n')}</div>`);
-    }
-    if(report.failed.length){
-      lines.push(`<div style="font-weight:700; color:var(--neg); margin-bottom:6px;">⚠️ 옮기지 못한 항목: ${report.failed.length}건</div>`);
-      lines.push(`<div style="font-size:12px; color:var(--neg); white-space:pre-line;">${report.failed.map(escapeHtml).join('\n')}</div>`);
-    }
-    lines.push(`<div style="margin-top:16px; font-size:12.5px; color:var(--muted);">복구가 끝났습니다. 이 창을 닫고 페이지를 새로고침하면 반영된 내용을 확인할 수 있습니다.</div>`);
-    body.innerHTML = lines.join('');
-  }catch(e){
-    console.error(e);
-    body.innerHTML = `<div style="color:var(--neg);">복구 중 오류가 발생했습니다: ${escapeHtml(e.message||String(e))}</div>`;
-  }
-});
-document.getElementById('migrateCloseBtn').addEventListener('click', ()=>{
-  document.getElementById('migrateOverlay').style.display = 'none';
-});
-
-document.getElementById('exportBtn').addEventListener('click', async ()=>{
-  const all = [];
-  for(const entry of state.cases){
-    const full = caseCache[entry.id] || await loadCase(entry.id);
-    if(full) all.push(full);
-  }
-  const blob = new Blob([JSON.stringify(all, null, 2)], {type:'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `영업비_정산_백업_${isoDate(new Date())}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-});
-
-document.getElementById('importBtn').addEventListener('click', ()=>{
-  document.getElementById('importFile').click();
-});
-document.getElementById('importFile').addEventListener('change', (e)=>{
-  const file = e.target.files[0];
-  if(!file) return;
-  const reader = new FileReader();
-  reader.onload = async () => {
-    try{
-      const imported = JSON.parse(reader.result);
-      const list = Array.isArray(imported) ? imported : [imported];
-      for(const c of list){
-        if(!c || !c.id) continue;
-        persistCase(c);
-      }
-      alert(`${list.length}건을 가져왔습니다.`);
-    }catch(err){
-      alert('파일을 읽지 못했습니다. 올바른 백업(JSON) 파일인지 확인해주세요.');
-    }
-  };
-  reader.readAsText(file);
-  e.target.value = '';
-});
 document.getElementById('printCloseBtn').addEventListener('click', closePrintPreview);
 
 let pdfLibsPromise = null;
