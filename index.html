@@ -467,6 +467,9 @@
       <button class="tab-btn" data-tab="import" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">📥</span> 사급 실적리스트
       </button>
+      <button class="tab-btn" data-tab="lunch" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
+        <span style="width:18px; text-align:center;">🍱</span> 점심체크
+      </button>
       <button class="tab-btn" data-tab="worklog" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">📝</span> 일일업무일지
       </button>
@@ -2783,11 +2786,13 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'worklog' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'vehicle' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
+  if(state.activeTab === 'import' || state.activeTab === 'lunch' || state.activeTab === 'worklog' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'vehicle' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
       ? '<div class="empty-side">왼쪽 메뉴에서 실적 파일을 업로드하면<br>여기에 목록이 아닌 가져오기 화면이 표시됩니다.</div>'
+      : state.activeTab === 'lunch'
+        ? '<div class="empty-side">근무형태 체크인을<br>여기가 아닌 점심체크 화면에서 작성·조회할 수 있습니다.</div>'
       : state.activeTab === 'worklog'
         ? '<div class="empty-side">근태·업무 기록을<br>여기가 아닌 일일업무일지 화면에서 작성·조회할 수 있습니다.</div>'
       : state.activeTab === 'contracts'
@@ -3555,6 +3560,10 @@ function renderMain(loading){
   }
   if(state.activeTab === 'import'){
     renderImportMain();
+    return;
+  }
+  if(state.activeTab === 'lunch'){
+    renderLunchMain();
     return;
   }
   if(state.activeTab === 'worklog'){
@@ -6974,6 +6983,7 @@ const ALL_TABS = [
   { key:'sales', label:'영업비 정산' },
   { key:'profit', label:'사업 이윤정산' },
   { key:'import', label:'사급 실적리스트' },
+  { key:'lunch', label:'점심체크' },
   { key:'worklog', label:'일일업무일지' },
   { key:'contracts', label:'계약서' },
   { key:'inspection', label:'사용전점검' },
@@ -8518,6 +8528,10 @@ function simpleHistoryTargets(){
     { key: WORKLOG_DUTY_ITEMS_KEY, icon:'📝', label:'일일업무일지 (업무분담표)', onRestore: async raw => {
         worklogState.dutyItems = JSON.parse(raw);
         if(state.activeTab==='worklog') renderWorklogMain();
+      } },
+    { key: LUNCH_CHECK_KEY, icon:'🍱', label:'점심체크', onRestore: async raw => {
+        lunchState.entries = JSON.parse(raw);
+        if(state.activeTab==='lunch') renderLunchMain();
       } },
   ];
 }
@@ -13711,6 +13725,184 @@ function renderWorklogDutyManage(el, person, mainBody){
   });
 }
 
+// ---------- 점심체크 (lunch check) ----------
+// 매일 내근/외근/연차 중 하나를 스스로 체크해서, 오늘·내일 점심 인원(내근
+// 인원)을 한눈에 파악하기 위한 기능. worklog와 같은 이유로 users 컬렉션이
+// 아니라 이미 체크·업무일지·분담표에 등장한 이름들로 "전체 인원" 명단을
+// 추정한다.
+const LUNCH_CHECK_KEY = 'lunch-check-entries';
+const LUNCH_WORK_TYPES = [
+  { key:'내근', icon:'🏢' },
+  { key:'외근', icon:'🚗' },
+  { key:'연차', icon:'🌤️' },
+];
+let lunchCheckSub = null;
+let lunchState = {
+  loaded:false, entries:[], subTab:'checkin',
+  checkinDate: isoDate(new Date()), monthlyMonth: isoDate(new Date()).slice(0,7),
+};
+function lunchFindEntry(userName, date){ return lunchState.entries.find(e=>e.userName===userName && e.date===date); }
+function lunchRoster(){
+  const names = new Set(worklogRoster());
+  lunchState.entries.forEach(e=>{ if(e.userName) names.add(e.userName); });
+  return Array.from(names).sort((a,b)=>a.localeCompare(b,'ko'));
+}
+async function lunchSaveEntries(){ await saveWithGenericHistory(LUNCH_CHECK_KEY, JSON.stringify(lunchState.entries)); }
+function lunchTomorrowDate(){ const d = new Date(); d.setDate(d.getDate()+1); return isoDate(d); }
+
+async function renderLunchMain(){
+  const main = document.getElementById('main');
+  if(!lunchState.loaded){
+    main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+    return;
+  }
+  const tabs = [
+    ['checkin','✅ 체크인'], ['today','📊 오늘 현황'], ['tomorrow','📅 내일 현황'], ['monthly','📈 월간 분석'],
+  ];
+  main.innerHTML = `
+    <div style="padding:22px 26px;">
+      <div style="font-size:19px; font-weight:700; margin-bottom:16px;">🍱 점심체크</div>
+      <div style="display:flex; gap:6px; margin-bottom:18px; border-bottom:1px solid var(--line); padding-bottom:10px; flex-wrap:wrap;">
+        ${tabs.map(([key,label])=>`<button class="lunch-subtab-btn" data-sub="${key}" style="padding:8px 14px; border-radius:7px; border:1px solid ${lunchState.subTab===key?'var(--gold)':'var(--line)'}; background:${lunchState.subTab===key?'rgba(34,51,90,.08)':'transparent'}; color:${lunchState.subTab===key?'var(--gold)':'var(--muted)'}; cursor:pointer; font-size:12.5px; font-weight:${lunchState.subTab===key?'600':'400'};">${label}</button>`).join('')}
+      </div>
+      <div id="lunchSubBody"></div>
+    </div>
+  `;
+  main.querySelectorAll('.lunch-subtab-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ lunchState.subTab = btn.dataset.sub; renderLunchMain(); });
+  });
+  const body = document.getElementById('lunchSubBody');
+  if(lunchState.subTab==='checkin') renderLunchCheckinTab(body);
+  else if(lunchState.subTab==='today') renderLunchStatusTab(body, isoDate(new Date()), '오늘');
+  else if(lunchState.subTab==='tomorrow') renderLunchStatusTab(body, lunchTomorrowDate(), '내일');
+  else if(lunchState.subTab==='monthly') renderLunchMonthlyTab(body);
+}
+
+function renderLunchCheckinTab(body){
+  const date = lunchState.checkinDate;
+  const today = isoDate(new Date());
+  const tomorrow = lunchTomorrowDate();
+  const entry = lunchFindEntry(currentUserName, date);
+  body.innerHTML = `
+    <div style="display:flex; gap:6px; margin-bottom:16px;">
+      <button class="lunch-day-btn" data-date="${today}" style="padding:7px 14px; border-radius:7px; border:1px solid ${date===today?'var(--gold)':'var(--line)'}; background:${date===today?'rgba(34,51,90,.08)':'transparent'}; color:${date===today?'var(--gold)':'var(--muted)'}; cursor:pointer; font-size:12.5px;">오늘 (${today})</button>
+      <button class="lunch-day-btn" data-date="${tomorrow}" style="padding:7px 14px; border-radius:7px; border:1px solid ${date===tomorrow?'var(--gold)':'var(--line)'}; background:${date===tomorrow?'rgba(34,51,90,.08)':'transparent'}; color:${date===tomorrow?'var(--gold)':'var(--muted)'}; cursor:pointer; font-size:12.5px;">내일 (${tomorrow})</button>
+    </div>
+    ${entry ? `<div style="margin-bottom:14px; padding:10px 14px; border-radius:8px; background:rgba(22,163,74,.08); border:1px solid rgba(22,163,74,.3); color:var(--pos); font-size:12.5px;">✓ ${date} 제출 완료 (${entry.workType}) · 수정 가능</div>` : ''}
+    <div style="max-width:520px; border:1px solid var(--line); border-radius:10px; padding:16px; background:var(--panel);">
+      <div style="font-size:12.5px; color:var(--muted); margin-bottom:10px;">근무형태</div>
+      <div style="display:flex; gap:8px; margin-bottom:14px;">
+        ${LUNCH_WORK_TYPES.map(t=>`
+          <button class="lunch-type-btn" data-type="${t.key}" style="flex:1; padding:16px 8px; border-radius:9px; border:1px solid ${entry&&entry.workType===t.key?'var(--gold)':'var(--line)'}; background:${entry&&entry.workType===t.key?'rgba(34,51,90,.08)':'var(--panel-2)'}; color:${entry&&entry.workType===t.key?'var(--gold)':'var(--text)'}; cursor:pointer; text-align:center;">
+            <div style="font-size:20px; margin-bottom:6px;">${t.icon}</div>
+            <div style="font-size:12.5px; font-weight:600;">${t.key}</div>
+          </button>`).join('')}
+      </div>
+      <button id="lunchSaveBtn" style="width:100%; padding:11px; border-radius:8px; border:none; background:var(--gold); color:#fff; cursor:pointer; font-weight:600; font-size:13px;" ${entry?'':'disabled'}>${entry?'수정 저장':'근무형태를 선택해주세요'}</button>
+    </div>
+  `;
+  let selectedType = entry ? entry.workType : '';
+  body.querySelectorAll('.lunch-day-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ lunchState.checkinDate = btn.dataset.date; renderLunchCheckinTab(body); });
+  });
+  const saveBtn = document.getElementById('lunchSaveBtn');
+  body.querySelectorAll('.lunch-type-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      selectedType = btn.dataset.type;
+      body.querySelectorAll('.lunch-type-btn').forEach(b=>{
+        const on = b.dataset.type===selectedType;
+        b.style.borderColor = on ? 'var(--gold)' : 'var(--line)';
+        b.style.background = on ? 'rgba(34,51,90,.08)' : 'var(--panel-2)';
+        b.style.color = on ? 'var(--gold)' : 'var(--text)';
+      });
+      saveBtn.disabled = false;
+      saveBtn.textContent = entry ? '수정 저장' : '저장';
+    });
+  });
+  saveBtn.addEventListener('click', async ()=>{
+    if(!selectedType) return;
+    let target = lunchFindEntry(currentUserName, date);
+    if(target) target.workType = selectedType;
+    else { target = { id: rid(), userName: currentUserName, date, workType: selectedType, updatedAt: Date.now() }; lunchState.entries.push(target); }
+    target.updatedAt = Date.now();
+    saveBtn.disabled = true;
+    saveBtn.textContent = '저장 중…';
+    try{ await lunchSaveEntries(); renderLunchCheckinTab(body); }
+    catch(err){ saveBtn.disabled = false; saveBtn.textContent = '저장 실패 — 다시 시도'; console.error(err); }
+  });
+}
+
+function renderLunchStatusTab(body, date, label){
+  const roster = lunchRoster();
+  const entries = roster.map(name => ({ name, entry: lunchFindEntry(name, date) }));
+  const counts = { 내근:0, 외근:0, 연차:0, 미제출:0 };
+  entries.forEach(({entry})=>{ if(entry) counts[entry.workType] = (counts[entry.workType]||0)+1; else counts.미제출++; });
+  const 근무인원 = counts.내근 + counts.외근;
+  body.innerHTML = `
+    <div style="font-size:13px; color:var(--muted); margin-bottom:12px;">${label} (${date})</div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; margin-bottom:22px;">
+      ${[['근무 인원', 근무인원],['내근 인원', counts.내근],['외근 인원', counts.외근],['미제출 인원', counts.미제출]]
+        .map(([lbl,val])=>`<div style="padding:14px; border:1px solid var(--line); border-radius:9px; background:var(--panel);">
+          <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">${lbl}</div>
+          <div style="font-size:19px; font-weight:700;">${val}명</div>
+        </div>`).join('')}
+    </div>
+    <div class="table-wrap"><table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr style="background:var(--panel-2);">
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line);">성명</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line); width:120px;">근무형태</th>
+      </tr></thead>
+      <tbody>
+        ${entries.length ? entries.map(({name,entry})=>`
+          <tr>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${escapeHtml(name)}</td>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line); ${entry?'':'color:var(--muted);'}">${entry ? `${LUNCH_WORK_TYPES.find(t=>t.key===entry.workType)?.icon||''} ${escapeHtml(entry.workType)}` : '미제출'}</td>
+          </tr>`).join('') : `<tr><td colspan="2" style="padding:16px; text-align:center; color:var(--muted);">아직 아무도 체크인하지 않았습니다.</td></tr>`}
+      </tbody>
+    </table></div>
+  `;
+}
+
+function renderLunchMonthlyTab(body){
+  const month = lunchState.monthlyMonth;
+  const roster = lunchRoster();
+  const monthEntries = lunchState.entries.filter(e=>e.date.startsWith(month));
+  const byPerson = {};
+  roster.forEach(name=>{ byPerson[name] = { 내근:0, 외근:0, 연차:0 }; });
+  monthEntries.forEach(e=>{ if(!byPerson[e.userName]) byPerson[e.userName] = { 내근:0, 외근:0, 연차:0 }; byPerson[e.userName][e.workType] = (byPerson[e.userName][e.workType]||0)+1; });
+  const totalDays = monthEntries.length;
+  const totalByType = { 내근:0, 외근:0, 연차:0 };
+  monthEntries.forEach(e=>{ totalByType[e.workType] = (totalByType[e.workType]||0)+1; });
+  body.innerHTML = `
+    <div class="field" style="width:150px; margin-bottom:16px;"><label>월</label><input type="month" id="lunchMonthlyMonth" value="${month}"></div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; margin-bottom:22px;">
+      ${[['제출 건수', totalDays+'건'],['내근', totalByType.내근+'건'],['외근', totalByType.외근+'건'],['연차', totalByType.연차+'건']]
+        .map(([lbl,val])=>`<div style="padding:14px; border:1px solid var(--line); border-radius:9px; background:var(--panel);">
+          <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">${lbl}</div>
+          <div style="font-size:19px; font-weight:700;">${val}</div>
+        </div>`).join('')}
+    </div>
+    <div class="table-wrap"><table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr style="background:var(--panel-2);">
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line);">성명</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line); width:90px;">내근</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line); width:90px;">외근</th>
+        <th style="padding:8px; text-align:left; border-bottom:1px solid var(--line); width:90px;">연차</th>
+      </tr></thead>
+      <tbody>
+        ${roster.length ? roster.map(name=>`
+          <tr>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${escapeHtml(name)}</td>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${byPerson[name].내근}일</td>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${byPerson[name].외근}일</td>
+            <td style="padding:7px 8px; border-bottom:1px solid var(--line);">${byPerson[name].연차}일</td>
+          </tr>`).join('') : `<tr><td colspan="4" style="padding:16px; text-align:center; color:var(--muted);">데이터가 없습니다.</td></tr>`}
+      </tbody>
+    </table></div>
+  `;
+  document.getElementById('lunchMonthlyMonth').addEventListener('change', e=>{ lunchState.monthlyMonth = e.target.value; renderLunchMonthlyTab(body); });
+}
+
 // ---------- 표 열 너비 드래그 조절 (엑셀처럼) ----------
 // .table-wrap 안의 모든 표(No./A/S 등 모든 탭의 목록 표 포함)에 공통 적용된다.
 // main.innerHTML로 다시 그릴 때마다 <table>이 통째로 새로 생기므로, #main을
@@ -14123,6 +14315,12 @@ async function init(){
   });
   await Promise.all([worklogEntriesSub.firstLoad, worklogDutySub.firstLoad, worklogLinksSub.firstLoad, worklogNotesSub.firstLoad]);
   worklogState.loaded = true;
+  // 점심체크 — 마찬가지로 여러 명이 같이 쓰는 표라 실시간 구독.
+  lunchCheckSub = subscribeListToStorage(LUNCH_CHECK_KEY, lunchState, {
+    field: 'entries', isActive: () => state.activeTab==='lunch', render: renderLunchMain,
+  });
+  await lunchCheckSub.firstLoad;
+  lunchState.loaded = true;
   renderSidebar();
   renderMain();
 }
