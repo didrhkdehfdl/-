@@ -6979,6 +6979,30 @@ async function renderAdminApprovalMain(){
   await renderAdminApprovalList();
 }
 
+// 관리자가 승인관리에서 이름을 고치면, 그 계정으로 이미 저장된 일일업무일지·
+// 점심체크 기록들의 이름도 같이 바꿔준다. worklogState/lunchState는 앱
+// 시작할 때 항상 구독해두므로(탭을 안 열어봤어도) 이미 최신 값을 들고 있고,
+// 여기서 저장하면 실시간 구독 중인 다른 사람 화면에도 자동으로 반영된다.
+async function renameUserNameEverywhere(oldName, newName){
+  if(!oldName || !newName || oldName === newName) return;
+  let changed = false;
+  worklogState.entries.forEach(e=>{ if(e.userName===oldName){ e.userName=newName; changed=true; } });
+  if(changed){ await worklogSaveEntries(); changed=false; }
+  worklogState.dutyItems.forEach(d=>{ if(d.userName===oldName){ d.userName=newName; changed=true; } });
+  if(changed){ await worklogSaveDutyItems(); changed=false; }
+  worklogState.weeklyNotes.forEach(n=>{ if(n.userName===oldName){ n.userName=newName; changed=true; } });
+  if(changed){ await worklogSaveWeeklyNotes(); changed=false; }
+  worklogState.taskLinks.forEach(l=>{ if(l.userName===oldName){ l.userName=newName; changed=true; } });
+  if(changed){ await worklogSaveTaskLinks(); changed=false; }
+  lunchState.entries.forEach(e=>{ if(e.userName===oldName){ e.userName=newName; changed=true; } });
+  if(changed){ await lunchSaveEntries(); changed=false; }
+  if(currentUserName === oldName){
+    currentUserName = newName;
+    if(state.activeTab==='worklog') renderWorklogMain();
+    else if(state.activeTab==='lunch') renderLunchMain();
+  }
+}
+
 const ALL_TABS = [
   { key:'sales', label:'영업비 정산' },
   { key:'profit', label:'사업 이윤정산' },
@@ -7005,6 +7029,11 @@ async function renderAdminApprovalList(){
   try{
     const snap = await fbDb.collection('users').orderBy('createdAt', 'desc').get();
     if(snap.empty){ listEl.innerHTML = '<div class="empty-side">가입된 사용자가 없습니다.</div>'; return; }
+    // 이름 입력칸을 실제로 바꿨을 때, 일일업무일지·점심체크 등에 이미 저장된
+    // 예전 이름(성명 필드가 비어있으면 로그인 시 이메일로 대체되던 그 값)을
+    // 같이 바꿔주기 위해 문서별 원본 데이터를 기억해둔다.
+    const adminUserDataById = {};
+    snap.docs.forEach(doc => { adminUserDataById[doc.id] = doc.data(); });
     listEl.innerHTML = snap.docs.map(doc => {
       const d = doc.data();
       const isAdmin = isAdminEmail(d.email);
@@ -7052,8 +7081,18 @@ async function renderAdminApprovalList(){
     }).join('');
     listEl.querySelectorAll('.admin2-name-input').forEach(inp=>{
       inp.addEventListener('change', async ()=>{
+        const newName = inp.value.trim();
+        const oldData = adminUserDataById[inp.dataset.id] || {};
+        // 로그인 시 currentUserName = data.name || user.email 순서로 정해지므로,
+        // 지금까지 이 계정으로 저장된 항목들도 그 규칙과 똑같이 계산해야
+        // 실제로 저장되어 있는 예전 이름(성명이 비어있었다면 이메일)과 맞는다.
+        const oldEffectiveName = (oldData.name || oldData.email || '').trim();
         try{
-          await fbDb.collection('users').doc(inp.dataset.id).update({ name: inp.value.trim() });
+          await fbDb.collection('users').doc(inp.dataset.id).update({ name: newName });
+          adminUserDataById[inp.dataset.id] = { ...oldData, name: newName };
+          if(newName && oldEffectiveName && newName !== oldEffectiveName){
+            await renameUserNameEverywhere(oldEffectiveName, newName);
+          }
         }catch(err){
           console.error(err);
           alert('이름을 저장하지 못했습니다: ' + (err.message || err));
@@ -13185,7 +13224,7 @@ function worklogNewEntry(userName, date){
   return {
     id: rid(), userName, date, status:'정상근무', leaveStart:'', leaveEnd:'',
     today:[worklogNewTask()], tomorrow:[worklogNewTask()],
-    vehicleId:'', createdAt: Date.now(), updatedAt: Date.now(),
+    vehicleId:'', note:'', createdAt: Date.now(), updatedAt: Date.now(),
   };
 }
 function worklogFindEntry(userName, date){
@@ -13296,6 +13335,24 @@ function worklogRenderVehicleConflict(entry){
   el.innerHTML = msgs.length ? `<div style="margin:-6px 0 14px; padding:8px 12px; border-radius:7px; background:rgba(224,163,57,.1); border:1px solid var(--gold-dim); color:var(--gold); font-size:12px;">${msgs.join('<br>')}</div>` : '';
 }
 
+const WORKLOG_DEADLINE = { h:16, m:30 };
+const WORKLOG_STATUS_META = {
+  '정상근무': { icon:'🏢', label:'정상근무' },
+  '연차': { icon:'☀️', label:'연차' },
+  '기타': { icon:'❓', label:'기타(출장/파견/교육)' },
+};
+let worklogCountdownTimer = null;
+function worklogDeadlineText(){
+  const now = new Date();
+  const deadline = new Date(now); deadline.setHours(WORKLOG_DEADLINE.h, WORKLOG_DEADLINE.m, 0, 0);
+  const diff = deadline - now;
+  const hh = String(WORKLOG_DEADLINE.h).padStart(2,'0')+':'+String(WORKLOG_DEADLINE.m).padStart(2,'0');
+  if(diff <= 0) return `오늘 제출 마감(${hh})이 지났습니다.`;
+  const h = Math.floor(diff/3600000), m = Math.floor((diff%3600000)/60000), s = Math.floor((diff%60000)/1000);
+  const pad = n=>String(n).padStart(2,'0');
+  return `제출 마감(${hh})까지 ${pad(h)}:${pad(m)}:${pad(s)} 남았습니다.`;
+}
+
 async function renderWorklogWriteTab(body){
   await ensureVehicleLoaded();
   const date = worklogState.writeDate;
@@ -13304,10 +13361,11 @@ async function renderWorklogWriteTab(body){
   if(!entry) entry = worklogNewEntry(currentUserName, date);
   const weekStart = worklogWeekStart(date);
   const myNote = worklogState.weeklyNotes.find(n=>n.userName===currentUserName && n.weekStart===weekStart);
+  const today = isoDate(new Date());
 
-  const taskRowsHtml = (slot, tasks) => tasks.map((t,i)=>`
+  const taskRowsHtml = (slot, tasks, placeholder) => tasks.map((t,i)=>`
     <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
-      <input type="text" class="wl-task-text" data-slot="${slot}" data-tidx="${i}" value="${escapeHtml(t.text)}" placeholder="업무 내용" style="${WL_INPUT_STYLE} flex:1;">
+      <input type="text" class="wl-task-text" data-slot="${slot}" data-tidx="${i}" value="${escapeHtml(t.text)}" placeholder="${placeholder}" style="${WL_INPUT_STYLE} flex:1;">
       <select class="wl-task-hours" data-slot="${slot}" data-tidx="${i}" style="${WL_INPUT_STYLE} width:78px;">
         ${WORKLOG_HOUR_OPTIONS.map(h=>`<option value="${h}" ${Number(t.hours)===h?'selected':''}>${h}h</option>`).join('')}
       </select>
@@ -13316,50 +13374,74 @@ async function renderWorklogWriteTab(body){
   `).join('');
 
   body.innerHTML = `
-    <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:8px;">
-      <div class="field" style="width:170px;"><label>날짜</label><input type="date" id="wlWriteDate" value="${date}"></div>
-      <div class="field" style="width:150px;"><label>근태</label>
-        <select id="wlStatus" style="${WL_INPUT_STYLE}">
-          ${WORKLOG_STATUS_OPTIONS.map(s=>`<option value="${s}" ${entry.status===s?'selected':''}>${s}</option>`).join('')}
-        </select>
-      </div>
-      ${entry.status!=='정상근무' ? `
-      <div class="field" style="width:150px;"><label>시작일</label><input type="date" id="wlLeaveStart" value="${entry.leaveStart||date}"></div>
-      <div class="field" style="width:150px;"><label>종료일</label><input type="date" id="wlLeaveEnd" value="${entry.leaveEnd||date}"></div>` : ''}
-      <div class="field" style="width:220px;"><label>차량</label>
-        <select id="wlVehicle" style="${WL_INPUT_STYLE}">
-          <option value="">선택 안 함</option>
-          ${(vehicleState.vehicles||[]).map(v=>`<option value="${v.id}" ${entry.vehicleId===v.id?'selected':''}>${escapeHtml(v.plate)}</option>`).join('')}
-        </select>
-      </div>
+    ${date===today ? `<div id="wlDeadlineBanner" style="margin-bottom:14px; padding:10px 14px; border-radius:8px; background:rgba(47,111,237,.08); border:1px solid rgba(47,111,237,.25); color:var(--sky); font-size:12.5px;">🕐 ${worklogDeadlineText()}</div>` : ''}
+    <div style="display:flex; gap:8px; margin-bottom:14px;">
+      <button class="wl-day-btn" data-date="${today}" style="padding:7px 14px; border-radius:7px; border:1px solid ${date===today?'var(--gold)':'var(--line)'}; background:${date===today?'rgba(34,51,90,.08)':'transparent'}; color:${date===today?'var(--gold)':'var(--muted)'}; cursor:pointer; font-size:12.5px;">오늘 (${today})</button>
+      <input type="date" id="wlWriteDate" value="${date}" style="${WL_INPUT_STYLE}">
     </div>
-    <div id="wlVehicleConflict"></div>
-    <div style="display:flex; gap:20px; flex-wrap:wrap;">
-      <div style="flex:1; min-width:320px;">
-        <div style="font-size:13.5px; font-weight:600; margin-bottom:8px;">금일 업무</div>
-        <div id="wlTodayList">${taskRowsHtml('today', entry.today)}</div>
-        <button id="wlAddToday" style="margin-top:4px; padding:6px 10px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:11.5px;">+ 업무 추가</button>
+    <div style="max-width:720px; border:1px solid var(--line); border-radius:10px; padding:18px 20px; background:var(--panel);">
+      <div style="font-size:13.5px; font-weight:600; margin-bottom:10px;">${escapeHtml(currentUserName)} 님의 ${date===today?'오늘':date} 근태</div>
+      <div style="display:flex; gap:8px; margin-bottom:18px;">
+        ${WORKLOG_STATUS_OPTIONS.map(s=>{ const meta = WORKLOG_STATUS_META[s]; const on = entry.status===s; return `
+        <button class="wl-status-btn" data-status="${s}" style="flex:1; padding:14px 8px; border-radius:9px; border:1px solid ${on?'var(--gold)':'var(--line)'}; background:${on?'rgba(34,51,90,.08)':'var(--panel-2)'}; color:${on?'var(--gold)':'var(--text)'}; cursor:pointer; text-align:center;">
+          <div style="font-size:18px; margin-bottom:4px;">${meta.icon}</div>
+          <div style="font-size:12px; font-weight:600;">${meta.label}</div>
+        </button>`; }).join('')}
       </div>
-      <div style="flex:1; min-width:320px;">
-        <div style="font-size:13.5px; font-weight:600; margin-bottom:8px;">익일 업무</div>
-        <div id="wlTomorrowList">${taskRowsHtml('tomorrow', entry.tomorrow)}</div>
-        <button id="wlAddTomorrow" style="margin-top:4px; padding:6px 10px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:11.5px;">+ 업무 추가</button>
+      <div id="wlLeaveRange" style="display:${entry.status==='정상근무'?'none':'flex'}; gap:12px; margin-bottom:16px;">
+        <div class="field" style="width:150px;"><label>시작일</label><input type="date" id="wlLeaveStart" value="${entry.leaveStart||date}"></div>
+        <div class="field" style="width:150px;"><label>종료일</label><input type="date" id="wlLeaveEnd" value="${entry.leaveEnd||date}"></div>
       </div>
+
+      <div style="font-size:12.5px; font-weight:600; margin-bottom:6px;">금일 업무</div>
+      <div id="wlTodayList">${taskRowsHtml('today', entry.today, '예: 체조, 행동강령 및 주간회의 참석')}</div>
+      <button id="wlAddToday" style="margin-bottom:6px; padding:6px 10px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:11.5px;">+ 업무 추가</button>
+      <div style="font-size:11px; color:var(--muted); margin-bottom:16px;">오늘 진행한(할) 업무를 항목별로 입력하고, 항목마다 소요시간을 선택하세요.</div>
+
+      <div style="font-size:12.5px; font-weight:600; margin-bottom:6px;">익일 업무</div>
+      <div id="wlTomorrowList">${taskRowsHtml('tomorrow', entry.tomorrow, '예: 경기지사 방문, 발전소 현장 점검')}</div>
+      <button id="wlAddTomorrow" style="margin-bottom:6px; padding:6px 10px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:11.5px;">+ 업무 추가</button>
+      <div style="font-size:11px; color:var(--muted); margin-bottom:18px;">내일 진행 예정인 업무를 항목별로 입력하고, 항목마다 예상 소요시간을 선택하세요.</div>
+
+      <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:18px;">
+        <div class="field" style="width:200px;"><label>차량 사용</label>
+          <select id="wlVehicle" style="${WL_INPUT_STYLE}">
+            <option value="">사용 안 함</option>
+            ${(vehicleState.vehicles||[]).map(v=>`<option value="${v.id}" ${entry.vehicleId===v.id?'selected':''}>${escapeHtml(v.plate)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="flex:1; min-width:220px;"><label>비고</label><input type="text" id="wlNote" value="${escapeHtml(entry.note||'')}" placeholder="선택 입력"></div>
+      </div>
+      <div id="wlVehicleConflict"></div>
+      <button id="wlSaveBtn" style="width:100%; padding:12px; border-radius:8px; border:none; background:var(--gold); color:#fff; cursor:pointer; font-weight:600; font-size:13.5px;">제출</button>
+      <div id="wlSaveStatus" style="margin-top:8px; font-size:12px; color:var(--muted);"></div>
     </div>
-    <div class="field" style="margin-top:20px; max-width:640px;">
-      <label>차주 중요업무 (${weekStart} 주, 본인만 작성)</label>
-      <textarea id="wlWeeklyNote" rows="3" style="${WL_INPUT_STYLE} resize:vertical;">${escapeHtml(myNote ? myNote.note : '')}</textarea>
-    </div>
-    <div style="margin-top:18px; display:flex; align-items:center; gap:10px;">
-      <button id="wlSaveBtn" style="padding:9px 18px; border-radius:7px; border:none; background:var(--gold); color:#fff; cursor:pointer; font-weight:600; font-size:13px;">저장</button>
-      <span id="wlSaveStatus" style="font-size:12px; color:var(--muted);"></span>
+
+    <div style="max-width:720px; margin-top:20px; border:1px solid var(--line); border-radius:10px; padding:18px 20px; background:var(--panel);">
+      <div style="font-size:13px; font-weight:600; margin-bottom:6px;">차주 중요업무</div>
+      <div style="font-size:11px; color:var(--muted); margin-bottom:10px;">다음 주에 진행할 중요 업무를 직접 정리해 두세요. 한 줄씩 하나씩 입력하면 됩니다. "제출" 버튼을 누르면 이번 주 업무일지와 함께 저장됩니다.</div>
+      <textarea id="wlWeeklyNote" rows="3" style="${WL_INPUT_STYLE} width:100%; resize:vertical;">${escapeHtml(myNote ? myNote.note : '')}</textarea>
     </div>
   `;
+  if(worklogCountdownTimer){ clearInterval(worklogCountdownTimer); worklogCountdownTimer = null; }
+  const deadlineEl = document.getElementById('wlDeadlineBanner');
+  if(deadlineEl){
+    worklogCountdownTimer = setInterval(()=>{
+      if(!document.body.contains(deadlineEl)){ clearInterval(worklogCountdownTimer); worklogCountdownTimer = null; return; }
+      deadlineEl.textContent = '🕐 ' + worklogDeadlineText();
+    }, 1000);
+  }
+  document.querySelectorAll('.wl-day-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ worklogState.writeDate = btn.dataset.date; renderWorklogWriteTab(body); });
+  });
   document.getElementById('wlWriteDate').addEventListener('change', e=>{ worklogState.writeDate = e.target.value; renderWorklogWriteTab(body); });
-  document.getElementById('wlStatus').addEventListener('change', e=>{ entry.status = e.target.value; renderWorklogWriteTab(body); });
+  body.querySelectorAll('.wl-status-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ entry.status = btn.dataset.status; renderWorklogWriteTab(body); });
+  });
   const vehicleSel = document.getElementById('wlVehicle');
   vehicleSel.addEventListener('change', e=>{ entry.vehicleId = e.target.value; worklogRenderVehicleConflict(entry); });
   worklogRenderVehicleConflict(entry);
+  document.getElementById('wlNote').addEventListener('input', e=>{ entry.note = e.target.value; });
   document.getElementById('wlAddToday').addEventListener('click', ()=>{ entry.today.push(worklogNewTask()); renderWorklogWriteTab(body); });
   document.getElementById('wlAddTomorrow').addEventListener('click', ()=>{ entry.tomorrow.push(worklogNewTask()); renderWorklogWriteTab(body); });
   body.querySelectorAll('.wl-task-remove').forEach(btn=>{
@@ -13392,9 +13474,9 @@ async function renderWorklogWriteTab(body){
       if(existingNote){ existingNote.note = noteText; existingNote.updatedAt = Date.now(); }
       else if(noteText.trim()) worklogState.weeklyNotes.push({ id: rid(), userName: currentUserName, weekStart, note: noteText, updatedAt: Date.now() });
       await worklogSaveWeeklyNotes();
-      statusEl.textContent = '저장되었습니다.';
+      statusEl.textContent = '제출되었습니다.';
       renderWorklogWriteTab(body);
-    }catch(err){ statusEl.textContent = '저장 실패: '+err.message; }
+    }catch(err){ statusEl.textContent = '제출 실패: '+err.message; }
   });
 }
 
