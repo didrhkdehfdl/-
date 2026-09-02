@@ -11982,17 +11982,17 @@ async function renderVehicleMain(){
     <div class="table-wrap table-wrap-frozen" id="vehicleTableWrap">
       <table class="vehicle-table" style="border-collapse:collapse; min-width:1200px; font-size:12px;">
         <thead><tr>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; position:sticky; left:0; background:var(--panel-2); width:36px;">순번</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; width:110px;">운행일자${colFilterIconHtml(colFilterTabKey,'date')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; width:90px;">운행전(Km)${colFilterIconHtml(colFilterTabKey,'kmBefore')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; width:90px;">운행후(Km)${colFilterIconHtml(colFilterTabKey,'kmAfter')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; width:80px;">거리(Km)</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; width:220px;">방문업체 및 운행목적${colFilterIconHtml(colFilterTabKey,'purpose')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; width:90px;">운행자${colFilterIconHtml(colFilterTabKey,'driver')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; width:100px;">주유비${colFilterIconHtml(colFilterTabKey,'fuelCost')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; width:80px;">하이패스<br>통행여부${colFilterIconHtml(colFilterTabKey,'hipass')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; width:160px;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle;">삭제</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; position:sticky; left:0; background:var(--panel-2); width:36px;">순번</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:110px;">운행일자${colFilterIconHtml(colFilterTabKey,'date')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:90px;">운행전(Km)${colFilterIconHtml(colFilterTabKey,'kmBefore')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:90px;">운행후(Km)${colFilterIconHtml(colFilterTabKey,'kmAfter')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:80px;">거리(Km)</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:220px;">방문업체 및 운행목적${colFilterIconHtml(colFilterTabKey,'purpose')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:90px;">운행자${colFilterIconHtml(colFilterTabKey,'driver')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:100px;">주유비${colFilterIconHtml(colFilterTabKey,'fuelCost')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:80px;">하이패스<br>통행여부${colFilterIconHtml(colFilterTabKey,'hipass')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:160px;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center;">삭제</th>
         </tr></thead>
         <tbody>
           ${visibleRows.map((row,i)=>{
