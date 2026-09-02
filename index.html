@@ -12026,7 +12026,12 @@ async function renderVehicleMain(){
                 ${note('driver')}
               </td>
               <td data-label="주유비" style="padding:3px 4px;">
-                <input type="text" class="vehicle-f vehicle-num" data-id="${row.id}" data-field="fuelCost" value="${row.fuelCost==='X'?'X':(row.fuelCost?Number(row.fuelCost).toLocaleString('ko-KR'):'')}" style="width:100%; text-align:right; ${issues.fuelCost?errBorder:''}">
+                <div style="display:flex; align-items:center; gap:4px;">
+                  <label style="display:flex; align-items:center; gap:2px; font-size:11px; color:var(--muted); white-space:nowrap; cursor:pointer;" title="주유 안 함">
+                    <input type="checkbox" class="vehicle-fuel-x-check" data-id="${row.id}" ${row.fuelCost==='X'?'checked':''}>X
+                  </label>
+                  <input type="text" inputmode="numeric" class="vehicle-f vehicle-num" data-id="${row.id}" data-field="fuelCost" value="${row.fuelCost==='X'?'':(row.fuelCost?Number(row.fuelCost).toLocaleString('ko-KR'):'')}" ${row.fuelCost==='X'?'disabled':''} style="width:100%; text-align:right; ${issues.fuelCost?errBorder:''}">
+                </div>
                 ${note('fuelCost')}
               </td>
               <td data-label="하이패스 통행여부" style="padding:3px 4px; text-align:center; ${issues.hipass?errBorder:''}">
@@ -12161,17 +12166,13 @@ async function renderVehicleMain(){
       if(!row) return;
       const field = el.dataset.field;
       if(field==='fuelCost'){
-        // 주유비는 숫자 아니면 "주유 안 함"을 뜻하는 X만 허용한다 — 그 외
-        // 글자는 입력되는 즉시 걸러낸다.
-        const cleaned = el.value.replace(/[^0-9xX]/g,'');
+        // 주유비 칸은 이제 숫자만 입력한다("주유 안 함"은 옆 X 체크박스로
+        // 표시) — 숫자 아닌 글자는 입력되는 즉시 걸러낸다.
+        const cleaned = el.value.replace(/[^0-9]/g,'');
         if(cleaned !== el.value) el.value = cleaned;
       }
       if(el.classList.contains('vehicle-num')){
-        if(field==='fuelCost' && /^x$/i.test(el.value.trim())){
-          row[field] = 'X';
-        } else {
-          row[field] = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
-        }
+        row[field] = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
       } else {
         row[field] = el.value;
       }
@@ -12182,13 +12183,7 @@ async function renderVehicleMain(){
       if(!row) return;
       const field = el.dataset.field;
       if(el.classList.contains('vehicle-num')){
-        // 주유비는 "주유 안 함"을 표시하려고 숫자 대신 X를 적는 경우가 있어
-        // 숫자 칸이지만 예외로 허용한다.
-        if(field==='fuelCost' && /^x$/i.test(el.value.trim())){
-          row[field] = 'X';
-        } else {
-          row[field] = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
-        }
+        row[field] = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
         // 운행후(Km)를 고치면, 바로 다음 행의 운행전(Km)도 같이 이어서 채운다.
         if(field==='kmAfter'){
           const idx = rows.findIndex(r=>r.id===row.id);
@@ -12200,6 +12195,15 @@ async function renderVehicleMain(){
         row[field] = el.value.trim();
       }
       await saveVehicleRows(activeVehicle.id);
+    });
+  });
+  main.querySelectorAll('.vehicle-fuel-x-check').forEach(cb=>{
+    cb.addEventListener('change', async ()=>{
+      const row = rows.find(r=>r.id===cb.dataset.id);
+      if(!row) return;
+      row.fuelCost = cb.checked ? 'X' : 0;
+      await saveVehicleRows(activeVehicle.id);
+      renderVehicleMain();
     });
   });
   main.querySelectorAll('.vehicle-hipass-btn').forEach(btn=>{
