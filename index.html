@@ -14235,9 +14235,28 @@ function tableResizeKey(leafCells){
   for(let i=0;i<text.length;i++){ hash = ((hash<<5)-hash + text.charCodeAt(i))|0; }
   return 'colw-' + Math.abs(hash);
 }
+// 헤더(th) 글자의 가로·세로 정렬을 그 아래 실제 데이터 칸(입력칸 등)과
+// 맞춰준다 — 전체 th가 기본으로 왼쪽 정렬이라, 본문이 가운데·오른쪽
+// 정렬이면 헤더와 위치가 어긋나 보였다(차량관리에서 실제 겪은 문제).
+// 여러 칸이 병합된(colSpan>1) 헤더는 대응되는 본문 칸이 애매해서 건너뛴다.
+function alignTableHeaderToBody(table, layout){
+  if(!layout) return;
+  const bodyRow = table.tBodies[0] && table.tBodies[0].rows[0];
+  if(!bodyRow) return;
+  layout.leafCells.forEach(({el, colStart, colSpan})=>{
+    if(colSpan !== 1) return;
+    const bodyCell = bodyRow.cells[colStart];
+    if(!bodyCell) return;
+    const inner = bodyCell.querySelector('input, select, textarea, button');
+    const align = getComputedStyle(inner || bodyCell).textAlign;
+    if(align) el.style.textAlign = align;
+    el.style.verticalAlign = 'middle';
+  });
+}
 function initResizableTable(table){
   if(table.dataset.resizeInit) return;
   const layout = computeTableColumnLayout(table);
+  alignTableHeaderToBody(table, layout);
   if(!layout || layout.colCount < 2){ table.dataset.resizeInit = '1'; return; }
   const { colCount, leafCells } = layout;
   table.dataset.resizeInit = '1';
