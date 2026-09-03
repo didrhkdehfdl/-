@@ -10911,6 +10911,7 @@ async function renderCorpCardMain(){
       ${s.approvalEntries.length ? ` · 승인내역 누적 ${fmtNum(s.approvalEntries.length)}건` : ''}
       ${issueCountInMonth ? ` · <span style="color:var(--neg); font-weight:600;">🔴 확인 필요 ${issueCountInMonth}건(빈칸·승인내역 불일치 등)</span>` : ' · ✅ 이번 달 전부 문제 없음'}
     </div>
+    <datalist id="corpCardCarNoOptions"><option value="자차"></option></datalist>
     <div class="table-wrap table-wrap-frozen" id="corpCardTableWrap">
       <table style="border-collapse:collapse; min-width:1900px; font-size:12px;">
         <thead><tr>
@@ -11002,7 +11003,7 @@ async function renderCorpCardMain(){
                 </select>
                 ${note('hipass')}
               </td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="carNo" value="${escapeHtml(row.carNo)}" style="width:100%; text-align:center; ${issues.carNo?errBorder:''}">${note('carNo')}</td>
+              <td style="padding:3px 4px;"><input type="text" list="corpCardCarNoOptions" class="corpcard-f" data-id="${row.id}" data-field="carNo" value="${escapeHtml(row.carNo)}" style="width:100%; text-align:center; ${issues.carNo?errBorder:''}">${note('carNo')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" ${noteLocked?`readonly style="width:100%; ${lockedStyle}"`:`style="width:100%; ${issues.note?errBorder:''}"`}>${note('note')}</td>
               <td style="padding:5px 4px; text-align:center;"><button class="corpcard-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button></td>
             </tr>
