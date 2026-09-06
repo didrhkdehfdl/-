@@ -209,6 +209,11 @@
   .dfield input:focus, .dfield textarea:focus, .dfield select:focus{ outline:none; border-color:var(--gold-dim); }
   @media (max-width: 1100px){ .detail-grid{ grid-template-columns:repeat(2, 1fr); } .dfield.wide{ grid-column:span 2; } }
   .calc-cell.pay{ color:var(--gold); font-weight:700; }
+  /* 법인카드 표의 "사용처"/"업무내용" 등 입력칸 글자가 너무 작다는 요청으로,
+     이 표(헤더·일반 텍스트 칸·입력칸)만 글자 크기를 조금씩 키운다. */
+  #corpCardTableWrap th{ font-size:10.5px; }
+  #corpCardTableWrap td{ font-size:13px; }
+  #corpCardTableWrap td input, #corpCardTableWrap td select, #corpCardTableWrap td textarea{ font-size:12.5px; }
   .del-row-btn{ background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 2px; width:100%; }
   .del-row-btn:hover{ color:var(--neg); }
   #addRowBtn{
@@ -10943,7 +10948,7 @@ async function renderCorpCardMain(){
           <th style="padding:6px 4px; color:var(--muted); width:70px;">하이패스<br>사용여부${colFilterIconHtml(colFilterTabKey,'hipass')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">차량번호<br>(끝4자리)${colFilterIconHtml(colFilterTabKey,'carNo')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:160px;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
-          <th style="padding:6px 4px; color:var(--muted);">삭제</th>
+          <th style="padding:6px 4px; color:var(--muted); width:64px;">삭제</th>
         </tr></thead>
         <tbody>
           ${visibleRows.map((row,i)=>{
@@ -12045,7 +12050,7 @@ async function renderVehicleMain(){
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:100px;">주유비${colFilterIconHtml(colFilterTabKey,'fuelCost')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:80px;">하이패스<br>통행여부${colFilterIconHtml(colFilterTabKey,'hipass')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:160px;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center;">삭제</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:84px;">삭제</th>
         </tr></thead>
         <tbody>
           ${visibleRows.map((row,i)=>{
