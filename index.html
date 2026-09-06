@@ -209,11 +209,21 @@
   .dfield input:focus, .dfield textarea:focus, .dfield select:focus{ outline:none; border-color:var(--gold-dim); }
   @media (max-width: 1100px){ .detail-grid{ grid-template-columns:repeat(2, 1fr); } .dfield.wide{ grid-column:span 2; } }
   .calc-cell.pay{ color:var(--gold); font-weight:700; }
-  /* 법인카드 표의 "사용처"/"업무내용" 등 입력칸 글자가 너무 작다는 요청으로,
-     이 표(헤더·일반 텍스트 칸·입력칸)만 글자 크기를 조금씩 키운다. */
+  /* 법인카드·차량관리 표의 입력칸 글자가 너무 작다는 요청으로, 이 표들
+     (헤더·일반 텍스트 칸·입력칸)만 글자 크기를 조금씩 키운다. 법인카드는
+     화면 크기와 상관없이 항상 가로 스크롤 표라 그냥 적용하지만, 차량관리는
+     760px 이하에서 세로로 쌓이는 별도 모바일 레이아웃이 있고 그 안의
+     입력칸은 이미 15px(iOS에서 입력칸을 누를 때 화면이 확대되지 않게 하는
+     크기)로 정해둔 것이라 여기서 덮어쓰면 안 된다 — 그래서 차량관리 쪽만
+     761px 이상에서만 적용되게 미디어 쿼리로 감싼다. */
   #corpCardTableWrap th{ font-size:10.5px; }
   #corpCardTableWrap td{ font-size:13px; }
   #corpCardTableWrap td input, #corpCardTableWrap td select, #corpCardTableWrap td textarea{ font-size:12.5px; }
+  @media (min-width: 761px){
+    #vehicleTableWrap th{ font-size:10.5px; }
+    #vehicleTableWrap td{ font-size:13px; }
+    #vehicleTableWrap td input, #vehicleTableWrap td select, #vehicleTableWrap td textarea{ font-size:12.5px; }
+  }
   .del-row-btn{ background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 2px; width:100%; }
   .del-row-btn:hover{ color:var(--neg); }
   #addRowBtn{
@@ -10930,7 +10940,7 @@ async function renderCorpCardMain(){
         <thead><tr>
           <th style="padding:6px 2px; color:var(--muted); position:sticky; left:0; background:var(--panel-2); width:26px;"><input type="checkbox" id="corpCardSelectAllBox" title="이 달 전체 선택/해제"></th>
           <th style="padding:6px 4px; color:var(--muted); position:sticky; left:26px; background:var(--panel-2);">순번</th>
-          <th style="padding:6px 4px; color:var(--muted); width:100px;">날짜${colFilterIconHtml(colFilterTabKey,'date')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:118px;">날짜${colFilterIconHtml(colFilterTabKey,'date')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">부서${colFilterIconHtml(colFilterTabKey,'dept')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:80px;">성명${colFilterIconHtml(colFilterTabKey,'name')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:70px;">직급${colFilterIconHtml(colFilterTabKey,'position')}</th>
@@ -12041,7 +12051,7 @@ async function renderVehicleMain(){
       <table class="vehicle-table" style="border-collapse:collapse; min-width:1200px; font-size:12px;">
         <thead><tr>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; position:sticky; left:0; background:var(--panel-2); width:36px;">순번</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:110px;">운행일자${colFilterIconHtml(colFilterTabKey,'date')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:128px;">운행일자${colFilterIconHtml(colFilterTabKey,'date')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:90px;">운행전(Km)${colFilterIconHtml(colFilterTabKey,'kmBefore')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:90px;">운행후(Km)${colFilterIconHtml(colFilterTabKey,'kmAfter')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:80px;">거리(Km)</th>
