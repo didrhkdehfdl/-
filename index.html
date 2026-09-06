@@ -3010,6 +3010,28 @@ function debounce(fn, ms){
 }
 const debouncedSave = debounce(()=>{ if(activeCase) persistCase(activeCase); }, 500);
 
+// 법인카드·차량관리 표의 "사용처"/"업무내용"처럼 내용 길이가 들쭉날쭉한
+// 입력칸에 쓴다 — 표가 table-layout:auto라, 이 입력칸의 실제 픽셀 너비를
+// 값 길이에 맞춰 직접 정해주면 그 칸(열) 전체 너비도 따라서 좁아지거나
+// 넓어진다(짧으면 작게, 길어지면 다시 크게). <input style="width:100%">로
+// 두면 브라우저가 표 너비를 계산할 때 실제 글자 길이를 반영하지 못해서
+// 직접 캔버스로 글자 폭을 재서 적용한다.
+let autoWidthCanvasCtx = null;
+function autoSizeTextInput(el){
+  if(!autoWidthCanvasCtx) autoWidthCanvasCtx = document.createElement('canvas').getContext('2d');
+  const cs = getComputedStyle(el);
+  autoWidthCanvasCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const textWidth = autoWidthCanvasCtx.measureText(el.value || '').width;
+  const min = 56, max = 420;
+  el.style.width = Math.min(max, Math.max(min, Math.ceil(textWidth) + 22)) + 'px';
+}
+function wireAutoSizeTextInputs(scopeEl){
+  scopeEl.querySelectorAll('.corpcard-f-auto, .vehicle-f-auto').forEach(el=>{
+    autoSizeTextInput(el);
+    el.addEventListener('input', ()=>autoSizeTextInput(el));
+  });
+}
+
 function buildDoc1(c, totals){
   const names = c.records.map(r=>oneLine(r.customer)).filter(Boolean);
   const nameList = names.length ? names.join(', ') : '(고객명 미입력)';
@@ -10936,7 +10958,7 @@ async function renderCorpCardMain(){
     </div>
     <datalist id="corpCardCarNoOptions"><option value="자차"></option></datalist>
     <div class="table-wrap table-wrap-frozen" id="corpCardTableWrap">
-      <table style="border-collapse:collapse; min-width:1900px; font-size:12px;">
+      <table style="border-collapse:collapse; table-layout:auto; width:auto; font-size:12px;">
         <thead><tr>
           <th style="padding:6px 2px; color:var(--muted); position:sticky; left:0; background:var(--panel-2); width:26px;"><input type="checkbox" id="corpCardSelectAllBox" title="이 달 전체 선택/해제"></th>
           <th style="padding:6px 4px; color:var(--muted); position:sticky; left:26px; background:var(--panel-2);">순번</th>
@@ -10949,15 +10971,15 @@ async function renderCorpCardMain(){
           <th style="padding:6px 4px; color:var(--muted); width:90px;">사업분류${colFilterIconHtml(colFilterTabKey,'bizCategory')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">프로젝트${colFilterIconHtml(colFilterTabKey,'project')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:120px;">발전소명${colFilterIconHtml(colFilterTabKey,'plantName')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:140px;">사용처${colFilterIconHtml(colFilterTabKey,'place')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:160px;">업무내용${colFilterIconHtml(colFilterTabKey,'workDetail')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:110px;">지출내역${colFilterIconHtml(colFilterTabKey,'expenseType')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">사용처${colFilterIconHtml(colFilterTabKey,'place')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">업무내용${colFilterIconHtml(colFilterTabKey,'workDetail')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">지출내역${colFilterIconHtml(colFilterTabKey,'expenseType')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">공급가액</th>
           <th style="padding:6px 4px; color:var(--muted); width:80px;">부가세</th>
           <th style="padding:6px 4px; color:var(--muted); width:100px;">금액${colFilterIconHtml(colFilterTabKey,'amount')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:70px;">하이패스<br>사용여부${colFilterIconHtml(colFilterTabKey,'hipass')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">차량번호<br>(끝4자리)${colFilterIconHtml(colFilterTabKey,'carNo')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:160px;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:64px;">삭제</th>
         </tr></thead>
         <tbody>
@@ -11000,16 +11022,16 @@ async function renderCorpCardMain(){
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="project" value="${escapeHtml(row.project)}" style="width:100%; ${issues.project?errBorder:''}">${note('project')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="plantName" value="${escapeHtml(row.plantName)}" ${isOfficeCategory?`readonly style="width:100%; ${lockedStyle}"`:`style="width:100%; ${issues.plantName?errBorder:''}"`}>${note('plantName')}</td>
               <td style="padding:3px 4px;">
-                <input type="text" class="corpcard-f" data-id="${row.id}" data-field="place" value="${escapeHtml(row.place)}" style="width:100%; ${issues.place?errBorder:''}">
+                <input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="place" value="${escapeHtml(row.place)}" style="text-align:center; ${issues.place?errBorder:''}">
                 ${mm && mm.reason==='place' ? (
                   row.placeOverride
                     ? `<div class="corpcard-place-override" data-id="${row.id}" style="font-size:10px; color:#2e9e5b; margin-top:2px; cursor:pointer; text-decoration:underline;">✓ 일치로 처리됨(되돌리기)</div>`
                     : `<div style="font-size:10px; color:var(--neg); margin-top:2px;">승인내역: ${escapeHtml(mm.approvalPlace)} · <span class="corpcard-place-override" data-id="${row.id}" style="text-decoration:underline; cursor:pointer;">일치로 처리</span></div>`
                 ) : note('place')}
               </td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="workDetail" value="${escapeHtml(row.workDetail)}" style="width:100%; ${issues.workDetail?errBorder:''}">${note('workDetail')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="workDetail" value="${escapeHtml(row.workDetail)}" style="text-align:center; ${issues.workDetail?errBorder:''}">${note('workDetail')}</td>
               <td style="padding:3px 4px;">
-                <input type="text" class="corpcard-f" data-id="${row.id}" data-field="expenseType" value="${escapeHtml(row.expenseType)}" style="width:100%; ${issues.expenseType?errBorder:''}">
+                <input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="expenseType" value="${escapeHtml(row.expenseType)}" style="text-align:center; ${issues.expenseType?errBorder:''}">
                 ${note('expenseType')}
               </td>
               <td style="padding:5px 4px; text-align:right; color:var(--muted);">${sv.supply?fmtNum(sv.supply):''}</td>
@@ -11027,7 +11049,7 @@ async function renderCorpCardMain(){
                 ${note('hipass')}
               </td>
               <td style="padding:3px 4px;"><input type="text" list="corpCardCarNoOptions" class="corpcard-f" data-id="${row.id}" data-field="carNo" value="${escapeHtml(row.carNo)}" style="width:100%; text-align:center; ${issues.carNo?errBorder:''}">${note('carNo')}</td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" ${noteLocked?`readonly style="width:100%; ${lockedStyle}"`:`style="width:100%; ${issues.note?errBorder:''}"`}>${note('note')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" ${noteLocked?`readonly style="text-align:center; ${lockedStyle}"`:`style="text-align:center; ${issues.note?errBorder:''}"`}>${note('note')}</td>
               <td style="padding:5px 4px; text-align:center; white-space:nowrap;">
                 <button class="corpcard-insert-btn" data-id="${row.id}" title="이 아래에 빈 행 삽입" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:12px; padding:2px 3px; vertical-align:middle;">➕</button><button class="corpcard-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px; vertical-align:middle;">×</button>
               </td>
@@ -11181,6 +11203,7 @@ async function renderCorpCardMain(){
   // 잠깐(500ms) 멈추면 화면을 다시 그리지 않고 자동으로 저장해둔다. change에서
   // 하는 최종 정리(금액 반올림, 발전소명 자동입력, 비고 입력가능 여부 등)와
   // 재렌더링은 그대로 blur 시점에만 한다.
+  wireAutoSizeTextInputs(main);
   const corpCardDebouncedSave = debounce(()=>{ saveCorpCardRows(activeCard.id); }, 500);
   main.querySelectorAll('.corpcard-f').forEach(el=>{
     el.addEventListener('input', ()=>{
@@ -12048,18 +12071,18 @@ async function renderVehicleMain(){
       ${vehicleIssueCount && isAdminUser ? `<button id="vehicleNotifyAllBtn" style="padding:5px 10px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; font-size:11.5px;">🔔 빈칸 있는 ${vehicleIssueCount}건 한번에 알림</button>` : ''}
     </div>
     <div class="table-wrap table-wrap-frozen" id="vehicleTableWrap">
-      <table class="vehicle-table" style="border-collapse:collapse; min-width:1200px; font-size:12px;">
+      <table class="vehicle-table" style="border-collapse:collapse; table-layout:auto; width:auto; font-size:12px;">
         <thead><tr>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; position:sticky; left:0; background:var(--panel-2); width:36px;">순번</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:128px;">운행일자${colFilterIconHtml(colFilterTabKey,'date')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:90px;">운행전(Km)${colFilterIconHtml(colFilterTabKey,'kmBefore')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:90px;">운행후(Km)${colFilterIconHtml(colFilterTabKey,'kmAfter')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:80px;">거리(Km)</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:220px;">방문업체 및 운행목적${colFilterIconHtml(colFilterTabKey,'purpose')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:90px;">운행자${colFilterIconHtml(colFilterTabKey,'driver')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; white-space:nowrap;">방문업체 및 운행목적${colFilterIconHtml(colFilterTabKey,'purpose')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; white-space:nowrap;">운행자${colFilterIconHtml(colFilterTabKey,'driver')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:right; width:100px;">주유비${colFilterIconHtml(colFilterTabKey,'fuelCost')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:80px;">하이패스<br>통행여부${colFilterIconHtml(colFilterTabKey,'hipass')}</th>
-          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:160px;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
+          <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; white-space:nowrap;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
           <th style="padding:6px 4px; color:var(--muted); vertical-align:middle; text-align:center; width:84px;">삭제</th>
         </tr></thead>
         <tbody>
@@ -12086,11 +12109,11 @@ async function renderVehicleMain(){
               </td>
               <td data-label="거리(Km)" style="padding:5px 4px; text-align:right; color:var(--muted);">${dist?fmtNum(dist):''}</td>
               <td data-label="방문업체 및 운행목적" style="padding:3px 4px;">
-                <input type="text" class="vehicle-f" data-id="${row.id}" data-field="purpose" value="${escapeHtml(row.purpose)}" style="width:100%; text-align:center; ${issues.purpose?errBorder:''}">
+                <input type="text" class="vehicle-f vehicle-f-auto" data-id="${row.id}" data-field="purpose" value="${escapeHtml(row.purpose)}" style="text-align:center; ${issues.purpose?errBorder:''}">
                 ${note('purpose')}
               </td>
               <td data-label="운행자" style="padding:3px 4px;">
-                <input type="text" class="vehicle-f" data-id="${row.id}" data-field="driver" value="${escapeHtml(row.driver)}" style="width:100%; text-align:center; ${issues.driver?errBorder:''}">
+                <input type="text" class="vehicle-f vehicle-f-auto" data-id="${row.id}" data-field="driver" value="${escapeHtml(row.driver)}" style="text-align:center; ${issues.driver?errBorder:''}">
                 ${note('driver')}
               </td>
               <td data-label="주유비" style="padding:3px 4px;">
@@ -12109,7 +12132,7 @@ async function renderVehicleMain(){
                 </div>
                 ${note('hipass')}
               </td>
-              <td data-label="비고" style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" style="width:100%; text-align:center;"></td>
+              <td data-label="비고" style="padding:3px 4px;"><input type="text" class="vehicle-f vehicle-f-auto" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" style="text-align:center;"></td>
               <td data-label="삭제" style="padding:5px 4px; text-align:center; vertical-align:middle; white-space:nowrap;">
                 ${isMismatch && isAdminUser ? `<button class="vehicle-notify-btn" data-id="${row.id}" title="이 행 빈칸을 알림으로 보내기" style="background:transparent; border:none; color:var(--gold); cursor:pointer; font-size:14px; margin-right:4px;">🔔</button>` : ''}
                 <button class="vehicle-insert-btn" data-id="${row.id}" title="이 아래에 빈 행 삽입" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:12px; padding:2px 3px; vertical-align:middle;">➕</button><button class="vehicle-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px; vertical-align:middle;">×</button>
@@ -12231,6 +12254,7 @@ async function renderVehicleMain(){
   // 그래서 타이핑 중에도 잠깐(500ms, 1초 이내) 멈추면 자동으로 저장해둔다.
   // 이 자동저장은 화면을 다시 그리지 않아(타이핑 중 포커스가 끊기지 않음)
   // change에서 하는 숫자 정리·다음 행 이어받기·재렌더링은 그대로 blur 시점에만 한다.
+  wireAutoSizeTextInputs(main);
   const vehicleDebouncedSave = debounce(()=>{ saveVehicleRows(activeVehicle.id); }, 500);
   main.querySelectorAll('.vehicle-f').forEach(el=>{
     el.addEventListener('input', ()=>{
