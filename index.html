@@ -1848,7 +1848,15 @@ document.getElementById('genericHistoryCloseBtn').addEventListener('click', clos
 // 이전 상태를 이력에 남긴 뒤에 새 값을 덮어쓴다.
 async function saveWithGenericHistory(storageKey, value){
   await recordGenericHistoryBeforeSave(storageKey);
-  await saveFileToStorage(storageKey, value);
+  return await saveFileToStorage(storageKey, value);
+}
+// 법인카드·차량관리의 "행 추가"/"행 삽입"처럼 저장 결과를 바로 확인할 수
+// 있는 곳에서, 저장이 실패했을 때(네트워크 문제 등) 화면에는 이미 새 행이
+// 보이지만 서버에는 안 남았을 수 있다는 걸 알려준다. 별도로 다시 누를 필요
+// 없이, 다음에 아무 칸이나 고치면 그 전체 내용을 다시 저장 시도하게 되므로
+// 그 점을 안내한다.
+function notifyRowSaveFailure(reason){
+  alert(`방금 변경한 내용이 서버에 저장되지 못했습니다. 인터넷 연결을 확인해주세요.\n(연결되면 다른 칸을 한 번 고칠 때 자동으로 다시 저장을 시도합니다)${reason?`\n\n원인: ${reason}`:''}`);
 }
 
 // ---------- 표마다 다시 만들지 않고 재사용하는 엑셀식 열 필터 ----------
@@ -10729,9 +10737,9 @@ function buildCorpCardUsageDocPage(items, card){
     </table>
 
     <div style="flex:1 1 auto; min-height:0;">
-      <div style="border:1px solid #000; border-top:none; box-sizing:border-box; width:100%; height:90%; padding:8px;"></div>
+      <div style="border:1px solid #000; border-top:none; box-sizing:border-box; width:100%; height:98%; padding:8px;"></div>
     </div>
-    <div style="flex:none; text-align:center; font-size:11.5px; color:#000; margin-top:10px;">
+    <div style="flex:none; text-align:center; font-size:11.5px; color:#000; margin-top:2px;">
       ※ 영수증 첨부 및 추가 상세 내용 기입(부족 시 별지 사용)
     </div>
   </div>`;
@@ -11005,7 +11013,9 @@ async function renderCorpCardMain(){
               </td>
               <td style="padding:3px 4px;"><input type="text" list="corpCardCarNoOptions" class="corpcard-f" data-id="${row.id}" data-field="carNo" value="${escapeHtml(row.carNo)}" style="width:100%; text-align:center; ${issues.carNo?errBorder:''}">${note('carNo')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" ${noteLocked?`readonly style="width:100%; ${lockedStyle}"`:`style="width:100%; ${issues.note?errBorder:''}"`}>${note('note')}</td>
-              <td style="padding:5px 4px; text-align:center;"><button class="corpcard-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button></td>
+              <td style="padding:5px 4px; text-align:center; white-space:nowrap;">
+                <button class="corpcard-insert-btn" data-id="${row.id}" title="이 아래에 빈 행 삽입" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:12px; padding:2px 3px; vertical-align:middle;">➕</button><button class="corpcard-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px; vertical-align:middle;">×</button>
+              </td>
             </tr>
           `;}).join('')}
         </tbody>
@@ -11104,7 +11114,7 @@ async function renderCorpCardMain(){
   const fixedCorpInp = document.getElementById('corpCardFixedCorpInput');
   if(fixedCorpInp) fixedCorpInp.addEventListener('input', (e)=>{ s.fixedCorp = e.target.value; });
   const addRowBtn = document.getElementById('corpCardAddRowBtn');
-  if(addRowBtn) addRowBtn.addEventListener('click', async ()=>{
+  if(addRowBtn) addRowBtn.addEventListener('click', ()=>{
     s.rowsByCard[activeCard.id] = s.rowsByCard[activeCard.id] || {};
     s.rowsByCard[activeCard.id][s.activeMonth] = s.rowsByCard[activeCard.id][s.activeMonth] || [];
     const newRow = newCorpCardRow();
@@ -11116,8 +11126,14 @@ async function renderCorpCardMain(){
     if(s.nameMode === 'fixed' && s.fixedDept.trim()) newRow.dept = s.fixedDept.trim();
     if(s.nameMode === 'fixed' && s.fixedCorp.trim()) newRow.corp = s.fixedCorp.trim();
     s.rowsByCard[activeCard.id][s.activeMonth].push(newRow);
-    await saveCorpCardRows(activeCard.id);
+    // 저장이 끝나기를 기다리지 않고 화면에는 바로 새 행을 보여준다 —
+    // 모바일 등 느린 네트워크에서는 저장(서버 왕복)에 몇 초~수십 초가 걸릴 수
+    // 있는데, 그걸 기다렸다가 화면을 그리면 버튼이 눌러도 반응 없는 것처럼
+    // 보인다. 저장은 뒤에서 계속 진행하고, 실패하면 알려서 다시 시도하게 한다.
     renderCorpCardMain();
+    saveCorpCardRows(activeCard.id).then(result=>{
+      if(result && result.ok===false) notifyRowSaveFailure(result.reason);
+    });
   });
   const exportBtn = document.getElementById('corpCardExportBtn');
   if(exportBtn) exportBtn.addEventListener('click', async ()=>{ await exportCorpCardToExcel(activeCard.id); });
@@ -11194,6 +11210,27 @@ async function renderCorpCardMain(){
       await saveCorpCardRows(activeCard.id);
       recomputeCorpCardMismatches();
       renderCorpCardMain();
+    });
+  });
+  // 이미 입력된 행들 사이에 빈 행을 끼워 넣는 기능 — 예를 들어 월말에 특정
+  // 날짜 사용 내역을 빠뜨린 걸 알게 됐을 때, 그 아래 행들을 전부 지우고
+  // 새로 치지 않아도 되게 한다. 자주 쓰는 기능은 아니라서 "+ 행 추가"처럼
+  // 눈에 띄게 두지 않고, 각 행의 삭제 버튼 옆에 작은 아이콘으로만 둔다.
+  main.querySelectorAll('.corpcard-insert-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const arr = s.rowsByCard[activeCard.id][s.activeMonth];
+      const idx = arr.findIndex(r=>r.id===btn.dataset.id);
+      if(idx===-1) return;
+      const newRow = newCorpCardRow();
+      if(s.nameMode === 'fixed' && s.fixedName.trim()) newRow.name = s.fixedName.trim();
+      if(s.nameMode === 'fixed' && s.fixedPosition.trim()) newRow.position = s.fixedPosition.trim();
+      if(s.nameMode === 'fixed' && s.fixedDept.trim()) newRow.dept = s.fixedDept.trim();
+      if(s.nameMode === 'fixed' && s.fixedCorp.trim()) newRow.corp = s.fixedCorp.trim();
+      arr.splice(idx+1, 0, newRow);
+      renderCorpCardMain();
+      saveCorpCardRows(activeCard.id).then(result=>{
+        if(result && result.ok===false) notifyRowSaveFailure(result.reason);
+      });
     });
   });
   main.querySelectorAll('.corpcard-place-override').forEach(el=>{
@@ -11923,6 +11960,18 @@ async function patchVehicleTemplate(masterArrayBuffer, vehicles, rowsByVehicle){
   const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
   return { blob };
 }
+// 차량번호 끝 4자리로 차종을 알려주는 라벨을 붙인다(차량 선택 버튼에 표시).
+// 새 차량이 추가되면 여기에 끝 4자리만 추가해주면 된다.
+const VEHICLE_TYPE_LABEL_BY_PLATE_SUFFIX = {
+  '3517': '(흰색 화물차)',
+  '3938': '(흰색 화물차)',
+  '2507': '(흰색 투싼)',
+  '3180': '(흰색 투싼)',
+  '9308': '(흰색 아반떼)',
+};
+function vehicleTypeLabel(plate){
+  return VEHICLE_TYPE_LABEL_BY_PLATE_SUFFIX[String(plate||'').slice(-4)] || '';
+}
 async function renderVehicleMain(){
   const main = document.getElementById('main');
   // corpCard와 같은 이유로, 다시 그리기 전 .table-wrap-frozen의 세로·가로
@@ -11957,7 +12006,7 @@ async function renderVehicleMain(){
     <div style="margin-bottom:10px;">
       <input type="file" id="vehicleTemplateFile" accept=".xlsx,.xls" style="display:none;">
       <div class="vehicle-plate-grid" style="display:grid; grid-template-columns:repeat(13, minmax(0,1fr)); gap:8px;">
-        ${s.vehicles.map(v => `<button class="vehicle-tab-btn" data-id="${v.id}" style="padding:8px 6px; border-radius:7px; border:1px solid ${v.id===s.activeVehicleId?'var(--gold)':'var(--line)'}; background:${v.id===s.activeVehicleId?'rgba(224,163,57,.12)':'transparent'}; color:${v.id===s.activeVehicleId?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🚗 ${escapeHtml(v.plate)}</button>`).join('')}
+        ${s.vehicles.map(v => `<button class="vehicle-tab-btn" data-id="${v.id}" style="padding:8px 6px; border-radius:7px; border:1px solid ${v.id===s.activeVehicleId?'var(--gold)':'var(--line)'}; background:${v.id===s.activeVehicleId?'rgba(224,163,57,.12)':'transparent'}; color:${v.id===s.activeVehicleId?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🚗 ${escapeHtml(v.plate)}${vehicleTypeLabel(v.plate)?`<div style="font-size:10px; opacity:.75; white-space:nowrap; margin-top:2px;">${escapeHtml(vehicleTypeLabel(v.plate))}</div>`:''}</button>`).join('')}
       </div>
       <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
         <button id="vehicleAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12.5px;">${vehicleTemplate ? '+ 차량운행일지 다시 올리기(갱신)' : '+ 차량운행일지 올리기'}</button>
@@ -12048,7 +12097,7 @@ async function renderVehicleMain(){
               <td data-label="비고" style="padding:3px 4px;"><input type="text" class="vehicle-f" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" style="width:100%; text-align:center;"></td>
               <td data-label="삭제" style="padding:5px 4px; text-align:center; vertical-align:middle; white-space:nowrap;">
                 ${isMismatch && isAdminUser ? `<button class="vehicle-notify-btn" data-id="${row.id}" title="이 행 빈칸을 알림으로 보내기" style="background:transparent; border:none; color:var(--gold); cursor:pointer; font-size:14px; margin-right:4px;">🔔</button>` : ''}
-                <button class="vehicle-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button>
+                <button class="vehicle-insert-btn" data-id="${row.id}" title="이 아래에 빈 행 삽입" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:12px; padding:2px 3px; vertical-align:middle;">➕</button><button class="vehicle-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px; vertical-align:middle;">×</button>
               </td>
             </tr>
           `;}).join('')}
@@ -12130,7 +12179,7 @@ async function renderVehicleMain(){
     renderVehicleMain();
   });
   const addRowBtn = document.getElementById('vehicleAddRowBtn');
-  if(addRowBtn) addRowBtn.addEventListener('click', async ()=>{
+  if(addRowBtn) addRowBtn.addEventListener('click', ()=>{
     s.rowsByVehicle[activeVehicle.id] = s.rowsByVehicle[activeVehicle.id] || {};
     s.rowsByVehicle[activeVehicle.id][s.activeMonth] = s.rowsByVehicle[activeVehicle.id][s.activeMonth] || [];
     const arr = s.rowsByVehicle[activeVehicle.id][s.activeMonth];
@@ -12151,8 +12200,12 @@ async function renderVehicleMain(){
       if(prevMonthLast && prevMonthLast.kmAfter) newRow.kmBefore = prevMonthLast.kmAfter;
     }
     arr.push(newRow);
-    await saveVehicleRows(activeVehicle.id);
+    // 법인카드와 같은 이유로, 저장이 끝나길 기다리지 않고 화면에는 바로
+    // 새 행을 보여준다(모바일 등 느린 네트워크에서 반응 없어 보이는 문제 방지).
     renderVehicleMain();
+    saveVehicleRows(activeVehicle.id).then(result=>{
+      if(result && result.ok===false) notifyRowSaveFailure(result.reason);
+    });
   });
   const exportBtn = document.getElementById('vehicleExportBtn');
   if(exportBtn) exportBtn.addEventListener('click', exportVehicleToExcel);
@@ -12226,6 +12279,23 @@ async function renderVehicleMain(){
       s.rowsByVehicle[activeVehicle.id][s.activeMonth] = rows.filter(r=>r.id!==btn.dataset.id);
       await saveVehicleRows(activeVehicle.id);
       renderVehicleMain();
+    });
+  });
+  // 법인카드와 같은 이유로, 이미 입력된 행들 사이에 빈 행을 끼워 넣는 기능.
+  // 자주 쓰는 기능은 아니라서 "+ 행 추가"만큼 눈에 띄지 않게, 각 행의 삭제
+  // 버튼 옆에 작은 아이콘으로만 둔다. 앞뒤 행의 계기판(Km) 값을 이어붙이는
+  // 로직은 순서상 끝에 붙이는 경우에만 의미가 있어 여기서는 적용하지 않는다
+  // — 끼워 넣은 행의 운행전/운행후 값은 사용자가 직접 채운다.
+  main.querySelectorAll('.vehicle-insert-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const arr = s.rowsByVehicle[activeVehicle.id][s.activeMonth];
+      const idx = arr.findIndex(r=>r.id===btn.dataset.id);
+      if(idx===-1) return;
+      arr.splice(idx+1, 0, newVehicleRow());
+      renderVehicleMain();
+      saveVehicleRows(activeVehicle.id).then(result=>{
+        if(result && result.ok===false) notifyRowSaveFailure(result.reason);
+      });
     });
   });
   main.querySelectorAll('.vehicle-notify-btn').forEach(btn=>{
