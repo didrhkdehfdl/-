@@ -10968,14 +10968,14 @@ async function renderCorpCardMain(){
           <th style="padding:6px 2px; color:var(--muted); position:sticky; left:0; background:var(--panel-2); width:26px;"><input type="checkbox" id="corpCardSelectAllBox" title="이 달 전체 선택/해제"></th>
           <th style="padding:6px 4px; color:var(--muted); position:sticky; left:26px; background:var(--panel-2);">순번</th>
           <th style="padding:6px 4px; color:var(--muted); width:118px;">날짜${colFilterIconHtml(colFilterTabKey,'date')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">부서${colFilterIconHtml(colFilterTabKey,'dept')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:80px;">성명${colFilterIconHtml(colFilterTabKey,'name')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:70px;">직급${colFilterIconHtml(colFilterTabKey,'position')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:100px;">사용장소${colFilterIconHtml(colFilterTabKey,'venue')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:80px;">법인${colFilterIconHtml(colFilterTabKey,'corp')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">부서${colFilterIconHtml(colFilterTabKey,'dept')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">성명${colFilterIconHtml(colFilterTabKey,'name')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">직급${colFilterIconHtml(colFilterTabKey,'position')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">사용장소${colFilterIconHtml(colFilterTabKey,'venue')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">법인${colFilterIconHtml(colFilterTabKey,'corp')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">사업분류${colFilterIconHtml(colFilterTabKey,'bizCategory')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">프로젝트${colFilterIconHtml(colFilterTabKey,'project')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:120px;">발전소명${colFilterIconHtml(colFilterTabKey,'plantName')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">프로젝트${colFilterIconHtml(colFilterTabKey,'project')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">발전소명${colFilterIconHtml(colFilterTabKey,'plantName')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">사용처${colFilterIconHtml(colFilterTabKey,'place')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">업무내용${colFilterIconHtml(colFilterTabKey,'workDetail')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">지출내역${colFilterIconHtml(colFilterTabKey,'expenseType')}</th>
@@ -11011,11 +11011,11 @@ async function renderCorpCardMain(){
                 <input type="date" class="corpcard-f" data-id="${row.id}" data-field="date" value="${escapeHtml(row.date)}" style="width:100%; ${issues.date?errBorder:''}">
                 ${note('date')}
               </td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="width:100%; ${issues.dept?errBorder:''}">${note('dept')}</td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="name" value="${escapeHtml(row.name)}" style="width:100%; ${issues.name?errBorder:''}">${note('name')}</td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="position" value="${escapeHtml(row.position)}" style="width:100%;"></td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="venue" value="${escapeHtml(row.venue)}" style="width:100%;"></td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="corp" value="${escapeHtml(row.corp)}" style="width:100%; ${issues.corp?errBorder:''}">${note('corp')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="${issues.dept?errBorder:''}">${note('dept')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="name" value="${escapeHtml(row.name)}" style="${issues.name?errBorder:''}">${note('name')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="position" value="${escapeHtml(row.position)}"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="venue" value="${escapeHtml(row.venue)}"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="corp" value="${escapeHtml(row.corp)}" style="${issues.corp?errBorder:''}">${note('corp')}</td>
               <td style="padding:3px 4px;">
                 <select class="corpcard-f" data-id="${row.id}" data-field="bizCategory" style="width:100%; ${issues.bizCategory?errBorder:''}">
                   <option value="" ${!bizCategoryVal?'selected':''}>선택 안 함</option>
@@ -11024,8 +11024,8 @@ async function renderCorpCardMain(){
                 </select>
                 ${note('bizCategory')}
               </td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="project" value="${escapeHtml(row.project)}" ${isOfficeCategory?`readonly style="width:100%; ${lockedStyle}"`:`style="width:100%; ${issues.project?errBorder:''}"`}>${note('project')}</td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="plantName" value="${escapeHtml(row.plantName)}" ${isOfficeCategory?`readonly style="width:100%; ${lockedStyle}"`:`style="width:100%; ${issues.plantName?errBorder:''}"`}>${note('plantName')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="project" value="${escapeHtml(row.project)}" ${isOfficeCategory?`readonly style="${lockedStyle}"`:`style="${issues.project?errBorder:''}"`}>${note('project')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="plantName" value="${escapeHtml(row.plantName)}" ${isOfficeCategory?`readonly style="${lockedStyle}"`:`style="${issues.plantName?errBorder:''}"`}>${note('plantName')}</td>
               <td style="padding:3px 4px;">
                 <input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="place" value="${escapeHtml(row.place)}" style="text-align:center; ${issues.place?errBorder:''}">
                 ${mm && mm.reason==='place' ? (
