@@ -464,7 +464,12 @@
     .print-toolbar{ display:none !important; }
     .print-sheet{ gap:0; }
     .doc-page{ box-shadow:none; }
-    .doc-page.portrait{ break-after:page; page-break-after:always; zoom:0.80; page:portraitPage; }
+    .doc-page.portrait{ zoom:0.80; page:portraitPage; }
+    /* :last-child로만 걸러야 한다 — 안 그러면(모든 portrait 페이지에 강제로
+       break-after:always를 걸면) 문서의 마지막 장 뒤에도 페이지 나눔이
+       강제되어 매번 빈 페이지가 한 장 더 인쇄/출력된다(법인카드 사용내역서
+       등에서 보고된 문제). 여러 장일 때 장 사이 나눔은 그대로 유지된다. */
+    .doc-page.portrait:not(:last-child){ break-after:page; page-break-after:always; }
     .doc-page.landscape{ break-after:auto; page-break-after:auto; page:landscapePage; zoom:0.655; }
   }
   @page{ margin:12mm; }
@@ -11325,14 +11330,14 @@ async function renderCorpCardMain(){
           <th style="padding:6px 2px; color:var(--muted); position:sticky; left:0; background:var(--panel-2); width:26px;"><input type="checkbox" id="corpCardSelectAllBox" title="이 달 전체 선택/해제"></th>
           <th style="padding:6px 4px; color:var(--muted); position:sticky; left:26px; background:var(--panel-2);">순번</th>
           <th style="padding:6px 4px; color:var(--muted); width:118px;">날짜${colFilterIconHtml(colFilterTabKey,'date')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">부서${colFilterIconHtml(colFilterTabKey,'dept')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:80px;">성명${colFilterIconHtml(colFilterTabKey,'name')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:70px;">직급${colFilterIconHtml(colFilterTabKey,'position')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:100px;">사용장소${colFilterIconHtml(colFilterTabKey,'venue')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:80px;">법인${colFilterIconHtml(colFilterTabKey,'corp')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">부서${colFilterIconHtml(colFilterTabKey,'dept')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">성명${colFilterIconHtml(colFilterTabKey,'name')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">직급${colFilterIconHtml(colFilterTabKey,'position')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">사용장소${colFilterIconHtml(colFilterTabKey,'venue')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">법인${colFilterIconHtml(colFilterTabKey,'corp')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">사업분류${colFilterIconHtml(colFilterTabKey,'bizCategory')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:90px;">프로젝트${colFilterIconHtml(colFilterTabKey,'project')}</th>
-          <th style="padding:6px 4px; color:var(--muted); width:120px;">발전소명${colFilterIconHtml(colFilterTabKey,'plantName')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">프로젝트${colFilterIconHtml(colFilterTabKey,'project')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">발전소명${colFilterIconHtml(colFilterTabKey,'plantName')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">사용처${colFilterIconHtml(colFilterTabKey,'place')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">업무내용${colFilterIconHtml(colFilterTabKey,'workDetail')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">지출내역${colFilterIconHtml(colFilterTabKey,'expenseType')}</th>
@@ -11368,11 +11373,11 @@ async function renderCorpCardMain(){
                 <input type="date" class="corpcard-f" data-id="${row.id}" data-field="date" value="${escapeHtml(row.date)}" style="width:100%; ${issues.date?errBorder:''}">
                 ${note('date')}
               </td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="width:100%; ${issues.dept?errBorder:''}">${note('dept')}</td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="name" value="${escapeHtml(row.name)}" style="width:100%; ${issues.name?errBorder:''}">${note('name')}</td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="position" value="${escapeHtml(row.position)}" style="width:100%;"></td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="venue" value="${escapeHtml(row.venue)}" style="width:100%;"></td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="corp" value="${escapeHtml(row.corp)}" style="width:100%; ${issues.corp?errBorder:''}">${note('corp')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="${issues.dept?errBorder:''}">${note('dept')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="name" value="${escapeHtml(row.name)}" style="${issues.name?errBorder:''}">${note('name')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="position" value="${escapeHtml(row.position)}"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="venue" value="${escapeHtml(row.venue)}"></td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="corp" value="${escapeHtml(row.corp)}" style="${issues.corp?errBorder:''}">${note('corp')}</td>
               <td style="padding:3px 4px;">
                 <select class="corpcard-f" data-id="${row.id}" data-field="bizCategory" style="width:100%; ${issues.bizCategory?errBorder:''}">
                   <option value="" ${!bizCategoryVal?'selected':''}>선택 안 함</option>
@@ -11381,8 +11386,8 @@ async function renderCorpCardMain(){
                 </select>
                 ${note('bizCategory')}
               </td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="project" value="${escapeHtml(row.project)}" style="width:100%; ${issues.project?errBorder:''}">${note('project')}</td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="plantName" value="${escapeHtml(row.plantName)}" ${isOfficeCategory?`readonly style="width:100%; ${lockedStyle}"`:`style="width:100%; ${issues.plantName?errBorder:''}"`}>${note('plantName')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="project" value="${escapeHtml(row.project)}" ${isOfficeCategory?`readonly style="${lockedStyle}"`:`style="${issues.project?errBorder:''}"`}>${note('project')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="plantName" value="${escapeHtml(row.plantName)}" ${isOfficeCategory?`readonly style="${lockedStyle}"`:`style="${issues.plantName?errBorder:''}"`}>${note('plantName')}</td>
               <td style="padding:3px 4px;">
                 <input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="place" value="${escapeHtml(row.place)}" style="text-align:center; ${issues.place?errBorder:''}">
                 ${mm && mm.reason==='place' ? (
@@ -11595,16 +11600,19 @@ async function renderCorpCardMain(){
       } else {
         row[field] = el.value.trim();
         if(field==='date' || field==='place') recomputeCorpCardMismatches();
-        // 사업분류를 "사무실"로 고르면 발전소명을 강제로 "사무실관리"로 맞추고
-        // 잠그고, 지출내역이 바뀌면 비고 입력 가능 여부(식대·접대비만 타이핑
-        // 허용)가 바로 화면에 반영되도록 다시 그린다.
+        // 사업분류를 "사무실"로 고르면 발전소명은 "사무실관리", 프로젝트는
+        // "관리(안성)"으로 강제로 맞추고 잠근다. 지출내역이 바뀌면 비고 입력
+        // 가능 여부(식대·접대비만 타이핑 허용)가, 하이패스(select)는 방금 고른
+        // 값이 "빈칸을 채워주세요" 경고에 바로 반영되도록 다시 그린다 — 안
+        // 그리면 값은 저장돼도 화면에는 고르기 전의 빨간 경고가 그대로 남는다.
         if(field==='bizCategory'){
-          if(row.bizCategory==='사무실') row.plantName = '사무실관리';
+          if(row.bizCategory==='사무실'){ row.plantName = '사무실관리'; row.project = '관리(안성)'; }
           renderCorpCardMain();
         }
-        if(field==='expenseType') renderCorpCardMain();
+        if(field==='expenseType' || field==='hipass') renderCorpCardMain();
       }
-      await saveCorpCardRows(activeCard.id);
+      const result = await saveCorpCardRows(activeCard.id);
+      if(result && result.ok===false) notifyRowSaveFailure(result.reason);
     });
   });
   main.querySelectorAll('.corpcard-del-btn').forEach(btn=>{
@@ -12656,7 +12664,8 @@ async function renderVehicleMain(){
       } else {
         row[field] = el.value.trim();
       }
-      await saveVehicleRows(activeVehicle.id);
+      const result = await saveVehicleRows(activeVehicle.id);
+      if(result && result.ok===false) notifyRowSaveFailure(result.reason);
     });
   });
   main.querySelectorAll('.vehicle-fuel-x-check').forEach(cb=>{
