@@ -494,6 +494,9 @@
       <button class="tab-btn" data-tab="inspection" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">🔍</span> 사용전점검(검사)
       </button>
+      <button class="tab-btn" data-tab="taxInvoiceCheck" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
+        <span style="width:18px; text-align:center;">🧾</span> 세금계산서 검토
+      </button>
       <button class="tab-btn" data-tab="agentDocs" style="display:flex; align-items:center; gap:10px; padding:11px 12px; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; background:transparent; color:var(--muted); text-align:left;">
         <span style="width:18px; text-align:center;">👤</span> 영업자용
       </button>
@@ -2863,7 +2866,7 @@ function renderSidebar(){
   const newBtn = document.getElementById('newCaseBtn');
   const listToggleBtn = document.getElementById('profitListToggleBtn');
   const list = document.getElementById('caseList');
-  if(state.activeTab === 'import' || state.activeTab === 'lunch' || state.activeTab === 'worklog' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'vehicle' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
+  if(state.activeTab === 'import' || state.activeTab === 'lunch' || state.activeTab === 'worklog' || state.activeTab === 'contracts' || state.activeTab === 'inspection' || state.activeTab === 'taxInvoiceCheck' || state.activeTab === 'adminApproval' || state.activeTab === 'agentDocs' || state.activeTab === 'omTeam' || state.activeTab === 'omList' || state.activeTab === 'moduleprices' || state.activeTab === 'cardrecon' || state.activeTab === 'corpCard' || state.activeTab === 'vehicle' || state.activeTab === 'invoiceprep' || state.activeTab === 'inquiry' || state.activeTab === 'history' || state.activeTab === 'none'){
     if(newBtn) newBtn.style.display = 'none';
     if(listToggleBtn) listToggleBtn.style.display = 'none';
     list.innerHTML = state.activeTab === 'import'
@@ -2876,6 +2879,8 @@ function renderSidebar(){
         ? '<div class="empty-side">계약서 PDF를 업로드하면<br>여기에 목록이 아닌 계약서 관리 화면이 표시됩니다.</div>'
         : state.activeTab === 'inspection'
           ? '<div class="empty-side">사용전점검 확인증 파일을 업로드하면<br>여기에 목록이 아닌 검사 확인 화면이 표시됩니다.</div>'
+          : state.activeTab === 'taxInvoiceCheck'
+            ? '<div class="empty-side">세금계산서를 입력하면<br>여기가 아닌 세금계산서 검토 화면에서 사용전점검 점검년월일과 비교할 수 있습니다.</div>'
           : state.activeTab === 'agentDocs'
             ? '<div class="empty-side">계약서·사업자등록증·기타서류를<br>여기가 아닌 영업자용 화면에서 관리할 수 있습니다.</div>'
             : state.activeTab === 'omTeam'
@@ -3675,6 +3680,10 @@ function renderMain(loading){
   }
   if(state.activeTab === 'inspection'){
     renderInspectionMain();
+    return;
+  }
+  if(state.activeTab === 'taxInvoiceCheck'){
+    renderTaxInvoiceCheckMain();
     return;
   }
   if(state.activeTab === 'agentDocs'){
@@ -7110,6 +7119,7 @@ const ALL_TABS = [
   { key:'worklog', label:'일일업무일지' },
   { key:'contracts', label:'계약서' },
   { key:'inspection', label:'사용전점검' },
+  { key:'taxInvoiceCheck', label:'세금계산서 검토' },
   { key:'agentDocs', label:'영업자용' },
   { key:'moduleprices', label:'모듈 단가 관리' },
   { key:'cardrecon', label:'카드관리' },
@@ -8227,6 +8237,136 @@ function showAddressPickerOverlay(jusoList, onPick){
   const downloadLink = document.getElementById('contractPreviewDownloadBtn');
   downloadLink.style.display = 'none';
 }
+
+// ===== 세금계산서 검토 =====
+// 세금계산서를 발행일자와 함께 직접 입력해두면, 같은 고객의 사용전점검
+// 확인증에서 인식된 점검년월일과 비교해서 세금계산서가 점검일과 같은 날
+// 또는 그 이전에 발행됐는지 확인해준다(그 이후에 발행됐다면 문제로 표시).
+const TAX_INVOICE_CHECK_KEY = 'tax-invoice-check-list';
+let taxInvoiceCheckState = { items:[], loaded:false, loading:false };
+function newTaxInvoiceCheckItem(){
+  return { id: rid(), customer:'', issueDate:'' };
+}
+let taxInvoiceCheckSub = null;
+async function ensureTaxInvoiceCheckLoaded(){
+  if(taxInvoiceCheckState.loaded || taxInvoiceCheckState.loading) return;
+  taxInvoiceCheckState.loading = true;
+  if(!taxInvoiceCheckSub){
+    taxInvoiceCheckSub = subscribeListToStorage(TAX_INVOICE_CHECK_KEY, taxInvoiceCheckState, {
+      isActive: () => state.activeTab === 'taxInvoiceCheck',
+      render: renderTaxInvoiceCheckMain,
+    });
+  }
+  await taxInvoiceCheckSub.firstLoad;
+  taxInvoiceCheckState.loading = false;
+  taxInvoiceCheckState.loaded = true;
+}
+async function saveTaxInvoiceCheckList(){
+  try{ await saveWithGenericHistory(TAX_INVOICE_CHECK_KEY, JSON.stringify(taxInvoiceCheckState.items)); }catch(e){ console.error(e); }
+}
+// 고객명으로 사용전점검 확인증 항목을 찾는다 — 인식된 대표자 성명, 그리고
+// 파일명에서 뽑아낸 이름 후보 둘 다와 대조해서, 이름 필드가 아직 사람이
+// 확인 전이라 비어있어도 파일명만으로 찾을 수 있게 한다.
+function findMatchingInspectionItemsByCustomer(customerName){
+  const target = String(customerName||'').replace(/\s/g,'');
+  if(!target) return [];
+  return inspectionState.items.filter(it=>{
+    const nm = String(it.extractedName||'').replace(/\s/g,'');
+    if(nm && nm===target) return true;
+    return extractNameTokensFromFilename(it.fileName||'').some(tok => String(tok).replace(/\s/g,'')===target);
+  });
+}
+// 같은 고객명으로 점검이 여러 건 매칭될 수 있으므로(예: 발전소가 여러
+// 개), 그 중 가장 이른 점검년월일을 기준으로 삼는다 — 세금계산서는
+// 어떤 점검이든 그보다 먼저(또는 같은 날) 발행돼 있어야 하기 때문이다.
+function computeTaxInvoiceCheckMatch(item){
+  const matches = findMatchingInspectionItemsByCustomer(item.customer).filter(it=>it.extractedDate);
+  if(!matches.length) return { found:false };
+  const dates = matches.map(m=>m.extractedDate).sort();
+  const inspectionDate = dates[0];
+  const ok = !!item.issueDate && item.issueDate <= inspectionDate;
+  return { found:true, inspectionDate, ok };
+}
+async function renderTaxInvoiceCheckMain(){
+  const main = document.getElementById('main');
+  if(!taxInvoiceCheckState.loaded){
+    main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+    await ensureTaxInvoiceCheckLoaded();
+    if(state.activeTab !== 'taxInvoiceCheck') return;
+  }
+  // 대조 대상인 사용전점검 데이터도 함께 불러와 둔다(사용전점검 탭을 아직
+  // 한 번도 안 열어봤어도 비교가 가능해야 하므로).
+  await ensureInspectionLoaded();
+  if(state.activeTab !== 'taxInvoiceCheck') return;
+  const s = taxInvoiceCheckState;
+  const rows = s.items.map(it => ({ item: it, m: computeTaxInvoiceCheckMatch(it) }));
+  const problemCount = rows.filter(r => r.m.found && r.m.ok === false).length;
+
+  main.innerHTML = `
+    <h2 class="section-title">세금계산서 검토</h2>
+    <p style="font-size:13px; color:var(--muted); margin:0 0 14px;">고객명과 세금계산서 발행일자를 입력하면, 사용전점검 확인증에서 인식된 점검년월일과 자동으로 비교합니다.</p>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      <button id="taxInvoiceCheckAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 세금계산서 추가</button>
+      <span style="font-size:12px; color:var(--muted);">총 ${s.items.length}건</span>
+      ${problemCount>0 ? `<span style="font-size:12px; color:var(--neg); font-weight:600;">⚠ 점검 이후 발행 ${problemCount}건</span>` : ''}
+    </div>
+    ${s.items.length===0 ? `<div class="empty-side">아직 등록된 세금계산서가 없습니다. "+ 세금계산서 추가"로 입력해주세요.</div>` : `
+    <div class="table-wrap">
+      <table style="width:100%; border-collapse:collapse;">
+        <thead><tr>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:180px;">고객명</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:150px;">세금계산서 발행일자</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:150px;">사용전점검 점검년월일</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:140px;">확인결과</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:60px;">삭제</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(({item:it, m}) => {
+            let statusHtml;
+            if(!m.found) statusHtml = `<span style="color:var(--muted); font-size:12px;">점검 기록 없음</span>`;
+            else if(!it.issueDate) statusHtml = `<span style="color:var(--muted); font-size:12px;">발행일자 미입력</span>`;
+            else if(m.ok) statusHtml = `<span style="color:#2e9e5b; font-weight:700; font-size:12px;">✓ 정상</span>`;
+            else statusHtml = `<span style="color:var(--neg); font-weight:700; font-size:12px;">⚠ 점검 이후 발행</span>`;
+            return `
+            <tr data-id="${it.id}">
+              <td style="padding:5px 6px; text-align:center;"><input type="text" class="taxinv-f" data-field="customer" data-id="${it.id}" value="${escapeHtml(it.customer)}" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:5px 6px; text-align:center;"><input type="text" class="taxinv-f" data-field="issueDate" data-id="${it.id}" value="${escapeHtml(it.issueDate)}" placeholder="YYYY-MM-DD" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid ${(m.found && it.issueDate && m.ok===false)?'var(--neg)':'var(--line)'}; border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:5px 6px; text-align:center; font-size:12px; color:var(--text);">${m.found ? escapeHtml(m.inspectionDate) : '-'}</td>
+              <td style="padding:5px 6px; text-align:center;">${statusHtml}</td>
+              <td style="padding:5px 6px; text-align:center;"><button class="taxinv-del-btn" data-id="${it.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button></td>
+            </tr>
+          `;}).join('')}
+        </tbody>
+      </table>
+    </div>
+    `}
+  `;
+
+  const addBtn = document.getElementById('taxInvoiceCheckAddBtn');
+  if(addBtn) addBtn.addEventListener('click', async ()=>{
+    s.items.unshift(newTaxInvoiceCheckItem());
+    await saveTaxInvoiceCheckList();
+    renderTaxInvoiceCheckMain();
+  });
+  main.querySelectorAll('.taxinv-f').forEach(el=>{
+    el.addEventListener('change', async ()=>{
+      const item = s.items.find(it=>it.id===el.dataset.id);
+      if(!item) return;
+      item[el.dataset.field] = el.value.trim();
+      await saveTaxInvoiceCheckList();
+      renderTaxInvoiceCheckMain();
+    });
+  });
+  main.querySelectorAll('.taxinv-del-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 세금계산서 항목을 삭제할까요?')) return;
+      s.items = s.items.filter(it=>it.id!==btn.dataset.id);
+      await saveTaxInvoiceCheckList();
+      renderTaxInvoiceCheckMain();
+    });
+  });
+}
+
 // 문의 대응 표의 "주소확인" 버튼 핸들러 — 지금 입력칸에 있는 텍스트로 검색해서,
 // 실제 존재하는 주소인지 확인하고 도로명/지번을 구분해 보여준다.
 async function handleInquiryAddressCheck(item, regionInputEl){
@@ -8617,6 +8757,10 @@ function simpleHistoryTargets(){
     { key: INSPECTION_INDEX_KEY, icon:'🔍', label:'사용전점검(검사)', onRestore: async raw => {
         inspectionState.items = JSON.parse(raw);
         if(state.activeTab==='inspection') renderInspectionMain();
+      } },
+    { key: TAX_INVOICE_CHECK_KEY, icon:'🧾', label:'세금계산서 검토', onRestore: async raw => {
+        taxInvoiceCheckState.items = JSON.parse(raw);
+        if(state.activeTab==='taxInvoiceCheck') renderTaxInvoiceCheckMain();
       } },
     { key: AGENT_DOCS_INDEX_KEY, icon:'👤', label:'영업자용 (서류)', onRestore: async raw => {
         agentDocsStateDefault.items = JSON.parse(raw);
