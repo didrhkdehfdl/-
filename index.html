@@ -9655,11 +9655,14 @@ function buildTaxInvoiceWorkbook(items, supplier, itemName){
     // 필증일자)을 그대로 쓴다 — 표에서 직접 고친 값도 그대로 반영된다.
     const writeDateValue = writeDate || firstDateOf(row.certDate);
     const day = String(new Date(writeDateValue).getDate()||'').padStart(2,'0');
+    // 비고에는 고객명을 넣어 홈택스에 올린 뒤에도 어느 건인지 바로 알아볼 수
+    // 있게 한다. O&M 발행번호처럼 따로 참고할 값이 있으면 뒤에 같이 적는다.
+    const note = [row.customer||'', plan.note||''].filter(Boolean).join(' ');
     return [
       '01', yyyymmdd(writeDateValue),
       String(supplier.bizNumber||'').replace(/-/g,''), '', supplier.bizName||'', supplier.ownerName||'', supplier.address||'', supplier.bizType||'', supplier.bizItem||'', supplier.email||'',
       String(plan.buyer.bizNumber||'').replace(/-/g,''), '', plan.buyer.bizName||'', plan.buyer.ownerName||row.customer||'', row.address||'', plan.buyer.bizType||'', plan.buyer.bizItem||'', plan.buyer.email||'', '',
-      supplyAmt, vat, plan.note||'',
+      supplyAmt, vat, note,
       day, itemName, '', 1, supplyAmt, supplyAmt, vat, '',
       '','','','','','','','', '','','','','','','','', '','','','','','','','',
       '', '', '', '',
