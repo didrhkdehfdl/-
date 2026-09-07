@@ -8252,9 +8252,9 @@ function showAddressPickerOverlay(jusoList, onPick){
 // 확인증에서 인식된 점검년월일과 비교해서 세금계산서가 점검일과 같은 날
 // 또는 그 이전에 발행됐는지 확인해준다(그 이후에 발행됐다면 문제로 표시).
 const TAX_INVOICE_CHECK_KEY = 'tax-invoice-check-list';
-let taxInvoiceCheckState = { items:[], loaded:false, loading:false };
+let taxInvoiceCheckState = { items:[], loaded:false, loading:false, fileName:'', error:'', message:'', onlyProblems:false };
 function newTaxInvoiceCheckItem(){
-  return { id: rid(), customer:'', issueDate:'' };
+  return { id: rid(), customer:'', issueDate:'', bizName:'', ownerName:'', note:'', approvalNo:'', amount:0 };
 }
 let taxInvoiceCheckSub = null;
 async function ensureTaxInvoiceCheckLoaded(){
@@ -8273,97 +8273,130 @@ async function ensureTaxInvoiceCheckLoaded(){
 async function saveTaxInvoiceCheckList(){
   try{ await saveWithGenericHistory(TAX_INVOICE_CHECK_KEY, JSON.stringify(taxInvoiceCheckState.items)); }catch(e){ console.error(e); }
 }
-// 올려둔 세금계산서 원본 파일은 사용전점검 확인증과 똑같은 방식으로
-// 항목 id별로 따로 저장한다(목록 문서에는 파일명·크기만 남긴다).
-const taxInvoiceFileCache = {};
-async function loadTaxInvoiceFileData(id){
-  if(taxInvoiceFileCache[id]) return taxInvoiceFileCache[id];
-  const value = await loadFileFromStorage('taxinv-file:'+id, 20000);
-  if(value !== null) taxInvoiceFileCache[id] = value;
-  return value;
+// 홈택스에서 내려받은 전자세금계산서 조회 엑셀의 열 이름 → 우리가 쓰는 필드.
+// 홈택스 화면·조회 조건에 따라 열 이름이 조금씩 다르게 나오므로(예: "작성일자"
+// vs "작성일", "공급받는자 상호" vs "상호(공급받는자)") 부분일치로 찾는다.
+// 긴 이름부터 먼저 검사해야 "상호"가 "공급자 상호"를 먼저 집는 일이 없다.
+const HOMETAX_HEADER_MAP = [
+  ['작성일자', 'issueDate'],
+  ['작성일', 'issueDate'],
+  ['공급받는자상호', 'bizName'],
+  ['공급받는자성명', 'ownerName'],
+  ['공급받는자대표자', 'ownerName'],
+  ['공급받는자등록번호', 'bizNumber'],
+  ['공급받는자사업자등록번호', 'bizNumber'],
+  ['승인번호', 'approvalNo'],
+  ['합계금액', 'amount'],
+  ['비고', 'note'],
+];
+// 홈택스 엑셀의 작성일자 칸은 "2026-09-05", "2026.09.05", 엑셀 날짜값,
+// 그리고 구분자 없는 "20260905"로도 나온다. 앞의 세 가지는 공용 변환기가
+// 처리하고, 마지막 8자리 숫자만 여기서 따로 풀어준다.
+function parseHometaxDate(v){
+  const iso = excelDateToIso(v);
+  const m = String(iso||'').trim().match(/^(20\d{2})(\d{2})(\d{2})$/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return iso;
 }
-async function saveTaxInvoiceFileData(id, base64){
-  taxInvoiceFileCache[id] = base64;
-  const result = await saveFileToStorage('taxinv-file:'+id, base64, 20000);
-  if(!result.ok){ delete taxInvoiceFileCache[id]; return result; }
-  return result;
-}
-async function deleteTaxInvoiceFileData(id){
-  delete taxInvoiceFileCache[id];
-  await deleteFromStorage('taxinv-file:'+id);
-}
-// 파일명에서 발행일자를 뽑아낸다 — 실제로 쓰이는 표기를 폭넓게 받는다:
-// "2026-09-05", "2026.09.05", "2026_09_05", "20260905", "260905",
-// "2026년 9월 5일". 전화번호·사업자번호처럼 긴 숫자열 한가운데를 날짜로
-// 잘못 읽지 않도록 숫자 경계를 함께 확인한다.
-function parseTaxInvoiceDateFromFileName(fileName){
-  const base = String(fileName||'').replace(/\.[^.]+$/, '');
-  const pad = (y,mo,d)=>`${y}-${String(Number(mo)).padStart(2,'0')}-${String(Number(d)).padStart(2,'0')}`;
-  const plausible = (y,mo,d)=>{
-    const yy=Number(y), mm=Number(mo), dd=Number(d);
-    return yy>=2000 && yy<=2100 && mm>=1 && mm<=12 && dd>=1 && dd<=31;
-  };
-  const patterns = [
-    /(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/,
-    /(?<!\d)(20\d{2})[-._\/](\d{1,2})[-._\/](\d{1,2})(?!\d)/,
-    /(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)/,
-  ];
-  for(const re of patterns){
-    const m = base.match(re);
-    if(m && plausible(m[1], m[2], m[3])) return pad(m[1], m[2], m[3]);
+// 홈택스 엑셀 한 행에서 고객명을 정한다. 상호·성명·비고 중에서 사용전점검에
+// 실제로 있는 이름을 우선 고르고(그래야 점검 기록과 바로 이어진다), 하나도
+// 안 맞으면 값이 있는 것 중 첫 번째를 그대로 쓴다. 우리가 만든 홈택스
+// 업로드 파일은 비고에 고객명을 넣으므로, 그걸 그대로 내려받은 파일도 여기서
+// 자연스럽게 매칭된다.
+function pickHometaxCustomer(row){
+  const candidates = [row.bizName, row.ownerName, row.note]
+    .map(v => String(v||'').trim()).filter(Boolean);
+  const known = candidates.find(c => findMatchingInspectionItemsByCustomer(c).length > 0);
+  if(known) return known;
+  // 비고에 "홍길동 OM-123"처럼 뒤에 다른 값이 붙어 있을 수 있어, 낱말 단위로도 한 번 더 찾아본다.
+  for(const c of candidates){
+    const word = c.split(/[\s,/·]+/).find(w => findMatchingInspectionItemsByCustomer(w).length > 0);
+    if(word) return word;
   }
-  // 2자리 연도(예: 260905) — 위 형식들이 다 안 맞을 때만 시도한다.
-  const m2 = base.match(/(?<!\d)(\d{2})(\d{2})(\d{2})(?!\d)/);
-  if(m2 && plausible('20'+m2[1], m2[2], m2[3])) return pad('20'+m2[1], m2[2], m2[3]);
-  return '';
+  return candidates[0] || '';
 }
-const TAX_INVOICE_FILENAME_STOPWORDS = ['세금계산서','전자세금계산서','계산서','현금영수증','영수증','발행','발행분','청구','매출','매입','사본','복사본','수정본','최종본','스캔본','첨부','파일','합계','명세서'];
-// 파일명에서 고객명을 뽑아낸다. 한글 2~5글자 덩어리 중 서류 관련 단어를
-// 걸러낸 뒤, 그 중 사용전점검에 실제로 있는 이름이 있으면 그걸 우선
-// 고른다 — 파일명에 회사명·품목 같은 다른 한글이 섞여 있어도 고객명을
-// 정확히 집어낼 수 있다.
-function parseTaxInvoiceCustomerFromFileName(fileName){
-  const base = String(fileName||'').replace(/\.[^.]+$/, '');
-  const tokens = (base.match(/[가-힣]{2,5}/g) || [])
-    .filter(w => !TAX_INVOICE_FILENAME_STOPWORDS.includes(w) && !INSPECTION_FILENAME_STOPWORDS.includes(w));
-  const known = tokens.find(t => findMatchingInspectionItemsByCustomer(t).length > 0);
-  return known || tokens[0] || '';
+// 홈택스 엑셀(전자세금계산서 조회 결과)을 읽어 발행 내역 행들을 뽑아낸다.
+function parseHometaxInvoiceSheet(grid){
+  // 헤더 행 찾기: 아는 열 이름이 가장 많이 걸리는 행(홈택스 파일은 위쪽에
+  // 조회조건·제목 줄이 몇 줄 붙어 나온다).
+  let headerRowIdx = -1, bestScore = 0;
+  for(let i=0; i<Math.min(grid.length, 20); i++){
+    const row = grid[i] || [];
+    let score = 0;
+    for(const cell of row){
+      const norm = normalizeHeader(cell);
+      if(norm && HOMETAX_HEADER_MAP.some(([key]) => norm.includes(key))) score++;
+    }
+    if(score > bestScore){ bestScore = score; headerRowIdx = i; }
+  }
+  if(headerRowIdx === -1 || bestScore < 2) return { error:'홈택스 세금계산서 엑셀의 열 제목(작성일자·공급받는자 상호 등)을 찾지 못했습니다. 홈택스에서 내려받은 파일이 맞는지 확인해주세요.', rows:[] };
+
+  const colMap = {};
+  (grid[headerRowIdx]||[]).forEach((cell, colIdx)=>{
+    const norm = normalizeHeader(cell);
+    if(!norm) return;
+    for(const [key, field] of HOMETAX_HEADER_MAP){
+      if(norm.includes(key) && colMap[field] === undefined){ colMap[field] = colIdx; break; }
+    }
+  });
+  if(colMap.issueDate === undefined) return { error:'작성일자 열을 찾지 못했습니다. 홈택스에서 내려받은 파일이 맞는지 확인해주세요.', rows:[] };
+
+  const rows = [];
+  for(let i=headerRowIdx+1; i<grid.length; i++){
+    const g = grid[i] || [];
+    const raw = {};
+    Object.keys(colMap).forEach(field => { raw[field] = g[colMap[field]]; });
+    const issueDate = parseHometaxDate(raw.issueDate);
+    const bizName = String(raw.bizName||'').trim();
+    const ownerName = String(raw.ownerName||'').trim();
+    const note = String(raw.note||'').trim();
+    // 합계 줄이나 빈 줄은 건너뛴다 — 날짜도 이름도 없으면 데이터 행이 아니다.
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(issueDate) && !bizName && !ownerName) continue;
+    rows.push({
+      issueDate, bizName, ownerName, note,
+      approvalNo: String(raw.approvalNo||'').trim(),
+      amount: parseExcelNumber(raw.amount),
+      customer: pickHometaxCustomer({ bizName, ownerName, note }),
+    });
+  }
+  return { error:'', rows };
 }
-async function handleTaxInvoiceUpload(e){
-  const files = [...(e.target.files||[])];
+async function handleTaxInvoiceExcelUpload(e){
+  const file = (e.target.files||[])[0];
   e.target.value = '';
-  if(files.length===0) return;
-  const MAX_BYTES = 3.5*1024*1024; // base64로 부풀어도 5MB 저장 한도를 넘지 않도록(사용전점검과 동일)
-  const skipped = [];
-  for(const file of files){
-    if(file.size > MAX_BYTES){ skipped.push(`${file.name} (5MB 저장 한도 초과)`); continue; }
-    if(file.type !== 'application/pdf' && !file.type.startsWith('image/')){
-      skipped.push(`${file.name} (PDF 또는 이미지 파일만 지원)`);
-      continue;
+  if(!file) return;
+  const s = taxInvoiceCheckState;
+  s.error = ''; s.message = '';
+  try{
+    await loadXlsxLib();
+    // 사용전점검 데이터가 있어야 고객명을 점검 기록과 맞춰 고를 수 있다.
+    await ensureInspectionLoaded();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:'array', cellDates:true });
+    // 시트가 여러 개면 발행 내역이 들어있는(=열 제목이 걸리는) 첫 시트를 쓴다.
+    let parsed = { error:'', rows:[] };
+    for(const name of wb.SheetNames){
+      const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header:1, defval:'', raw:false, dateNF:'yyyy-mm-dd' });
+      const attempt = parseHometaxInvoiceSheet(grid);
+      if(!attempt.error){ parsed = attempt; break; }
+      parsed = attempt; // 다 실패하면 마지막 오류 메시지를 보여준다
     }
-    try{
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      const id = rid();
-      const saveResult = await saveTaxInvoiceFileData(id, base64);
-      if(!saveResult.ok){ skipped.push(`${file.name} (저장 실패: ${saveResult.reason})`); continue; }
-      taxInvoiceCheckState.items.unshift({
-        id, fileName: file.name, size: file.size, mime: file.type,
-        customer: parseTaxInvoiceCustomerFromFileName(file.name),
-        issueDate: parseTaxInvoiceDateFromFileName(file.name),
-      });
-    }catch(err){
-      console.error(err);
-      skipped.push(file.name);
-    }
+    if(parsed.error){ s.error = parsed.error; renderTaxInvoiceCheckMain(); return; }
+    if(!parsed.rows.length){ s.error = '이 파일에서 세금계산서 발행 내역을 찾지 못했습니다.'; renderTaxInvoiceCheckMain(); return; }
+    // 같은 파일을 실수로 다시 올려도 목록이 두 배가 되지 않도록, 승인번호(없으면
+    // 고객명+작성일자)가 이미 있는 건은 건너뛴다.
+    const keyOf = r => r.approvalNo || `${r.customer}|${r.issueDate}`;
+    const existing = new Set(s.items.map(keyOf));
+    const fresh = parsed.rows.filter(r => !existing.has(keyOf(r)));
+    fresh.forEach(r => s.items.unshift({ id: rid(), ...r }));
+    s.fileName = file.name;
+    s.message = `${parsed.rows.length}건 읽음 · ${fresh.length}건 새로 추가(중복 ${parsed.rows.length - fresh.length}건 제외)`;
+    await saveTaxInvoiceCheckList();
+  }catch(err){
+    console.error(err);
+    s.error = '파일을 읽지 못했습니다. 인터넷 연결을 확인하거나 홈택스에서 내려받은 엑셀이 맞는지 확인해주세요.';
   }
-  await saveTaxInvoiceCheckList();
   renderTaxInvoiceCheckMain();
-  if(skipped.length) alert(`다음 파일은 저장하지 못했습니다:\n${skipped.join('\n')}`);
 }
 // 고객명으로 사용전점검 확인증 항목을 찾는다 — 인식된 대표자 성명, 그리고
 // 파일명에서 뽑아낸 이름 후보 둘 다와 대조해서, 이름 필드가 아직 사람이
@@ -8408,28 +8441,35 @@ async function renderTaxInvoiceCheckMain(){
   await ensureInspectionLoaded();
   if(state.activeTab !== 'taxInvoiceCheck') return;
   const s = taxInvoiceCheckState;
-  const rows = s.items.map(it => ({ item: it, m: computeTaxInvoiceCheckMatch(it) }));
-  const problemCount = rows.filter(r => r.m.found && r.m.ok === false).length;
+  const allRows = s.items.map(it => ({ item: it, m: computeTaxInvoiceCheckMatch(it) }));
+  const problemCount = allRows.filter(r => r.m.found && r.m.ok === false).length;
+  const noMatchCount = allRows.filter(r => r.item.customer && !r.m.found).length;
+  const rows = s.onlyProblems ? allRows.filter(r => r.m.found && r.m.ok === false) : allRows;
 
   main.innerHTML = `
     <h2 class="section-title">세금계산서 검토</h2>
-    <p style="font-size:13px; color:var(--muted); margin:0 0 14px;">세금계산서 파일을 올리면 파일명에서 고객명과 발행일자를 자동으로 채우고, 사용전점검 확인증의 점검년월일과 비교해 그 날짜 이전(또는 같은 날)에 발행됐는지 확인합니다. 자동으로 채운 값은 직접 고칠 수 있습니다.</p>
+    <p style="font-size:13px; color:var(--muted); margin:0 0 14px;">홈택스에서 내려받은 전자세금계산서 조회 엑셀을 올리면, 각 건의 작성일자를 같은 고객의 사용전점검 확인증 점검년월일과 자동으로 비교합니다. 점검일보다 <b>늦게</b> 발행된 건을 찾아 표시합니다. 자동으로 읽은 값은 표에서 직접 고칠 수 있습니다.</p>
     <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px;">
-      <input type="file" id="taxInvoiceUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
+      <input type="file" id="taxInvoiceExcelInput" accept=".xlsx,.xls,.csv" style="font-size:13px; color:var(--muted);">
       <button id="taxInvoiceCheckAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 직접 입력</button>
-      <span style="font-size:12px; color:var(--muted);">총 ${s.items.length}건</span>
-      ${problemCount>0 ? `<span style="font-size:12px; color:var(--neg); font-weight:600;">⚠ 점검 이후 발행 ${problemCount}건</span>` : ''}
+      ${s.items.length ? `<button id="taxInvoiceClearBtn" style="padding:8px 14px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">목록 비우기</button>` : ''}
+      <span style="font-size:12px; color:var(--muted);">총 ${s.items.length}건${s.fileName ? ` · ${escapeHtml(s.fileName)}` : ''}</span>
+      ${problemCount>0 ? `<button id="taxInvoiceOnlyProblemsBtn" style="font-size:12px; padding:7px 12px; border-radius:7px; border:1px solid var(--neg); background:${s.onlyProblems?'rgba(178,59,46,.22)':'transparent'}; color:var(--neg); font-weight:700; cursor:pointer;">⚠ 점검 이후 발행 ${problemCount}건${s.onlyProblems?' (보는 중)':''}</button>` : ''}
+      ${noMatchCount>0 ? `<span style="font-size:12px; color:var(--muted);">점검 기록 없음 ${noMatchCount}건</span>` : ''}
     </div>
-    ${s.items.length===0 ? `<div class="empty-side">아직 등록된 세금계산서가 없습니다. 위에서 파일을 선택하거나 "+ 직접 입력"으로 추가해주세요.</div>` : `
+    ${s.error ? `<div style="padding:10px 12px; border-radius:6px; background:rgba(255,80,80,0.12); border:1px solid rgba(255,80,80,0.4); color:#ff9d9d; font-size:12.5px; margin-bottom:12px; white-space:pre-line;">${escapeHtml(s.error)}</div>` : ''}
+    ${s.message ? `<div style="padding:10px 12px; border-radius:6px; background:rgba(120,200,140,0.1); border:1px solid rgba(120,200,140,0.35); color:#8fd6a4; font-size:12.5px; margin-bottom:12px;">${escapeHtml(s.message)}</div>` : ''}
+    ${s.items.length===0 ? `<div class="empty-side">아직 등록된 세금계산서가 없습니다.<br>홈택스 &gt; 전자세금계산서 조회에서 내려받은 엑셀을 위에서 선택해주세요.</div>` : `
     <div class="table-wrap">
       <table style="width:100%; border-collapse:collapse;">
         <thead><tr>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:150px;">고객명</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:140px;">세금계산서 발행일자</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:140px;">사용전점검 점검년월일</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:140px;">확인결과</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:130px;">작업</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">공급받는자 (상호 / 성명)</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:130px;">작성일자</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:130px;">사용전점검 점검년월일</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:150px;">확인결과</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:right; width:110px;">합계금액</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:60px;">삭제</th>
         </tr></thead>
         <tbody>
           ${rows.map(({item:it, m}) => {
@@ -8439,23 +8479,20 @@ async function renderTaxInvoiceCheckMain(){
             // 알려준다.
             if(!it.customer) statusHtml = `<span style="color:var(--muted); font-size:12px;">고객명 입력</span>`;
             else if(!m.found) statusHtml = `<span style="color:var(--muted); font-size:12px;">점검 기록 없음</span>`;
-            else if(!it.issueDate) statusHtml = `<span style="color:var(--muted); font-size:12px;">발행일자 미입력</span>`;
+            else if(!it.issueDate) statusHtml = `<span style="color:var(--muted); font-size:12px;">작성일자 미입력</span>`;
             else if(m.ok) statusHtml = `<span style="padding:4px 10px; border-radius:12px; background:rgba(47,125,92,.18); color:var(--pos); font-size:12px; font-weight:700;">✓ 정상</span>`;
             else statusHtml = `<span style="padding:4px 10px; border-radius:12px; background:rgba(178,59,46,.18); color:var(--neg); font-size:12px; font-weight:700;">⚠ 점검 이후 발행</span>`;
-            const fileCell = it.fileName
-              ? `${escapeHtml(it.fileName)}<div style="font-size:10.5px; color:var(--muted);">${fmtFileSize(it.size||0)}</div>`
-              : `<span style="color:var(--muted); font-size:12px;">직접 입력</span>`;
+            const isProblem = m.found && it.issueDate && m.ok===false;
+            const supplied = [it.bizName, it.ownerName].filter(Boolean).join(' / ');
             return `
-            <tr data-id="${it.id}">
-              <td style="padding:7px 6px; font-size:12.5px;">${fileCell}</td>
+            <tr data-id="${it.id}" ${isProblem ? 'style="background:rgba(178,59,46,.10);"' : ''}>
               <td style="padding:5px 6px; text-align:center;"><input type="text" class="taxinv-f" data-field="customer" data-id="${it.id}" value="${escapeHtml(it.customer||'')}" placeholder="인식 실패" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
-              <td style="padding:5px 6px; text-align:center;"><input type="text" class="taxinv-f" data-field="issueDate" data-id="${it.id}" value="${escapeHtml(it.issueDate||'')}" placeholder="YYYY-MM-DD" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid ${(m.found && it.issueDate && m.ok===false)?'var(--neg)':'var(--line)'}; border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:7px 6px; font-size:12px; color:var(--muted);">${escapeHtml(supplied || '-')}${it.note ? `<div style="font-size:10.5px;">비고: ${escapeHtml(it.note)}</div>` : ''}</td>
+              <td style="padding:5px 6px; text-align:center;"><input type="text" class="taxinv-f" data-field="issueDate" data-id="${it.id}" value="${escapeHtml(it.issueDate||'')}" placeholder="YYYY-MM-DD" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid ${isProblem?'var(--neg)':'var(--line)'}; border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
               <td style="padding:5px 6px; text-align:center; font-size:12px; color:var(--text);">${m.found ? escapeHtml(m.inspectionDate) : '-'}</td>
               <td style="padding:5px 6px; text-align:center;">${statusHtml}</td>
-              <td style="padding:5px 6px; text-align:center; white-space:nowrap;">
-                ${it.fileName ? `<button class="taxinv-view-btn" data-id="${it.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">보기</button>` : ''}
-                <button class="taxinv-del-btn" data-id="${it.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button>
-              </td>
+              <td style="padding:5px 6px; text-align:right; font-size:12px; color:var(--muted);">${it.amount ? fmtNum(Number(it.amount)) : '-'}</td>
+              <td style="padding:5px 6px; text-align:center;"><button class="taxinv-del-btn" data-id="${it.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button></td>
             </tr>
           `;}).join('')}
         </tbody>
@@ -8464,12 +8501,25 @@ async function renderTaxInvoiceCheckMain(){
     `}
   `;
 
-  const uploadInput = document.getElementById('taxInvoiceUploadInput');
-  if(uploadInput) uploadInput.addEventListener('change', handleTaxInvoiceUpload);
+  const excelInput = document.getElementById('taxInvoiceExcelInput');
+  if(excelInput) excelInput.addEventListener('change', handleTaxInvoiceExcelUpload);
   const addBtn = document.getElementById('taxInvoiceCheckAddBtn');
   if(addBtn) addBtn.addEventListener('click', async ()=>{
     s.items.unshift(newTaxInvoiceCheckItem());
     await saveTaxInvoiceCheckList();
+    renderTaxInvoiceCheckMain();
+  });
+  const clearBtn = document.getElementById('taxInvoiceClearBtn');
+  if(clearBtn) clearBtn.addEventListener('click', async ()=>{
+    if(!confirm(`목록에 있는 ${s.items.length}건을 모두 지울까요? 되돌릴 수 없습니다.`)) return;
+    s.items = [];
+    s.fileName = ''; s.message = ''; s.error = ''; s.onlyProblems = false;
+    await saveTaxInvoiceCheckList();
+    renderTaxInvoiceCheckMain();
+  });
+  const onlyProblemsBtn = document.getElementById('taxInvoiceOnlyProblemsBtn');
+  if(onlyProblemsBtn) onlyProblemsBtn.addEventListener('click', ()=>{
+    s.onlyProblems = !s.onlyProblems;
     renderTaxInvoiceCheckMain();
   });
   main.querySelectorAll('.taxinv-f').forEach(el=>{
@@ -8481,30 +8531,11 @@ async function renderTaxInvoiceCheckMain(){
       renderTaxInvoiceCheckMain();
     });
   });
-  main.querySelectorAll('.taxinv-view-btn').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      const item = s.items.find(it=>it.id===btn.dataset.id);
-      if(!item) return;
-      const original = btn.textContent;
-      btn.textContent = '여는 중…';
-      const base64 = await loadTaxInvoiceFileData(item.id);
-      btn.textContent = original;
-      if(!base64){ alert('파일을 불러오지 못했습니다.' + (lastStorageLoadError ? `\n\n(원인: ${lastStorageLoadError})` : '')); return; }
-      const blob = new Blob([base64ToBytes(base64)], { type:item.mime });
-      if(item.mime === 'application/pdf'){
-        showPdfPreviewOverlay([base64ToBytes(base64)], { label: item.fileName, downloadName: item.fileName, downloadBlob: blob });
-      } else {
-        showImagePreviewOverlay(`data:${item.mime};base64,${base64}`, { label: item.fileName, downloadName: item.fileName, downloadBlob: blob });
-      }
-    });
-  });
   main.querySelectorAll('.taxinv-del-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!confirm('이 세금계산서 항목을 삭제할까요?')) return;
-      const id = btn.dataset.id;
-      s.items = s.items.filter(it=>it.id!==id);
+      s.items = s.items.filter(it=>it.id!==btn.dataset.id);
       await saveTaxInvoiceCheckList();
-      await deleteTaxInvoiceFileData(id);
       renderTaxInvoiceCheckMain();
     });
   });
