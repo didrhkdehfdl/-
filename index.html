@@ -455,7 +455,12 @@
     .print-toolbar{ display:none !important; }
     .print-sheet{ gap:0; }
     .doc-page{ box-shadow:none; }
-    .doc-page.portrait{ break-after:page; page-break-after:always; zoom:0.80; page:portraitPage; }
+    .doc-page.portrait{ zoom:0.80; page:portraitPage; }
+    /* :last-child로만 걸러야 한다 — 안 그러면(모든 portrait 페이지에 강제로
+       break-after:always를 걸면) 문서의 마지막 장 뒤에도 페이지 나눔이
+       강제되어 매번 빈 페이지가 한 장 더 인쇄/출력된다(법인카드 사용내역서
+       등에서 보고된 문제). 여러 장일 때 장 사이 나눔은 그대로 유지된다. */
+    .doc-page.portrait:not(:last-child){ break-after:page; page-break-after:always; }
     .doc-page.landscape{ break-after:auto; page-break-after:auto; page:landscapePage; zoom:0.655; }
   }
   @page{ margin:12mm; }
@@ -11019,7 +11024,7 @@ async function renderCorpCardMain(){
                 </select>
                 ${note('bizCategory')}
               </td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="project" value="${escapeHtml(row.project)}" style="width:100%; ${issues.project?errBorder:''}">${note('project')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="project" value="${escapeHtml(row.project)}" ${isOfficeCategory?`readonly style="width:100%; ${lockedStyle}"`:`style="width:100%; ${issues.project?errBorder:''}"`}>${note('project')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f" data-id="${row.id}" data-field="plantName" value="${escapeHtml(row.plantName)}" ${isOfficeCategory?`readonly style="width:100%; ${lockedStyle}"`:`style="width:100%; ${issues.plantName?errBorder:''}"`}>${note('plantName')}</td>
               <td style="padding:3px 4px;">
                 <input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="place" value="${escapeHtml(row.place)}" style="text-align:center; ${issues.place?errBorder:''}">
@@ -11229,16 +11234,19 @@ async function renderCorpCardMain(){
       } else {
         row[field] = el.value.trim();
         if(field==='date' || field==='place') recomputeCorpCardMismatches();
-        // 사업분류를 "사무실"로 고르면 발전소명을 강제로 "사무실관리"로 맞추고
-        // 잠그고, 지출내역이 바뀌면 비고 입력 가능 여부(식대·접대비만 타이핑
-        // 허용)가 바로 화면에 반영되도록 다시 그린다.
+        // 사업분류를 "사무실"로 고르면 발전소명은 "사무실관리", 프로젝트는
+        // "관리(안성)"으로 강제로 맞추고 잠근다. 지출내역이 바뀌면 비고 입력
+        // 가능 여부(식대·접대비만 타이핑 허용)가, 하이패스(select)는 방금 고른
+        // 값이 "빈칸을 채워주세요" 경고에 바로 반영되도록 다시 그린다 — 안
+        // 그리면 값은 저장돼도 화면에는 고르기 전의 빨간 경고가 그대로 남는다.
         if(field==='bizCategory'){
-          if(row.bizCategory==='사무실') row.plantName = '사무실관리';
+          if(row.bizCategory==='사무실'){ row.plantName = '사무실관리'; row.project = '관리(안성)'; }
           renderCorpCardMain();
         }
-        if(field==='expenseType') renderCorpCardMain();
+        if(field==='expenseType' || field==='hipass') renderCorpCardMain();
       }
-      await saveCorpCardRows(activeCard.id);
+      const result = await saveCorpCardRows(activeCard.id);
+      if(result && result.ok===false) notifyRowSaveFailure(result.reason);
     });
   });
   main.querySelectorAll('.corpcard-del-btn').forEach(btn=>{
@@ -12290,7 +12298,8 @@ async function renderVehicleMain(){
       } else {
         row[field] = el.value.trim();
       }
-      await saveVehicleRows(activeVehicle.id);
+      const result = await saveVehicleRows(activeVehicle.id);
+      if(result && result.ok===false) notifyRowSaveFailure(result.reason);
     });
   });
   main.querySelectorAll('.vehicle-fuel-x-check').forEach(cb=>{
