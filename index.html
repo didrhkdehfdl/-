@@ -179,6 +179,15 @@
   .col-resize-handle{ position:absolute; top:0; right:-3px; width:7px; height:100%; cursor:col-resize; z-index:6; }
   .col-resize-handle:hover{ background:rgba(212,175,85,.35); }
   .col-resize-handle.resizing{ background:rgba(212,175,85,.6); }
+  /* 엑셀처럼 표의 칸을 끌어서 범위 선택했을 때의 표시 */
+  td.cell-selected{ background:rgba(212,175,85,.20) !important; box-shadow:inset 0 0 0 1px rgba(212,175,85,.45); }
+  #cellSelectionBar{
+    position:fixed; right:18px; bottom:18px; z-index:9000; display:none; gap:14px; align-items:center;
+    padding:9px 15px; border-radius:9px; border:1px solid var(--gold-dim);
+    background:var(--panel); color:var(--text); font-size:12.5px; box-shadow:0 6px 22px rgba(0,0,0,.35);
+    pointer-events:none; white-space:nowrap;
+  }
+  #cellSelectionBar b{ color:var(--gold); font-family:'Roboto Mono', monospace; }
   td{ padding:4px 3px; border-bottom:1px solid var(--line); vertical-align:top; overflow:hidden; }
   tr:last-child td{ border-bottom:none; }
   td input, td textarea{
@@ -14771,6 +14780,101 @@ function scanForResizableTables(){
     if(!t.dataset.resizeInit) initResizableTable(t);
   });
 }
+
+// ===== 엑셀처럼 표의 칸을 끌어서(드래그) 범위 선택하면 개수를 보여준다 =====
+// 표 안 대부분의 칸에는 입력칸(input/textarea)이 들어있어서, 그 위에서 시작한
+// 드래그는 원래대로 "글자 선택"이어야 한다(값을 고치려는 동작이니까). 그래서
+// 입력칸·버튼이 아닌 부분(예: 파일명처럼 글자만 있는 칸, 칸의 여백)에서 끌기
+// 시작했을 때만 범위 선택으로 동작한다. 시작한 칸과 지금 칸을 양 끝으로 하는
+// 직사각형을 선택 범위로 잡는 것도 엑셀과 같다.
+let cellSelectionAnchor = null;   // { row, col, table }
+let cellSelectionDragging = false;
+function cellSelectionBarEl(){
+  let bar = document.getElementById('cellSelectionBar');
+  if(!bar){
+    bar = document.createElement('div');
+    bar.id = 'cellSelectionBar';
+    document.body.appendChild(bar);
+  }
+  return bar;
+}
+function clearCellSelection(){
+  document.querySelectorAll('td.cell-selected').forEach(td => td.classList.remove('cell-selected'));
+  const bar = document.getElementById('cellSelectionBar');
+  if(bar) bar.style.display = 'none';
+}
+// 칸에 실제로 들어있는 값 — 입력칸이 있으면 그 값을, 없으면 글자를 읽는다.
+function cellSelectionValueOf(td){
+  const field = td.querySelector('input:not([type="checkbox"]):not([type="color"]), select, textarea');
+  if(field) return String(field.value||'').trim();
+  return String(td.textContent||'').trim();
+}
+function updateCellSelectionBar(cells){
+  const bar = cellSelectionBarEl();
+  if(cells.length < 2){ bar.style.display = 'none'; return; }
+  const nums = [];
+  cells.forEach(td => {
+    const v = cellSelectionValueOf(td);
+    if(!v) return;
+    // "3,500,000원", "3,500,000" 처럼 쉼표·단위가 붙은 금액도 숫자로 읽는다.
+    const cleaned = v.replace(/[,\s원%]/g, '');
+    if(/^-?\d+(\.\d+)?$/.test(cleaned)) nums.push(Number(cleaned));
+  });
+  const filled = cells.filter(td => cellSelectionValueOf(td)).length;
+  let html = `<span>선택 <b>${cells.length}</b>칸</span><span>값 있음 <b>${filled}</b></span>`;
+  if(nums.length){
+    const sum = nums.reduce((a,b)=>a+b, 0);
+    const avg = sum / nums.length;
+    html += `<span>숫자 <b>${nums.length}</b></span><span>합계 <b>${fmtNum(Math.round(sum))}</b></span><span>평균 <b>${fmtNum(Math.round(avg))}</b></span>`;
+  }
+  bar.innerHTML = html;
+  bar.style.display = 'flex';
+}
+function applyCellSelection(table, r1, c1, r2, c2){
+  const rowMin = Math.min(r1,r2), rowMax = Math.max(r1,r2);
+  const colMin = Math.min(c1,c2), colMax = Math.max(c1,c2);
+  document.querySelectorAll('td.cell-selected').forEach(td => td.classList.remove('cell-selected'));
+  const selected = [];
+  table.querySelectorAll('tbody tr').forEach((tr, ri) => {
+    if(ri < rowMin || ri > rowMax) return;
+    [...tr.cells].forEach((td, ci) => {
+      if(ci < colMin || ci > colMax) return;
+      td.classList.add('cell-selected');
+      selected.push(td);
+    });
+  });
+  updateCellSelectionBar(selected);
+}
+function cellSelectionPosOf(td){
+  const tr = td.parentElement;
+  const table = tr.closest('table');
+  const tbody = tr.parentElement;
+  if(!table || !tbody || tbody.tagName !== 'TBODY') return null;
+  return { table, row: [...tbody.rows].indexOf(tr), col: td.cellIndex };
+}
+document.addEventListener('mousedown', (e)=>{
+  const td = e.target.closest && e.target.closest('#main .table-wrap table tbody td');
+  if(!td){ clearCellSelection(); return; }
+  // 입력칸·버튼 위에서 시작한 드래그는 원래 동작(글자 선택/클릭)에 맡긴다.
+  if(e.target.closest('input, select, textarea, button, a, label, .col-resize-handle')){ clearCellSelection(); return; }
+  const pos = cellSelectionPosOf(td);
+  if(!pos) return;
+  // 끌어서 선택하는 동안 브라우저가 글자까지 같이 잡아끌지 않게 한다.
+  e.preventDefault();
+  cellSelectionAnchor = pos;
+  cellSelectionDragging = true;
+  applyCellSelection(pos.table, pos.row, pos.col, pos.row, pos.col);
+});
+document.addEventListener('mouseover', (e)=>{
+  if(!cellSelectionDragging || !cellSelectionAnchor) return;
+  const td = e.target.closest && e.target.closest('#main .table-wrap table tbody td');
+  if(!td) return;
+  const pos = cellSelectionPosOf(td);
+  if(!pos || pos.table !== cellSelectionAnchor.table) return;
+  applyCellSelection(pos.table, cellSelectionAnchor.row, cellSelectionAnchor.col, pos.row, pos.col);
+});
+document.addEventListener('mouseup', ()=>{ cellSelectionDragging = false; });
+document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') clearCellSelection(); });
 // 표 안의 textarea는 내용이 길어져도 안에서 스크롤되지 않고, 셀 자체(행 높이)가
 // 늘어나도록 내용에 맞춰 높이를 자동으로 키운다.
 function autoResizeTextarea(el){
