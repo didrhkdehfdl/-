@@ -10172,7 +10172,10 @@ const CORP_CARD_COLUMNS = [
 // 원본 시트의 실제 열 순서(B~Q, 공급가액·부가세 열은 금액에서 자동 계산되는 수식이라
 // 앱에서 직접 쓰지 않고 원본 수식을 그대로 둔다).
 const CORP_CARD_COL_LETTERS = ['B','C','D','E','F','G','H','I','J','K','N','O','P','Q'];
-let corpCardState = { cards:[], activeCardId:'', activeMonth:'', rowsByCard:{}, loaded:false, loading:false, nameMode:'variable', fixedName:'', fixedPosition:'', fixedDept:'', fixedCorp:'', approvalEntries:[], mismatchByCard:{} };
+// 성명/직급/부서/법인 고정값(nameMode/fixedName/fixedPosition/fixedDept/
+// fixedCorp)은 여기(전역)가 아니라 카드마다 corpCardState.cards의 각 카드
+// 객체 자신에 저장한다 — 카드별로 다르게 고정할 수 있어야 하기 때문.
+let corpCardState = { cards:[], activeCardId:'', activeMonth:'', rowsByCard:{}, loaded:false, loading:false, approvalEntries:[], mismatchByCard:{} };
 const CORP_CARD_APPROVAL_KEY = 'corp-card-approval-entries';
 let corpCardTemplates = {}; // cardId -> { buffer, fileName, savedAt, months }
 
@@ -10893,13 +10896,13 @@ async function renderCorpCardMain(){
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
       <button id="corpCardAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
       <div style="display:flex; align-items:center; gap:4px; padding:3px; border-radius:7px; border:1px solid var(--line);">
-        <button class="corpcard-namemode-btn" data-mode="fixed" style="padding:5px 10px; border-radius:5px; border:none; background:${s.nameMode==='fixed'?'var(--gold)':'transparent'}; color:${s.nameMode==='fixed'?'#1a1a1a':'var(--muted)'}; font-size:12px; cursor:pointer;">고정</button>
-        <button class="corpcard-namemode-btn" data-mode="variable" style="padding:5px 10px; border-radius:5px; border:none; background:${s.nameMode==='variable'?'var(--gold)':'transparent'}; color:${s.nameMode==='variable'?'#1a1a1a':'var(--muted)'}; font-size:12px; cursor:pointer;">변동</button>
+        <button class="corpcard-namemode-btn" data-mode="fixed" style="padding:5px 10px; border-radius:5px; border:none; background:${(activeCard.nameMode||'variable')==='fixed'?'var(--gold)':'transparent'}; color:${(activeCard.nameMode||'variable')==='fixed'?'#1a1a1a':'var(--muted)'}; font-size:12px; cursor:pointer;">고정</button>
+        <button class="corpcard-namemode-btn" data-mode="variable" style="padding:5px 10px; border-radius:5px; border:none; background:${(activeCard.nameMode||'variable')==='variable'?'var(--gold)':'transparent'}; color:${(activeCard.nameMode||'variable')==='variable'?'#1a1a1a':'var(--muted)'}; font-size:12px; cursor:pointer;">변동</button>
       </div>
-      ${s.nameMode==='fixed' ? `<input type="text" id="corpCardFixedNameInput" placeholder="성명 고정값" value="${escapeHtml(s.fixedName)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
-      ${s.nameMode==='fixed' ? `<input type="text" id="corpCardFixedPositionInput" placeholder="직급 고정값" value="${escapeHtml(s.fixedPosition)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
-      ${s.nameMode==='fixed' ? `<input type="text" id="corpCardFixedDeptInput" placeholder="부서 고정값" value="${escapeHtml(s.fixedDept)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
-      ${s.nameMode==='fixed' ? `<input type="text" id="corpCardFixedCorpInput" placeholder="법인 고정값" value="${escapeHtml(s.fixedCorp)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
+      ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedNameInput" placeholder="성명 고정값" value="${escapeHtml(activeCard.fixedName||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
+      ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedPositionInput" placeholder="직급 고정값" value="${escapeHtml(activeCard.fixedPosition||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
+      ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedDeptInput" placeholder="부서 고정값" value="${escapeHtml(activeCard.fixedDept||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
+      ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedCorpInput" placeholder="법인 고정값" value="${escapeHtml(activeCard.fixedCorp||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
       <button id="corpCardPrintDocBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>
       <button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">🖨 이 달 PDF로 내보내기</button>
       <button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
@@ -11089,17 +11092,21 @@ async function renderCorpCardMain(){
     }
   }
   wirePresenceCells(main.querySelectorAll('.corpcard-f[data-id]'), el => `corpCard:${activeCard.id}:${s.activeMonth}:${el.dataset.id}:${el.dataset.field}`);
+  // 성명/직급/부서/법인 고정값은 카드마다 따로 기억한다(카드 객체 자체에
+  // 저장) — 예전엔 전역 값이라 한 카드에서 고정값을 켜면 다른 카드를
+  // 봐도 같은 값이 그대로 남아있는 문제가 있었다.
+  const corpCardFixedDebouncedSave = debounce(()=>{ saveCorpCardList(); }, 500);
   main.querySelectorAll('.corpcard-namemode-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{ s.nameMode = btn.dataset.mode; renderCorpCardMain(); });
+    btn.addEventListener('click', async ()=>{ activeCard.nameMode = btn.dataset.mode; await saveCorpCardList(); renderCorpCardMain(); });
   });
   const fixedNameInp = document.getElementById('corpCardFixedNameInput');
-  if(fixedNameInp) fixedNameInp.addEventListener('input', (e)=>{ s.fixedName = e.target.value; });
+  if(fixedNameInp) fixedNameInp.addEventListener('input', (e)=>{ activeCard.fixedName = e.target.value; corpCardFixedDebouncedSave(); });
   const fixedPositionInp = document.getElementById('corpCardFixedPositionInput');
-  if(fixedPositionInp) fixedPositionInp.addEventListener('input', (e)=>{ s.fixedPosition = e.target.value; });
+  if(fixedPositionInp) fixedPositionInp.addEventListener('input', (e)=>{ activeCard.fixedPosition = e.target.value; corpCardFixedDebouncedSave(); });
   const fixedDeptInp = document.getElementById('corpCardFixedDeptInput');
-  if(fixedDeptInp) fixedDeptInp.addEventListener('input', (e)=>{ s.fixedDept = e.target.value; });
+  if(fixedDeptInp) fixedDeptInp.addEventListener('input', (e)=>{ activeCard.fixedDept = e.target.value; corpCardFixedDebouncedSave(); });
   const fixedCorpInp = document.getElementById('corpCardFixedCorpInput');
-  if(fixedCorpInp) fixedCorpInp.addEventListener('input', (e)=>{ s.fixedCorp = e.target.value; });
+  if(fixedCorpInp) fixedCorpInp.addEventListener('input', (e)=>{ activeCard.fixedCorp = e.target.value; corpCardFixedDebouncedSave(); });
   const addRowBtn = document.getElementById('corpCardAddRowBtn');
   if(addRowBtn) addRowBtn.addEventListener('click', async ()=>{
     s.rowsByCard[activeCard.id] = s.rowsByCard[activeCard.id] || {};
@@ -11108,10 +11115,10 @@ async function renderCorpCardMain(){
     // "고정" 모드면 매번 성명을 새로 안 쳐도 되게, 방금 입력해둔 이름을 그대로
     // 채워서 행을 만든다 — 원본 엑셀도 같은 사람이 쓰는 행이 이어질 땐
     // 성명·부서 등을 미리 채워두는 방식이라 이걸 그대로 흉내낸 것.
-    if(s.nameMode === 'fixed' && s.fixedName.trim()) newRow.name = s.fixedName.trim();
-    if(s.nameMode === 'fixed' && s.fixedPosition.trim()) newRow.position = s.fixedPosition.trim();
-    if(s.nameMode === 'fixed' && s.fixedDept.trim()) newRow.dept = s.fixedDept.trim();
-    if(s.nameMode === 'fixed' && s.fixedCorp.trim()) newRow.corp = s.fixedCorp.trim();
+    if(activeCard.nameMode === 'fixed' && (activeCard.fixedName||'').trim()) newRow.name = activeCard.fixedName.trim();
+    if(activeCard.nameMode === 'fixed' && (activeCard.fixedPosition||'').trim()) newRow.position = activeCard.fixedPosition.trim();
+    if(activeCard.nameMode === 'fixed' && (activeCard.fixedDept||'').trim()) newRow.dept = activeCard.fixedDept.trim();
+    if(activeCard.nameMode === 'fixed' && (activeCard.fixedCorp||'').trim()) newRow.corp = activeCard.fixedCorp.trim();
     s.rowsByCard[activeCard.id][s.activeMonth].push(newRow);
     await saveCorpCardRows(activeCard.id);
     renderCorpCardMain();
