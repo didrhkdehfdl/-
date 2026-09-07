@@ -8264,6 +8264,98 @@ async function ensureTaxInvoiceCheckLoaded(){
 async function saveTaxInvoiceCheckList(){
   try{ await saveWithGenericHistory(TAX_INVOICE_CHECK_KEY, JSON.stringify(taxInvoiceCheckState.items)); }catch(e){ console.error(e); }
 }
+// 올려둔 세금계산서 원본 파일은 사용전점검 확인증과 똑같은 방식으로
+// 항목 id별로 따로 저장한다(목록 문서에는 파일명·크기만 남긴다).
+const taxInvoiceFileCache = {};
+async function loadTaxInvoiceFileData(id){
+  if(taxInvoiceFileCache[id]) return taxInvoiceFileCache[id];
+  const value = await loadFileFromStorage('taxinv-file:'+id, 20000);
+  if(value !== null) taxInvoiceFileCache[id] = value;
+  return value;
+}
+async function saveTaxInvoiceFileData(id, base64){
+  taxInvoiceFileCache[id] = base64;
+  const result = await saveFileToStorage('taxinv-file:'+id, base64, 20000);
+  if(!result.ok){ delete taxInvoiceFileCache[id]; return result; }
+  return result;
+}
+async function deleteTaxInvoiceFileData(id){
+  delete taxInvoiceFileCache[id];
+  await deleteFromStorage('taxinv-file:'+id);
+}
+// 파일명에서 발행일자를 뽑아낸다 — 실제로 쓰이는 표기를 폭넓게 받는다:
+// "2026-09-05", "2026.09.05", "2026_09_05", "20260905", "260905",
+// "2026년 9월 5일". 전화번호·사업자번호처럼 긴 숫자열 한가운데를 날짜로
+// 잘못 읽지 않도록 숫자 경계를 함께 확인한다.
+function parseTaxInvoiceDateFromFileName(fileName){
+  const base = String(fileName||'').replace(/\.[^.]+$/, '');
+  const pad = (y,mo,d)=>`${y}-${String(Number(mo)).padStart(2,'0')}-${String(Number(d)).padStart(2,'0')}`;
+  const plausible = (y,mo,d)=>{
+    const yy=Number(y), mm=Number(mo), dd=Number(d);
+    return yy>=2000 && yy<=2100 && mm>=1 && mm<=12 && dd>=1 && dd<=31;
+  };
+  const patterns = [
+    /(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/,
+    /(?<!\d)(20\d{2})[-._\/](\d{1,2})[-._\/](\d{1,2})(?!\d)/,
+    /(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)/,
+  ];
+  for(const re of patterns){
+    const m = base.match(re);
+    if(m && plausible(m[1], m[2], m[3])) return pad(m[1], m[2], m[3]);
+  }
+  // 2자리 연도(예: 260905) — 위 형식들이 다 안 맞을 때만 시도한다.
+  const m2 = base.match(/(?<!\d)(\d{2})(\d{2})(\d{2})(?!\d)/);
+  if(m2 && plausible('20'+m2[1], m2[2], m2[3])) return pad('20'+m2[1], m2[2], m2[3]);
+  return '';
+}
+const TAX_INVOICE_FILENAME_STOPWORDS = ['세금계산서','전자세금계산서','계산서','현금영수증','영수증','발행','발행분','청구','매출','매입','사본','복사본','수정본','최종본','스캔본','첨부','파일','합계','명세서'];
+// 파일명에서 고객명을 뽑아낸다. 한글 2~5글자 덩어리 중 서류 관련 단어를
+// 걸러낸 뒤, 그 중 사용전점검에 실제로 있는 이름이 있으면 그걸 우선
+// 고른다 — 파일명에 회사명·품목 같은 다른 한글이 섞여 있어도 고객명을
+// 정확히 집어낼 수 있다.
+function parseTaxInvoiceCustomerFromFileName(fileName){
+  const base = String(fileName||'').replace(/\.[^.]+$/, '');
+  const tokens = (base.match(/[가-힣]{2,5}/g) || [])
+    .filter(w => !TAX_INVOICE_FILENAME_STOPWORDS.includes(w) && !INSPECTION_FILENAME_STOPWORDS.includes(w));
+  const known = tokens.find(t => findMatchingInspectionItemsByCustomer(t).length > 0);
+  return known || tokens[0] || '';
+}
+async function handleTaxInvoiceUpload(e){
+  const files = [...(e.target.files||[])];
+  e.target.value = '';
+  if(files.length===0) return;
+  const MAX_BYTES = 3.5*1024*1024; // base64로 부풀어도 5MB 저장 한도를 넘지 않도록(사용전점검과 동일)
+  const skipped = [];
+  for(const file of files){
+    if(file.size > MAX_BYTES){ skipped.push(`${file.name} (5MB 저장 한도 초과)`); continue; }
+    if(file.type !== 'application/pdf' && !file.type.startsWith('image/')){
+      skipped.push(`${file.name} (PDF 또는 이미지 파일만 지원)`);
+      continue;
+    }
+    try{
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const id = rid();
+      const saveResult = await saveTaxInvoiceFileData(id, base64);
+      if(!saveResult.ok){ skipped.push(`${file.name} (저장 실패: ${saveResult.reason})`); continue; }
+      taxInvoiceCheckState.items.unshift({
+        id, fileName: file.name, size: file.size, mime: file.type,
+        customer: parseTaxInvoiceCustomerFromFileName(file.name),
+        issueDate: parseTaxInvoiceDateFromFileName(file.name),
+      });
+    }catch(err){
+      console.error(err);
+      skipped.push(file.name);
+    }
+  }
+  await saveTaxInvoiceCheckList();
+  renderTaxInvoiceCheckMain();
+  if(skipped.length) alert(`다음 파일은 저장하지 못했습니다:\n${skipped.join('\n')}`);
+}
 // 고객명으로 사용전점검 확인증 항목을 찾는다 — 인식된 대표자 성명, 그리고
 // 파일명에서 뽑아낸 이름 후보 둘 다와 대조해서, 이름 필드가 아직 사람이
 // 확인 전이라 비어있어도 파일명만으로 찾을 수 있게 한다.
@@ -8275,6 +8367,14 @@ function findMatchingInspectionItemsByCustomer(customerName){
     if(nm && nm===target) return true;
     return extractNameTokensFromFilename(it.fileName||'').some(tok => String(tok).replace(/\s/g,'')===target);
   });
+}
+// 고객명으로 사용전점검 확인증의 점검년월일을 찾아준다(여러 건이면 가장
+// 이른 날짜). 세금계산서 검토와 세금계산서·현금영수증 준비(작성일자) 양쪽에서
+// 같은 기준으로 쓰기 위해 함수로 뽑아뒀다.
+function findInspectionDateForCustomer(customerName){
+  const dates = findMatchingInspectionItemsByCustomer(customerName)
+    .map(it => it.extractedDate).filter(Boolean).sort();
+  return dates[0] || '';
 }
 // 같은 고객명으로 점검이 여러 건 매칭될 수 있으므로(예: 발전소가 여러
 // 개), 그 중 가장 이른 점검년월일을 기준으로 삼는다 — 세금계산서는
@@ -8304,21 +8404,23 @@ async function renderTaxInvoiceCheckMain(){
 
   main.innerHTML = `
     <h2 class="section-title">세금계산서 검토</h2>
-    <p style="font-size:13px; color:var(--muted); margin:0 0 14px;">고객명과 세금계산서 발행일자를 입력하면, 사용전점검 확인증에서 인식된 점검년월일과 자동으로 비교합니다.</p>
-    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
-      <button id="taxInvoiceCheckAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 세금계산서 추가</button>
+    <p style="font-size:13px; color:var(--muted); margin:0 0 14px;">세금계산서 파일을 올리면 파일명에서 고객명과 발행일자를 자동으로 채우고, 사용전점검 확인증의 점검년월일과 비교해 그 날짜 이전(또는 같은 날)에 발행됐는지 확인합니다. 자동으로 채운 값은 직접 고칠 수 있습니다.</p>
+    <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px;">
+      <input type="file" id="taxInvoiceUploadInput" accept="application/pdf,image/*" multiple style="font-size:13px; color:var(--muted);">
+      <button id="taxInvoiceCheckAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 직접 입력</button>
       <span style="font-size:12px; color:var(--muted);">총 ${s.items.length}건</span>
       ${problemCount>0 ? `<span style="font-size:12px; color:var(--neg); font-weight:600;">⚠ 점검 이후 발행 ${problemCount}건</span>` : ''}
     </div>
-    ${s.items.length===0 ? `<div class="empty-side">아직 등록된 세금계산서가 없습니다. "+ 세금계산서 추가"로 입력해주세요.</div>` : `
+    ${s.items.length===0 ? `<div class="empty-side">아직 등록된 세금계산서가 없습니다. 위에서 파일을 선택하거나 "+ 직접 입력"으로 추가해주세요.</div>` : `
     <div class="table-wrap">
       <table style="width:100%; border-collapse:collapse;">
         <thead><tr>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:180px;">고객명</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:150px;">세금계산서 발행일자</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:150px;">사용전점검 점검년월일</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left;">파일명</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:150px;">고객명</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:140px;">세금계산서 발행일자</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:140px;">사용전점검 점검년월일</th>
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:140px;">확인결과</th>
-          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:60px;">삭제</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:130px;">작업</th>
         </tr></thead>
         <tbody>
           ${rows.map(({item:it, m}) => {
@@ -8329,15 +8431,22 @@ async function renderTaxInvoiceCheckMain(){
             if(!it.customer) statusHtml = `<span style="color:var(--muted); font-size:12px;">고객명 입력</span>`;
             else if(!m.found) statusHtml = `<span style="color:var(--muted); font-size:12px;">점검 기록 없음</span>`;
             else if(!it.issueDate) statusHtml = `<span style="color:var(--muted); font-size:12px;">발행일자 미입력</span>`;
-            else if(m.ok) statusHtml = `<span style="color:#2e9e5b; font-weight:700; font-size:12px;">✓ 정상</span>`;
-            else statusHtml = `<span style="color:var(--neg); font-weight:700; font-size:12px;">⚠ 점검 이후 발행</span>`;
+            else if(m.ok) statusHtml = `<span style="padding:4px 10px; border-radius:12px; background:rgba(47,125,92,.18); color:var(--pos); font-size:12px; font-weight:700;">✓ 정상</span>`;
+            else statusHtml = `<span style="padding:4px 10px; border-radius:12px; background:rgba(178,59,46,.18); color:var(--neg); font-size:12px; font-weight:700;">⚠ 점검 이후 발행</span>`;
+            const fileCell = it.fileName
+              ? `${escapeHtml(it.fileName)}<div style="font-size:10.5px; color:var(--muted);">${fmtFileSize(it.size||0)}</div>`
+              : `<span style="color:var(--muted); font-size:12px;">직접 입력</span>`;
             return `
             <tr data-id="${it.id}">
-              <td style="padding:5px 6px; text-align:center;"><input type="text" class="taxinv-f" data-field="customer" data-id="${it.id}" value="${escapeHtml(it.customer)}" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
-              <td style="padding:5px 6px; text-align:center;"><input type="text" class="taxinv-f" data-field="issueDate" data-id="${it.id}" value="${escapeHtml(it.issueDate)}" placeholder="YYYY-MM-DD" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid ${(m.found && it.issueDate && m.ok===false)?'var(--neg)':'var(--line)'}; border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:7px 6px; font-size:12.5px;">${fileCell}</td>
+              <td style="padding:5px 6px; text-align:center;"><input type="text" class="taxinv-f" data-field="customer" data-id="${it.id}" value="${escapeHtml(it.customer||'')}" placeholder="인식 실패" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
+              <td style="padding:5px 6px; text-align:center;"><input type="text" class="taxinv-f" data-field="issueDate" data-id="${it.id}" value="${escapeHtml(it.issueDate||'')}" placeholder="YYYY-MM-DD" style="width:100%; text-align:center; background:var(--panel-2); border:1px solid ${(m.found && it.issueDate && m.ok===false)?'var(--neg)':'var(--line)'}; border-radius:6px; padding:5px 7px; color:var(--text); font-size:12px;"></td>
               <td style="padding:5px 6px; text-align:center; font-size:12px; color:var(--text);">${m.found ? escapeHtml(m.inspectionDate) : '-'}</td>
               <td style="padding:5px 6px; text-align:center;">${statusHtml}</td>
-              <td style="padding:5px 6px; text-align:center;"><button class="taxinv-del-btn" data-id="${it.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button></td>
+              <td style="padding:5px 6px; text-align:center; white-space:nowrap;">
+                ${it.fileName ? `<button class="taxinv-view-btn" data-id="${it.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">보기</button>` : ''}
+                <button class="taxinv-del-btn" data-id="${it.id}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button>
+              </td>
             </tr>
           `;}).join('')}
         </tbody>
@@ -8346,6 +8455,8 @@ async function renderTaxInvoiceCheckMain(){
     `}
   `;
 
+  const uploadInput = document.getElementById('taxInvoiceUploadInput');
+  if(uploadInput) uploadInput.addEventListener('change', handleTaxInvoiceUpload);
   const addBtn = document.getElementById('taxInvoiceCheckAddBtn');
   if(addBtn) addBtn.addEventListener('click', async ()=>{
     s.items.unshift(newTaxInvoiceCheckItem());
@@ -8361,11 +8472,30 @@ async function renderTaxInvoiceCheckMain(){
       renderTaxInvoiceCheckMain();
     });
   });
+  main.querySelectorAll('.taxinv-view-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const item = s.items.find(it=>it.id===btn.dataset.id);
+      if(!item) return;
+      const original = btn.textContent;
+      btn.textContent = '여는 중…';
+      const base64 = await loadTaxInvoiceFileData(item.id);
+      btn.textContent = original;
+      if(!base64){ alert('파일을 불러오지 못했습니다.' + (lastStorageLoadError ? `\n\n(원인: ${lastStorageLoadError})` : '')); return; }
+      const blob = new Blob([base64ToBytes(base64)], { type:item.mime });
+      if(item.mime === 'application/pdf'){
+        showPdfPreviewOverlay([base64ToBytes(base64)], { label: item.fileName, downloadName: item.fileName, downloadBlob: blob });
+      } else {
+        showImagePreviewOverlay(`data:${item.mime};base64,${base64}`, { label: item.fileName, downloadName: item.fileName, downloadBlob: blob });
+      }
+    });
+  });
   main.querySelectorAll('.taxinv-del-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!confirm('이 세금계산서 항목을 삭제할까요?')) return;
-      s.items = s.items.filter(it=>it.id!==btn.dataset.id);
+      const id = btn.dataset.id;
+      s.items = s.items.filter(it=>it.id!==id);
       await saveTaxInvoiceCheckList();
+      await deleteTaxInvoiceFileData(id);
       renderTaxInvoiceCheckMain();
     });
   });
@@ -9489,7 +9619,15 @@ function buildInvoicePrepResults(){
       }
     }
     const company = matchCompanyForRow(normRow);
-    return { id: row.id, row: normRow, plan, companyId: company ? company.id : null };
+    // 세금계산서 "작성일자"는 사용전점검 탭의 점검년월일을 우선 쓴다 — 발행
+    // 기준일이 곧 점검일이기 때문. 매칭되는 점검 확인증이 없으면 기존처럼
+    // 실적리스트의 필증일자(O&M은 오늘 날짜)로 넘어간다.
+    const inspectionDate = findInspectionDateForCustomer(row.customer);
+    return {
+      id: row.id, row: normRow, plan, companyId: company ? company.id : null,
+      writeDate: inspectionDate || firstDateOf(normRow.certDate) || '',
+      writeDateSource: inspectionDate ? 'inspection' : (firstDateOf(normRow.certDate) ? 'certDate' : ''),
+    };
   });
 }
 function firstDateOf(multiline){
@@ -9506,16 +9644,19 @@ const TAX_INVOICE_HEADER = ['전자(세금)계산서 종류\n(01:일반, 02:영�
 const CASH_RECEIPT_HEADER = ['용도구분\n(0:소비자소득공제용, 1:사업자지출증빙용)','발급수단번호','총거래금액(합계)','공급가액','부가가치세','메모'];
 
 function buildTaxInvoiceWorkbook(items, supplier, itemName){
-  const rows = items.map(({row, plan})=>{
+  const rows = items.map(({row, plan, writeDate})=>{
     // row.totalAmount("계약금액")는 부가세 포함 금액이라 그대로 공급가액에 넣으면
     // 안 된다 — 공급가액 열이 따로 있으면 그 값을, 없으면 계약금액/1.1로 구한다
     // (현금영수증 쪽 buildCashReceiptWorkbook과 같은 계산 방식으로 맞춘 것).
     const totalAmt = Math.round(Number(row.totalAmount)||0);
     const supplyAmt = Math.round(Number(row.supplyAmount) || (totalAmt/1.1) || 0);
     const vat = totalAmt - supplyAmt;
-    const day = String(new Date(firstDateOf(row.certDate)).getDate()||'').padStart(2,'0');
+    // 작성일자는 화면 표에 보이는 값(기본은 사용전점검의 점검년월일, 없으면
+    // 필증일자)을 그대로 쓴다 — 표에서 직접 고친 값도 그대로 반영된다.
+    const writeDateValue = writeDate || firstDateOf(row.certDate);
+    const day = String(new Date(writeDateValue).getDate()||'').padStart(2,'0');
     return [
-      '01', yyyymmdd(firstDateOf(row.certDate)),
+      '01', yyyymmdd(writeDateValue),
       String(supplier.bizNumber||'').replace(/-/g,''), '', supplier.bizName||'', supplier.ownerName||'', supplier.address||'', supplier.bizType||'', supplier.bizItem||'', supplier.email||'',
       String(plan.buyer.bizNumber||'').replace(/-/g,''), '', plan.buyer.bizName||'', plan.buyer.ownerName||row.customer||'', row.address||'', plan.buyer.bizType||'', plan.buyer.bizItem||'', plan.buyer.email||'', '',
       supplyAmt, vat, plan.note||'',
@@ -9559,6 +9700,16 @@ function renderInvoicePrepMain(){
   const main = document.getElementById('main');
   const s = invoicePrepState;
   const sourceHasRows = s.source==='om' ? !!(omListState.rows && omListState.rows.length) : !!(importState.rows && importState.rows.length);
+  // 작성일자를 사용전점검 탭의 점검년월일에서 가져오므로, 그 데이터가 아직
+  // 안 불러와졌으면 불러온 뒤 한 번 다시 계산해 그린다(사용전점검 탭을 한 번도
+  // 안 열어봤어도 작성일자가 채워지도록).
+  if(!inspectionState.loaded && !inspectionState.loading){
+    ensureInspectionLoaded().then(()=>{
+      if(state.activeTab !== 'invoiceprep') return;
+      invoicePrepState.results = buildInvoicePrepResults();
+      renderInvoicePrepMain();
+    });
+  }
   if(!s.results.length && sourceHasRows) s.results = buildInvoicePrepResults();
   const taxItems = s.results.filter(r=>r.plan.type==='tax');
   const cashItems = s.results.filter(r=>r.plan.type==='cash');
@@ -9634,6 +9785,7 @@ function renderInvoicePrepMain(){
           <th style="padding:6px;"><input type="checkbox" id="checkAllBox"></th>
           <th style="padding:6px; color:var(--muted);">고객명</th>
           <th style="padding:6px; color:var(--muted);">계약법인</th>
+          <th style="padding:6px; color:var(--muted);">작성일자</th>
           <th style="padding:6px; color:var(--muted);">유형</th>
           <th style="padding:6px; color:var(--muted);">근거</th>
           <th style="padding:6px; color:var(--muted);">금액</th>
@@ -9647,6 +9799,12 @@ function renderInvoicePrepMain(){
               <td style="padding:6px; text-align:center;"><input type="checkbox" class="rowCheck" data-id="${r.id}" ${s.checked.has(r.id)?'checked':''}></td>
               <td style="padding:6px;">${escapeHtml(r.row.customer||'')}</td>
               <td style="padding:6px;">${escapeHtml(r.row.corp||'')}${!company && r.row.corp ? ' <span style="color:#ffcf8a;">(회사정보 없음)</span>' : ''}</td>
+              <td style="padding:6px; white-space:nowrap;">
+                <input class="invoice-writedate" data-id="${r.id}" value="${escapeHtml(r.writeDate||'')}" placeholder="YYYY-MM-DD" style="width:104px; font-size:11.5px; padding:4px 5px; text-align:center; border-radius:5px; border:1px solid ${r.writeDate?'var(--line)':'var(--neg)'}; background:var(--panel-2); color:var(--text);">
+                <div style="font-size:10px; margin-top:2px; color:${r.writeDateSource==='inspection'?'var(--pos)':'var(--muted)'};">
+                  ${r.writeDateSource==='inspection' ? '사용전점검 점검일' : r.writeDateSource==='certDate' ? '필증일자' : r.writeDateSource==='manual' ? '직접 입력' : '점검 기록 없음'}
+                </div>
+              </td>
               <td style="padding:6px;">
                 ${r.plan.type==='skip' ? '건너뜀' : `
                   <select class="invoice-type-select" data-id="${r.id}" style="font-size:12px; padding:3px 4px;">
@@ -9751,6 +9909,15 @@ function renderInvoicePrepMain(){
       }else{
         r.plan = { type:'tax', source:'세금계산서(수동 변경, 직접 입력 필요)', buyer:{ bizNumber:'', bizName:'', ownerName:r.row.customer||'', bizType:'', bizItem:'', email:'' }, note: r.row.invoiceNo||'' };
       }
+      renderInvoicePrepMain();
+    });
+  });
+  main.querySelectorAll('.invoice-writedate').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const r = s.results.find(x=>x.id===inp.dataset.id);
+      if(!r) return;
+      r.writeDate = inp.value.trim();
+      r.writeDateSource = r.writeDate ? 'manual' : '';
       renderInvoicePrepMain();
     });
   });
