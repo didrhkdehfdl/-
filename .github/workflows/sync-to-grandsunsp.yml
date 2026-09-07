@@ -14,6 +14,9 @@ on:
       - 'index.html'
       - 'firebase-messaging-sw.js'
       - 'firebase.json'
+      - 'manifest.json'
+      - 'icon-192.png'
+      - 'icon-512.png'
       - 'functions/**'
 
 jobs:
@@ -43,6 +46,9 @@ jobs:
           cp index.html /tmp/target/gyeonggi-app/index.html
           [ -f firebase-messaging-sw.js ] && cp firebase-messaging-sw.js /tmp/target/gyeonggi-app/firebase-messaging-sw.js || true
           [ -f firebase.json ] && cp firebase.json /tmp/target/gyeonggi-app/firebase.json || true
+          [ -f manifest.json ] && cp manifest.json /tmp/target/gyeonggi-app/manifest.json || true
+          [ -f icon-192.png ] && cp icon-192.png /tmp/target/gyeonggi-app/icon-192.png || true
+          [ -f icon-512.png ] && cp icon-512.png /tmp/target/gyeonggi-app/icon-512.png || true
           rm -rf /tmp/target/gyeonggi-app/functions
           if [ -d functions ]; then
             mkdir -p /tmp/target/gyeonggi-app/functions
