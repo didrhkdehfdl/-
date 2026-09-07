@@ -9614,7 +9614,6 @@ function buildInvoicePrepResults(){
         plan.phoneOptions = [];
         plan.source = `발행번호(${row.invoiceNo})`;
       }else if(plan.type === 'tax'){
-        plan.note = row.invoiceNo;
         plan.source = `${plan.source} · 발행번호 참고: ${row.invoiceNo}`;
       }
     }
@@ -9655,9 +9654,10 @@ function buildTaxInvoiceWorkbook(items, supplier, itemName){
     // 필증일자)을 그대로 쓴다 — 표에서 직접 고친 값도 그대로 반영된다.
     const writeDateValue = writeDate || firstDateOf(row.certDate);
     const day = String(new Date(writeDateValue).getDate()||'').padStart(2,'0');
-    // 비고에는 고객명을 넣어 홈택스에 올린 뒤에도 어느 건인지 바로 알아볼 수
-    // 있게 한다. O&M 발행번호처럼 따로 참고할 값이 있으면 뒤에 같이 적는다.
-    const note = [row.customer||'', plan.note||''].filter(Boolean).join(' ');
+    // 비고에는 고객명만 넣어 홈택스에 올린 뒤에도 어느 건인지 바로 알아볼 수
+    // 있게 한다(사급·O&M 모두 동일). O&M 발행번호는 화면의 "근거"에만 참고로
+    // 보여주고 비고에는 넣지 않는다.
+    const note = row.customer||'';
     return [
       '01', yyyymmdd(writeDateValue),
       String(supplier.bizNumber||'').replace(/-/g,''), '', supplier.bizName||'', supplier.ownerName||'', supplier.address||'', supplier.bizType||'', supplier.bizItem||'', supplier.email||'',
@@ -9910,7 +9910,7 @@ function renderInvoicePrepMain(){
           r.plan = { type:'cash', source:'현금영수증(수동 변경)', buyerId: phoneOptions[0]||'', phoneOptions };
         }
       }else{
-        r.plan = { type:'tax', source:'세금계산서(수동 변경, 직접 입력 필요)', buyer:{ bizNumber:'', bizName:'', ownerName:r.row.customer||'', bizType:'', bizItem:'', email:'' }, note: r.row.invoiceNo||'' };
+        r.plan = { type:'tax', source:'세금계산서(수동 변경, 직접 입력 필요)', buyer:{ bizNumber:'', bizName:'', ownerName:r.row.customer||'', bizType:'', bizItem:'', email:'' } };
       }
       renderInvoicePrepMain();
     });
