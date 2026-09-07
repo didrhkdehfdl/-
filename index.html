@@ -8323,7 +8323,11 @@ async function renderTaxInvoiceCheckMain(){
         <tbody>
           ${rows.map(({item:it, m}) => {
             let statusHtml;
-            if(!m.found) statusHtml = `<span style="color:var(--muted); font-size:12px;">점검 기록 없음</span>`;
+            // 방금 추가만 하고 아직 아무것도 안 적은 행에까지 "점검 기록 없음"이
+            // 뜨면 실제로 문제가 있는 것처럼 보이므로, 먼저 무엇을 적어야 하는지
+            // 알려준다.
+            if(!it.customer) statusHtml = `<span style="color:var(--muted); font-size:12px;">고객명 입력</span>`;
+            else if(!m.found) statusHtml = `<span style="color:var(--muted); font-size:12px;">점검 기록 없음</span>`;
             else if(!it.issueDate) statusHtml = `<span style="color:var(--muted); font-size:12px;">발행일자 미입력</span>`;
             else if(m.ok) statusHtml = `<span style="color:#2e9e5b; font-weight:700; font-size:12px;">✓ 정상</span>`;
             else statusHtml = `<span style="color:var(--neg); font-weight:700; font-size:12px;">⚠ 점검 이후 발행</span>`;
