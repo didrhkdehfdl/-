@@ -816,7 +816,7 @@ function rid(){ return 'r' + Date.now().toString(36) + Math.random().toString(36
 function newRecord(defaultCorp){
   return {
     id: rid(),
-    date:'', contractDate:'', corp: defaultCorp||'', customer:'', address:'',
+    date:'', contractDate:'', depositDate:'', corp: defaultCorp||'', customer:'', address:'',
     team:'', module:'', module2:'', inverter:'금비 3.7kW*1', capacity:'3.0kw', structureType:'',
     deposit:0, vatAuto:true, vatManual:0, companyPrice:0, extra:0, note:'',
     sourceRowId:null, touchedFields:[]
@@ -849,14 +849,37 @@ function moduleDepositAttached(m){
   if(ov !== null && ov !== undefined && ov !== '') return Number(ov)||0;
   return (Number(m.depositSlab)||0) - 100000;
 }
-function moduleNoteLine(m, mount){
+// capacityKw를 넘기지 않으면 지금까지와 똑같이 기준 단가표 문구(3kw 기준)를
+// 만든다 — 화면 위쪽 "사용모듈별 입금가 설명" 체크목록이 이 문구를 그대로 쓴다.
+// 용량을 넘기면 그 용량에 맞춰 문구와 금액을 같이 키운다: 회사입금가는 이미
+// computePerfCompanyPrice가 용량 비례로 계산하므로(6kw면 2배), 비고의 입금가
+// 문구도 같은 기준이어야 실제 적용된 금액과 어긋나지 않는다.
+function moduleNoteLine(m, mount, capacityKw){
   const gradeTxt = m.grade ? `, ${m.grade}` : '';
-  const price = mount==='attached' ? moduleDepositAttached(m) : (Number(m.depositSlab)||0);
-  const manwon = Math.round(price/10000);
+  const basePrice = mount==='attached' ? moduleDepositAttached(m) : (Number(m.depositSlab)||0);
   const mountTxt = mount==='attached' ? '부착형' : '슬라브형';
-  return `${m.displayName}-3kw(${mountTxt}${gradeTxt}): ${manwon}만원(VAT별도)`;
+  const baseKw = Number(m.baseKw) || 3;
+  const kw = Number(capacityKw) || 0;
+  if(!kw || kw === baseKw){
+    return `${m.displayName}-3kw(${mountTxt}${gradeTxt}): ${Math.round(basePrice/10000)}만원(VAT별도)`;
+  }
+  const price = Math.round(basePrice * (kw / baseKw)); // computePerfCompanyPrice와 같은 규칙
+  return moduleNoteLineWithPrice(m, mount, kw, price);
+}
+// 용량과 금액을 그대로 받아 문구만 만든다.
+function moduleNoteLineWithPrice(m, mount, capacityKw, price){
+  const gradeTxt = m.grade ? `, ${m.grade}` : '';
+  const mountTxt = mount==='attached' ? '부착형' : '슬라브형';
+  const kw = Number(capacityKw) || Number(m.baseKw) || 3;
+  // 만원 단위로 딱 떨어질 때만 "N만원"으로 적는다 — 반올림하면 실제 회사입금가와
+  // 다른 금액을 적게 되는 경우(예: 3.2kw 기준 모듈을 4kw로 쓰면 362.5만원)가 있다.
+  const priceTxt = price % 10000 === 0 ? `${price/10000}만원` : `${Number(price).toLocaleString('ko-KR')}원`;
+  return `${m.displayName}-${Number(kw)}kw(${mountTxt}${gradeTxt}): ${priceTxt}(VAT별도)`;
 }
 let MODULE_NOTE_OPTIONS = [];
+// MODULE_NOTE_OPTIONS의 각 항목이 어느 모듈·시공형태에서 나왔는지 — 비고의
+// 입금가 줄을 그 건의 실제 설비용량에 맞춰 다시 만들 때 쓴다.
+let MODULE_NOTE_SOURCE = [];
 let MODULE_OPTION_LABELS = [];
 let MODULE_OPTION_PRICES = [];
 let PERF_MODULE_MODELS = [];
@@ -868,6 +891,7 @@ let PERF_MODULE_TO_NOTE_INDEX = {};
 // 건드리지 않으며, 새로 만드는 건이나 "다시 계산" 버튼을 눌렀을 때만 반영된다.
 function rebuildModuleDerived(){
   MODULE_NOTE_OPTIONS.length = 0;
+  MODULE_NOTE_SOURCE.length = 0;
   MODULE_OPTION_LABELS.length = 0;
   MODULE_OPTION_PRICES.length = 0;
   PERF_MODULE_MODELS.length = 0;
@@ -888,6 +912,7 @@ function rebuildModuleDerived(){
     order.forEach(mount=>{
       idx[mount] = MODULE_NOTE_OPTIONS.length;
       MODULE_NOTE_OPTIONS.push(moduleNoteLine(m, mount));
+      MODULE_NOTE_SOURCE.push({ module: m, mount });
     });
     PERF_MODULE_TO_NOTE_INDEX[m.modelCode] = { attached: idx.attached, slab: idx.slab };
   });
@@ -930,7 +955,11 @@ function autoNoteFirstLine(rec){
   const cust = rec.customer || '';
   const depositNum = Number(rec.deposit)||0;
   if(!cust && !depositNum) return '';
-  const d = rec.date ? formatShortDate(rec.date) : formatShortDate(isoDate(new Date()));
+  // "…원 입금" 줄이므로 날짜도 입금일자를 쓴다. 예전에는 시공일자를 썼는데,
+  // 시공하고 한참 뒤에 입금되는 건이 많아 실제 입금일과 다른 날짜가 적혔다.
+  // 입금일자가 아직 없는 건(직접 만든 건 등)은 지금까지처럼 시공일자로 적는다.
+  const noteDate = rec.depositDate || rec.date;
+  const d = noteDate ? formatShortDate(noteDate) : formatShortDate(isoDate(new Date()));
   const dep = fmtWon(depositNum);
   return `${d} ${cust} ${dep} 입금`.replace(/\s+/g,' ').trim();
 }
@@ -989,10 +1018,56 @@ function updateNoteBusinessLine(rec){
   rec.note = lines.join('\n');
 }
 
+// 비고의 "입금가" 줄은 단가표 문구를 그대로 베끼지 않고, 이 건의 실제
+// 설비용량에 맞춘 문구로 다시 만든다 — 단가표는 3kw 기준인데 회사입금가는
+// 용량에 비례해 잡히므로(6kw면 2배), 그대로 베끼면 "6kw인데 3kw 기준 금액"이
+// 비고에 적히게 된다.
+function moduleNoteTextForRecord(idx, rec){
+  const src = MODULE_NOTE_SOURCE[idx];
+  if(!src) return MODULE_NOTE_OPTIONS[idx].replace('VAT별도','vat별도');
+  const kw = parseFloat(rec.capacity)||0;
+  // 금액은 이 건에 실제로 잡힌 회사입금가를 그대로 쓴다 — 용량으로 다시 계산하면
+  // 손으로 협의가를 넣은 건에서 비고 문구와 실제 금액이 어긋난다.
+  const actual = Math.abs(Number(rec.companyPrice)||0);
+  const text = actual
+    ? moduleNoteLineWithPrice(src.module, src.mount, kw, actual)
+    : moduleNoteLine(src.module, src.mount, kw);
+  return text.replace('VAT별도','vat별도');
+}
+// 위 문구에 적히는 금액과 똑같은 기준으로 계산한 회사입금가 — 모듈을 고르면
+// 이 값이 회사입금가 칸에 들어간다(단가표의 3kw 기준가가 아니라 이 건의 용량에
+// 맞춘 금액이어야 비고 문구와 금액이 서로 맞는다).
+function moduleDepositPriceForRecord(idx, rec){
+  const src = MODULE_NOTE_SOURCE[idx];
+  if(!src) return MODULE_OPTION_PRICES[idx] || 0;
+  const base = src.mount==='attached' ? moduleDepositAttached(src.module) : (Number(src.module.depositSlab)||0);
+  const baseKw = Number(src.module.baseKw) || 3;
+  const kw = parseFloat(rec.capacity)||0;
+  return kw ? Math.round(base * (kw / baseKw)) : base;
+}
+// 이 건의 입금가 줄이 어느 모듈·시공형태 항목에서 나온 것인지 되짚는다.
+// rec.module에는 실적리스트에서 가져온 모델코드가 들어있어 단가표 라벨과 바로
+// 매칭되지 않으므로, 건을 만들 때 기록해둔 인덱스 → 라벨 → 이미 적힌 입금가
+// 줄 순서로 찾는다(이미 적힌 줄로 찾을 땐 용량 부분은 빼고 비교한다).
+function resolveModuleNoteIndex(rec){
+  if(Number.isInteger(rec.usedModuleNoteIndex) && MODULE_NOTE_SOURCE[rec.usedModuleNoteIndex]) return rec.usedModuleNoteIndex;
+  for(const label of [rec.module, rec.module2]){
+    const i = MODULE_OPTION_LABELS.indexOf(label);
+    if(i >= 0) return i;
+  }
+  const line = (rec.note||'').split('\n').find(l => l.trim().startsWith('입금가'));
+  if(line){
+    const key = s => String(s).replace(/-[\d.]+kw/, '-kw').replace(/\s/g,'');
+    const keyed = key(line);
+    const i = MODULE_OPTION_LABELS.findIndex(lab => keyed.includes(key(lab)));
+    if(i >= 0) return i;
+  }
+  return -1;
+}
 function updateNoteModuleLine(rec){
   const parts = [rec.module, rec.module2].filter(Boolean).map(label=>{
     const idx = MODULE_OPTION_LABELS.indexOf(label);
-    return idx >= 0 ? MODULE_NOTE_OPTIONS[idx].replace('VAT별도','vat별도') : null;
+    return idx >= 0 ? moduleNoteTextForRecord(idx, rec) : null;
   }).filter(Boolean);
   if(parts.length === 0) return;
   const lines = (rec.note||'').split('\n');
@@ -1001,9 +1076,8 @@ function updateNoteModuleLine(rec){
 }
 function updateNoteModuleLineByIndex(rec, idx){
   if(idx < 0 || idx >= MODULE_NOTE_OPTIONS.length) return;
-  const fullText = MODULE_NOTE_OPTIONS[idx].replace('VAT별도','vat별도');
   const lines = (rec.note||'').split('\n');
-  upsertNoteLine(lines, '입금가', `입금가 : ${fullText}`, ['추가비','영업비용']);
+  upsertNoteLine(lines, '입금가', `입금가 : ${moduleNoteTextForRecord(idx, rec)}`, ['추가비','영업비용']);
   rec.note = lines.join('\n');
 }
 
@@ -13347,7 +13421,7 @@ function parseImportSheet(sheetName){
 function buildSalesRecordFromRow(row, defaultCorp){
   const rec = newRecord(row.corp || defaultCorp);
   Object.assign(rec, {
-    date: row.date, contractDate: row.contractDate, customer: row.customer, address: row.address,
+    date: row.date, contractDate: row.contractDate, depositDate: row.depositDate, customer: row.customer, address: row.address,
     team: row.team, structureType: row.structureType,
     capacity: (() => {
       const c = String(row.capacity||'').trim();
@@ -13376,8 +13450,11 @@ function buildSalesRecordFromRow(row, defaultCorp){
     // 회사입금가가 채워져 있어도, 그 값이 이 모듈의 표준 단가와 같다면(단지
     // 원본 시트에 값이 이미 적혀 있었을 뿐 실제로는 표준가인 경우) 입금가
     // 문구를 그대로 써준다 — 표준가와 다른, 진짜 수동 협의가는 여전히 건너뛴다.
-    const standardPrice = MODULE_OPTION_PRICES[noteIdx];
-    const matchesStandard = !row.companyPrice || Math.abs(Number(row.companyPrice)||0) === standardPrice;
+    // 표준가 비교는 용량까지 반영한 금액으로 해야 한다 — 예전에는 3kw 기준가와
+    // 비교해서, 6kw처럼 용량이 다른 건은 실제로 표준가인데도 "수동 협의가"로
+    // 잘못 보고 입금가 문구를 아예 안 써주는 경우가 있었다.
+    const standardPrice = computePerfCompanyPrice(row);
+    const matchesStandard = !row.companyPrice || (!!standardPrice && Math.abs(Number(row.companyPrice)||0) === standardPrice);
     if(matchesStandard) updateNoteModuleLineByIndex(rec, noteIdx);
   }
   if(row.extraNote){
@@ -13449,7 +13526,7 @@ function buildProfitCaseFromRow(row){
 // 채우는 값만 넣는다(newRecord/newProfitCase의 나머지 기본값, 특히
 // draftDate처럼 "지금 시각" 기준으로 매번 새로 계산되는 값은 절대 포함하지
 // 않는다 — 안 그러면 다시 동기화할 때마다 엉뚱하게 덮어써진다).
-const SALES_ROW_SYNCED_FIELDS = ['date','contractDate','customer','address','team','structureType','capacity','inverter','module','deposit','companyPrice','extra','note','corp'];
+const SALES_ROW_SYNCED_FIELDS = ['date','contractDate','depositDate','customer','address','team','structureType','capacity','inverter','module','deposit','companyPrice','extra','note','corp'];
 const PROFIT_ROW_SYNCED_FIELDS = ['customer','constructionDate','capacityKw','agentName','teamName','totalBusinessCost','depositPrice','moduleModel','moduleQty','moduleBuy','moduleSell','inverterModel','inverterQty','inverterBuy','inverterSell','structureNote','structureBuy','structureSell','structureQty','customerDeposit','salesCost','salesDeduction','salesDeductionNote','constructionCost'];
 // 만들어진 뒤 상세 화면에서 직접 고친 항목(touchedFields)은 절대 덮어쓰지
 // 않는다 — 실적리스트 값이 바뀌어도 사람이 이미 손댄 값은 그대로 둔다.
@@ -13609,6 +13686,7 @@ function renderRecordRows(){
       <td colspan="9">
         <div class="detail-grid">
           <div class="dfield"><label>계약일자</label><input type="text" value="${escapeHtml(r.contractDate)}" data-field="contractDate" placeholder="YYYY-MM-DD"></div>
+          <div class="dfield"><label>입금일자 (비고 첫 줄 날짜)</label><input type="text" value="${escapeHtml(r.depositDate||'')}" data-field="depositDate" placeholder="비우면 시공날짜"></div>
           <div class="dfield"><label>법인</label><input type="text" value="${escapeHtml(r.corp)}" data-field="corp"></div>
           <div class="dfield wide"><label>주소</label><input type="text" value="${escapeHtml(r.address)}" data-field="address" placeholder="주소"></div>
           <div class="dfield"><label>시공팀</label>
@@ -13659,6 +13737,8 @@ function renderRecordRows(){
         if(!rec.touchedFields) rec.touchedFields = [];
         if(!rec.touchedFields.includes(f)) rec.touchedFields.push(f);
       }
+      const prevCapacity = rec.capacity;
+      const prevCompanyPrice = Number(rec.companyPrice)||0;
       // 회계 표시상 000,000 형식으로 보여주는 칸(deposit/companyPrice/extra)은
       // <input type="number">가 아니라 콤마 있는 문자열을 받는 text 칸이라,
       // 콤마·공백을 지우고 숫자로 바꾼 다음 다시 콤마를 넣어 화면에 보여준다.
@@ -13675,10 +13755,33 @@ function renderRecordRows(){
       cells[0].textContent = fmtWon(vatOf(rec));
       cells[1].textContent = fmtWon(payOf(rec));
       if(f === 'customer') autoUpdateTitle(c);
-      if(f === 'date' || f === 'customer' || f === 'deposit' || f === 'companyPrice' || f === 'extra'){
+      if(f === 'date' || f === 'depositDate' || f === 'customer' || f === 'deposit' || f === 'companyPrice' || f === 'extra'){
         updateNoteFirstLine(rec);
         const noteEl = tbody.querySelector(`.detail-row[data-id="${id}"] textarea[data-field="note"]`);
         if(noteEl) noteEl.value = rec.note;
+      }
+      // 설비용량·회사입금가가 바뀌면 입금가 문구의 kw·금액도 같이 바뀌어야 한다.
+      if(f === 'capacity' || f === 'companyPrice'){
+        const modIdx = resolveModuleNoteIndex(rec);
+        if(modIdx >= 0){
+          // 용량을 고쳤을 때, 지금 회사입금가가 "고치기 전 용량의 표준가"와 정확히
+          // 같다면 그건 사람이 넣은 협의가가 아니라 자동으로 계산된 값이므로 새
+          // 용량 기준으로 다시 계산해준다. 손으로 넣은 금액은 절대 건드리지 않는다.
+          if(f === 'capacity'){
+            const autoBefore = moduleDepositPriceForRecord(modIdx, { capacity: prevCapacity });
+            if(Math.abs(prevCompanyPrice) === autoBefore){
+              rec.companyPrice = -Math.abs(moduleDepositPriceForRecord(modIdx, rec));
+              const priceInput = mainRow.querySelector('[data-field="companyPrice"]');
+              if(priceInput) priceInput.value = rec.companyPrice ? Number(rec.companyPrice).toLocaleString('ko-KR') : '';
+              cells[0].textContent = fmtWon(vatOf(rec));
+              cells[1].textContent = fmtWon(payOf(rec));
+              updateNoteBusinessLine(rec);
+            }
+          }
+          updateNoteModuleLineByIndex(rec, modIdx);
+          const noteEl = tbody.querySelector(`.detail-row[data-id="${id}"] textarea[data-field="note"]`);
+          if(noteEl) noteEl.value = rec.note;
+        }
       }
       if(f === 'module2'){
         updateNoteModuleLine(rec);
@@ -13696,12 +13799,16 @@ function renderRecordRows(){
           if(cb) cb.checked = true;
           const notesEl = document.getElementById('f-moduleNotes');
           if(notesEl) notesEl.value = c.moduleNotes;
-          updateNoteModuleLine(rec);
+
+          // 회사입금가를 먼저 확정하고 나서 비고를 쓴다 — 입금가 문구의 금액은
+          // 이 값을 그대로 가져다 쓰므로, 순서가 반대면 직전 금액이 적힌다.
+          rec.usedModuleNoteIndex = idx;
+          rec.companyPrice = -Math.abs(moduleDepositPriceForRecord(idx, rec));
+          updateNoteModuleLineByIndex(rec, idx);
           ensureNoteExtraLine(rec);
           const noteEl = tbody.querySelector(`.detail-row[data-id="${id}"] textarea[data-field="note"]`);
           if(noteEl) noteEl.value = rec.note;
 
-          rec.companyPrice = -Math.abs(MODULE_OPTION_PRICES[idx]);
           const mainRowForPrice = tbody.querySelector(`.main-row[data-id="${id}"]`);
           const priceInput = mainRowForPrice.querySelector('[data-field="companyPrice"]');
           if(priceInput) priceInput.value = rec.companyPrice ? Number(rec.companyPrice).toLocaleString('ko-KR') : '';
