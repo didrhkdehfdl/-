@@ -4801,17 +4801,80 @@ const PROFIT_LEDGER_SHEET = '정산데이터';
 // 건이 맞는지 알 수 없으므로, 무조건 첫 번째 건을 자동으로 골라 잘못된
 // 회사입금가·담당자가 섞여 들어가는 일이 없도록 { multiple:true }만 표시하고
 // 매칭 자체는 비워둔다(연결 없음과 동일하게 처리 — 사람이 직접 확인해야 함).
+// 영업비 정산 건은 목록(state.cases)에 요약만 들어있고 실제 레코드(고객별 행)는
+// 건별 문서에 따로 저장돼 있다 — 고객명으로 찾으려면 한 번은 전부 불러와서
+// caseCache에 올려둬야 한다. 한 번 불러온 건은 캐시에 남으므로 실제 읽기는
+// 사실상 처음 한 번만 일어난다.
+let salesCasesLoaded = false;
+let salesCasesLoading = null;
+async function ensureSalesCasesLoaded(){
+  if(salesCasesLoaded) return;
+  if(salesCasesLoading) return salesCasesLoading;
+  salesCasesLoading = (async ()=>{
+    for(const entry of state.cases){
+      if((entry.caseType||'sales') !== 'sales') continue;
+      if(caseCache[entry.id]) continue;
+      const c = await loadCase(entry.id);
+      if(c) caseCache[entry.id] = c;
+    }
+    salesCasesLoaded = true;
+    salesCasesLoading = null;
+  })();
+  return salesCasesLoading;
+}
+// 레코드는 state.cases(목록 요약)가 아니라 caseCache(실제 건 내용)에서 찾는다 —
+// 예전엔 목록 쪽을 뒤져서 어떤 고객도 절대 찾지 못했고, 그 결과 이윤정산이
+// 기안지 대신 실적리스트 값만 쓰게 돼 있었다.
 function findMatchingSalesRecord(customerName){
   const name = String(customerName||'').trim();
   if(!name) return null;
   const matches = [];
-  for(const c of state.cases){
-    if(c.caseType !== 'sales' || !c.records) continue;
+  for(const entry of state.cases){
+    if((entry.caseType||'sales') !== 'sales') continue;
+    const c = caseCache[entry.id];
+    if(!c || !c.records) continue;
     c.records.forEach(r => { if(String(r.customer||'').trim() === name) matches.push({ salesCase:c, record:r }); });
   }
   if(!matches.length) return null;
   if(matches.length > 1) return { salesCase:null, record:null, multiple:true, matchCount:matches.length };
   return matches[0];
+}
+// 영업비 정산 기안지의 비고에서 "추가비 : …" 줄의 내용만 뽑아낸다.
+function salesRecordExtraNoteText(rec){
+  const line = String((rec && rec.note) || '').split('\n').find(l => l.trim().startsWith('추가비'));
+  if(!line) return '';
+  return line.replace(/^\s*추가비\s*[:：]?\s*/, '').trim();
+}
+// 이윤정산의 "영업비 공제 / 공제 비고"는 영업비 정산 기안지에 적힌 값을 최우선으로
+// 쓴다 — 실적리스트의 추가비는 기안지에서 고친 뒤에도 예전 값이 그대로 남아있는
+// 경우가 있어서, 이윤정산에 옛 내용이 따라붙는 일이 있었다.
+function salesDraftDeductionFor(customerName){
+  const match = findMatchingSalesRecord(customerName);
+  const rec = match && match.record;
+  if(!rec) return null;
+  return { amount: Math.abs(Number(rec.extra)||0), note: salesRecordExtraNoteText(rec) };
+}
+// 이미 만들어져 있는 이윤정산 건에도 기안지 값을 반영한다. 이윤정산 화면에서
+// 직접 고친 항목(touchedFields)은 그대로 둔다.
+function applySalesDraftDeduction(p){
+  const draft = salesDraftDeductionFor(p.customer);
+  if(!draft) return false;
+  const touched = new Set(p.touchedFields||[]);
+  let changed = false;
+  if(!touched.has('salesDeduction') && (Number(p.salesDeduction)||0) !== draft.amount){
+    p.salesDeduction = draft.amount;
+    changed = true;
+  }
+  if(!touched.has('salesDeductionNote') && draft.note && String(p.salesDeductionNote||'') !== draft.note){
+    p.salesDeductionNote = draft.note;
+    changed = true;
+  }
+  // 영업비는 공제금을 빼고 남는 금액이라, 공제가 바뀌면 같이 다시 계산해야
+  // 기안지의 지급금과 어긋나지 않는다.
+  if(changed && !touched.has('salesCost')){
+    p.salesCost = computeFinalSalesCost(p.customerDeposit, p.depositPrice, p.salesDeduction);
+  }
+  return changed;
 }
 // 구조물 판매단가(정산데이터 AC열): 부착형이면 화면에 보이는 단가(3kW당
 // 22만원 고정 — applyAttachedStructurePricing이 이미 채워둔 값)를 그대로
@@ -5006,7 +5069,9 @@ function resolveProfitLedgerValues(profitCase, rec, salesCase){
     ? Math.abs(Number(companyPriceSource)||0)
     : (Number(profitCase.depositPrice) || '');
   const salesDeduction = Number(profitCase.salesDeduction) || Math.abs(Number((rec && rec.extra) || (perfRow && perfRow.extra) || 0)) || 0;
-  const salesDeductionNote = profitCase.salesDeductionNote || (rec && rec.note) || (perfRow && perfRow.extraNote) || (perfRow && perfRow.note) || '';
+  // 기안지에서 가져올 땐 비고 전체가 아니라 "추가비 : …" 줄만 쓴다 — 예전에는
+  // 여러 줄짜리 비고 전체가 정산데이터의 비고 한 칸에 통째로 들어갔다.
+  const salesDeductionNote = profitCase.salesDeductionNote || salesRecordExtraNoteText(rec) || (perfRow && perfRow.extraNote) || (perfRow && perfRow.note) || '';
   return { corp, agentName, moduleModel, moduleBuy, moduleSell, moduleBuyFormula, moduleSellFormula, companyPrice, salesDeduction, salesDeductionNote };
 }
 async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch){
@@ -5680,6 +5745,16 @@ function renderProfitMain(){
     </div>
   `;
 
+  // 영업비 공제/비고는 영업비 정산 기안지의 값을 우선으로 보여준다. 기안지 건은
+  // 목록만 불러와 있고 내용은 아직 안 읽었을 수 있어, 처음 한 번 전부 불러온 뒤
+  // 바뀐 게 있으면 다시 그린다.
+  if(!salesCasesLoaded){
+    ensureSalesCasesLoaded().then(()=>{
+      if(state.activeTab !== 'profit' || activeCase !== p) return;
+      if(applySalesDraftDeduction(p)){ persistCase(p); renderProfitMain(); }
+    });
+  }
+
   document.getElementById('deleteCaseBtn').addEventListener('click', removeActiveCase);
   document.getElementById('caseHistoryBtn').addEventListener('click', ()=> openCaseHistoryOverlay(p.id));
   const notifyBtn = document.getElementById('notifySendBtn');
@@ -5690,7 +5765,10 @@ function renderProfitMain(){
   });
   if(profitLedgerState.open) wireProfitLedgerPanel(p);
   document.getElementById('profitPrintBtn').addEventListener('click', openProfitPrintPreview);
-  document.getElementById('profitRecalcBtn').addEventListener('click', ()=>{
+  document.getElementById('profitRecalcBtn').addEventListener('click', async ()=>{
+    // 기안지에서 추가비를 고쳤을 수 있으니 공제금·비고부터 다시 맞춘다.
+    await ensureSalesCasesLoaded();
+    applySalesDraftDeduction(p);
     const modulePrices = PROFIT_MODULE_PRICES[p.moduleModel];
     if(modulePrices){ p.moduleBuy = modulePrices.buy; p.moduleSell = modulePrices.sell; }
     const module2Prices = PROFIT_MODULE_PRICES[p.module2Model];
@@ -13494,6 +13572,10 @@ function buildProfitCaseFromRow(row){
   const p = newProfitCase();
   const modulePrices = PROFIT_MODULE_PRICES[row.moduleModel];
   const inverterPrices = PROFIT_INVERTER_PRICES[String(row.inverterModel||'').trim()];
+  // 영업비 공제(공제금·비고)는 영업비 정산 기안지에 적힌 값을 최우선으로 쓰고,
+  // 연결된 기안지가 없을 때만 실적리스트의 추가비를 쓴다.
+  const draftDeduction = salesDraftDeductionFor(row.customer);
+  const deduction = draftDeduction ? draftDeduction.amount : (Math.abs(row.extra) || 0);
   Object.assign(p, {
     customer: row.customer,
     constructionDate: row.date,
@@ -13518,11 +13600,13 @@ function buildProfitCaseFromRow(row){
     structureBuy: row.structureBuy || 0,
     structureSell: row.structureSell || 0,
     customerDeposit: row.deposit || row.totalAmount || 0,
+    // 영업비도 공제금을 빼고 남는 금액이라, 기안지 공제금을 쓸 땐 같은 값으로
+    // 계산해야 기안지의 지급금과 어긋나지 않는다.
     salesCost: (row.deposit || row.totalAmount)
-      ? computeFinalSalesCost(row.deposit || row.totalAmount, row.companyPrice || computePerfCompanyPrice(row) || 0, row.extra)
+      ? computeFinalSalesCost(row.deposit || row.totalAmount, row.companyPrice || computePerfCompanyPrice(row) || 0, deduction)
       : (row.salesCost || row.finalSalesCost || 0),
-    salesDeduction: Math.abs(row.extra) || 0,
-    salesDeductionNote: row.extraNote || '',
+    salesDeduction: deduction,
+    salesDeductionNote: draftDeduction ? (draftDeduction.note || row.extraNote || '') : (row.extraNote || ''),
     constructionCost: computeConstructionCost(parseFloat(row.capacity)||0),
   });
   applyAttachedStructurePricing(p);
