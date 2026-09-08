@@ -1136,6 +1136,7 @@ function newProfitCase(){
     id: uid(),
     caseType: 'profit',
     customer: '',
+    corp: '', // 계약회사 — 가로 목록·엑셀 내보내기의 "계약회사" 열에 쓰인다
     constructionDate: '',
     capacityKw: 0,
     inspectionCert: '추후 발행 예정',
@@ -4852,7 +4853,16 @@ function salesDraftDeductionFor(customerName){
   const match = findMatchingSalesRecord(customerName);
   const rec = match && match.record;
   if(!rec) return null;
-  return { amount: Math.abs(Number(rec.extra)||0), note: salesRecordExtraNoteText(rec) };
+  return {
+    amount: Math.abs(Number(rec.extra)||0),
+    note: salesRecordExtraNoteText(rec),
+    // 영업비는 기안지에서 실제로 계산된 지급금을 그대로 쓴다. 다시 계산하면
+    // 기안지에서 부가세를 수동으로 지정한 건이나 공제가 커서 지급금이 음수인
+    // 건에서 기안지와 다른 금액이 나온다.
+    pay: payOf(rec),
+    companyPrice: Math.abs(Number(rec.companyPrice)||0),
+    corp: rec.corp || '',
+  };
 }
 // 이미 만들어져 있는 이윤정산 건에도 기안지 값을 반영한다. 이윤정산 화면에서
 // 직접 고친 항목(touchedFields)은 그대로 둔다.
@@ -4869,10 +4879,16 @@ function applySalesDraftDeduction(p){
     p.salesDeductionNote = draft.note;
     changed = true;
   }
-  // 영업비는 공제금을 빼고 남는 금액이라, 공제가 바뀌면 같이 다시 계산해야
-  // 기안지의 지급금과 어긋나지 않는다.
-  if(changed && !touched.has('salesCost')){
-    p.salesCost = computeFinalSalesCost(p.customerDeposit, p.depositPrice, p.salesDeduction);
+  // 영업비는 기안지에서 실제로 계산된 지급금을 그대로 가져온다 — 여기서 다시
+  // 계산하면 부가세를 수동으로 지정했거나 공제가 커서 지급금이 음수인 건에서
+  // 기안지와 다른 금액이 나온다.
+  if(!touched.has('salesCost') && (Number(p.salesCost)||0) !== draft.pay){
+    p.salesCost = draft.pay;
+    changed = true;
+  }
+  if(!touched.has('corp') && draft.corp && String(p.corp||'') !== draft.corp){
+    p.corp = draft.corp;
+    changed = true;
   }
   return changed;
 }
@@ -5786,10 +5802,22 @@ function renderProfitMain(){
         p.structureSell = Number(importRow.structureSell)||0;
       }
     }
-    const price = computePerfCompanyPrice({ moduleModel: p.moduleModel, structureType: p.structureNote, capacityKw: p.capacityKw });
-    if(price !== null) p.depositPrice = price;
+    // 회사입금가는 기안지·실적리스트에 실제로 적힌 값을 우선한다 — 예전에는
+    // 무조건 표준 단가로 다시 계산해서, 손으로 협의한 입금가가 "다시 계산" 한 번에
+    // 표준가로 덮어써졌다.
+    const draft = salesDraftDeductionFor(p.customer);
+    const perfRowForPrice = findPerfRowByCustomer(p.customer);
+    const agreedPrice = (draft && draft.companyPrice)
+      || (perfRowForPrice && Math.abs(Number(perfRowForPrice.companyPrice)||0))
+      || 0;
+    if(agreedPrice) p.depositPrice = agreedPrice;
+    else {
+      const price = computePerfCompanyPrice({ moduleModel: p.moduleModel, structureType: p.structureNote, capacityKw: p.capacityKw });
+      if(price !== null) p.depositPrice = price;
+    }
     p.constructionCost = computeConstructionCost(p.capacityKw);
-    p.salesCost = computeFinalSalesCost(p.customerDeposit, p.depositPrice, p.salesDeduction);
+    // 영업비도 기안지가 있으면 그 지급금을 그대로 쓴다.
+    p.salesCost = draft ? draft.pay : computeFinalSalesCost(p.customerDeposit, p.depositPrice, p.salesDeduction);
     debouncedSave();
     renderProfitMain();
   });
@@ -13578,6 +13606,11 @@ function buildProfitCaseFromRow(row){
   const deduction = draftDeduction ? draftDeduction.amount : (Math.abs(row.extra) || 0);
   Object.assign(p, {
     customer: row.customer,
+    // 계약회사·필증일자는 실적리스트에 있는데도 이윤정산으로 안 넘어와서, 가로
+    // 목록과 엑셀 내보내기의 "계약회사" 열이 늘 비고 "필증일자"는 기본값
+    // ("추후 발행 예정")으로만 나왔다. 계약회사는 기안지 값을 우선한다.
+    corp: (draftDeduction && draftDeduction.corp) || row.corp || '',
+    inspectionCert: firstDateOf(row.certDate) || p.inspectionCert,
     constructionDate: row.date,
     capacityKw: parseFloat(row.capacity)||0,
     agentName: row.agent,
@@ -13600,11 +13633,13 @@ function buildProfitCaseFromRow(row){
     structureBuy: row.structureBuy || 0,
     structureSell: row.structureSell || 0,
     customerDeposit: row.deposit || row.totalAmount || 0,
-    // 영업비도 공제금을 빼고 남는 금액이라, 기안지 공제금을 쓸 땐 같은 값으로
-    // 계산해야 기안지의 지급금과 어긋나지 않는다.
-    salesCost: (row.deposit || row.totalAmount)
-      ? computeFinalSalesCost(row.deposit || row.totalAmount, row.companyPrice || computePerfCompanyPrice(row) || 0, deduction)
-      : (row.salesCost || row.finalSalesCost || 0),
+    // 영업비는 연결된 기안지가 있으면 거기서 실제로 계산된 지급금을 그대로
+    // 쓴다 — 다시 계산하면 기안지에서 부가세를 수동으로 지정했거나 공제가 커서
+    // 지급금이 음수인 건에서 기안지와 다른 금액이 나온다.
+    salesCost: draftDeduction ? draftDeduction.pay
+      : ((row.deposit || row.totalAmount)
+        ? computeFinalSalesCost(row.deposit || row.totalAmount, row.companyPrice || computePerfCompanyPrice(row) || 0, deduction)
+        : (row.salesCost || row.finalSalesCost || 0)),
     salesDeduction: deduction,
     salesDeductionNote: draftDeduction ? (draftDeduction.note || row.extraNote || '') : (row.extraNote || ''),
     constructionCost: computeConstructionCost(parseFloat(row.capacity)||0),
@@ -13620,7 +13655,7 @@ function buildProfitCaseFromRow(row){
 // draftDate처럼 "지금 시각" 기준으로 매번 새로 계산되는 값은 절대 포함하지
 // 않는다 — 안 그러면 다시 동기화할 때마다 엉뚱하게 덮어써진다).
 const SALES_ROW_SYNCED_FIELDS = ['date','contractDate','depositDate','customer','address','team','structureType','capacity','inverter','module','deposit','companyPrice','extra','note','corp'];
-const PROFIT_ROW_SYNCED_FIELDS = ['customer','constructionDate','capacityKw','agentName','teamName','totalBusinessCost','depositPrice','moduleModel','moduleQty','moduleBuy','moduleSell','inverterModel','inverterQty','inverterBuy','inverterSell','structureNote','structureBuy','structureSell','structureQty','customerDeposit','salesCost','salesDeduction','salesDeductionNote','constructionCost'];
+const PROFIT_ROW_SYNCED_FIELDS = ['customer','corp','inspectionCert','constructionDate','capacityKw','agentName','teamName','totalBusinessCost','depositPrice','moduleModel','moduleQty','moduleBuy','moduleSell','inverterModel','inverterQty','inverterBuy','inverterSell','structureNote','structureBuy','structureSell','structureQty','customerDeposit','salesCost','salesDeduction','salesDeductionNote','constructionCost'];
 // 만들어진 뒤 상세 화면에서 직접 고친 항목(touchedFields)은 절대 덮어쓰지
 // 않는다 — 실적리스트 값이 바뀌어도 사람이 이미 손댄 값은 그대로 둔다.
 function syncSalesRecordFromRow(rec, row){
