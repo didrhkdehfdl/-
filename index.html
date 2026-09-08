@@ -473,8 +473,8 @@
     .doc-page.landscape{ break-after:auto; page-break-after:auto; page:landscapePage; zoom:0.655; }
   }
   @page{ margin:12mm; }
-  @page portraitPage{ size:portrait; margin:12mm; }
-  @page landscapePage{ size:landscape; margin:10mm; }
+  @page portraitPage{ size:A4 portrait; margin:12mm; }
+  @page landscapePage{ size:A4 landscape; margin:10mm; }
 </style>
 </head>
 <body>
@@ -15344,7 +15344,15 @@ function openPrintWindow(contentHtml, pageCss){
         '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>인쇄</title>' +
         '<link rel="preconnect" href="https://fonts.googleapis.com">' +
         fontLinks +
-        '<style>' + styleText + ' body{background:#fff;padding:20px;} .doc-page{box-shadow:none;margin:0 auto 24px;} @page{ ' + pageCss + ' }</style>' +
+        // body의 20px 패딩과 .doc-page의 24px 아래 여백은 인쇄 대화상자가 뜨기
+        // 전 미리보기 화면에서 페이지끼리 안 붙어 보이게 하려고 넣은 것뿐인데,
+        // 실제 인쇄될 때도 이 값이 그대로 한 장 분량의 내용 뒤에 더해져서
+        // 종이 한 장 분량(1240px×zoom)에 거의 딱 맞게 짜여진 법인카드
+        // 사용내역서 같은 문서는 이 여백만큼 다음 장으로 넘어가 매번 내용
+        // 없는 빈 페이지가 하나 더 인쇄되는 원인이 됐다. 실제 인쇄(@media
+        // print)에서는 0으로 되돌린다 — 페이지 사이 간격은 @page의 margin이
+        // 이미 담당한다.
+        '<style>' + styleText + ' body{background:#fff;padding:20px;} .doc-page{box-shadow:none;margin:0 auto 24px;} @media print{ body{padding:0;} .doc-page{margin:0 auto;} } @page{ ' + pageCss + ' }</style>' +
         '</head><body><div class="print-sheet">' + contentHtml + '</div></body></html>'
       );
       printWindow.document.close();
