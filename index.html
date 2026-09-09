@@ -233,6 +233,18 @@
     #vehicleTableWrap td{ font-size:13px; }
     #vehicleTableWrap td input, #vehicleTableWrap td select, #vehicleTableWrap td textarea{ font-size:12.5px; }
   }
+  /* 이 두 표는 칸을 내용 길이에 맞춰 늘였다 줄였다 하려고 table-layout:auto,
+     width:auto로 두는데, 그러면 브라우저가 표를 감싼 상자(width:100%) 폭에
+     맞춰 우겨넣으려고(shrink-to-fit) 칸들을 강제로 눌러버린다. 특히 아직
+     width:100%인 select(사업분류·하이패스)처럼 퍼센트 폭인 칸은 "얼마나
+     필요하다"는 주장을 못 해서 가장 먼저 눌리고, 그래서 "사무실"이 "사무"로
+     잘려 보였다. min-width:max-content로 "칸들이 원하는 폭의 합" 아래로는
+     절대 안 줄어들게 막는다 — 내용이 짧을 때 표가 좁아지는 건 그대로다.
+     (차량관리는 760px 이하 모바일 레이아웃에서 min-width:0 !important로
+     이 값을 덮어써서 세로로 쌓이는 카드 화면에는 영향이 없다.) */
+  #corpCardTableWrap > table, #vehicleTableWrap > table{
+    min-width:-webkit-max-content; min-width:max-content;
+  }
   .del-row-btn{ background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 2px; width:100%; }
   .del-row-btn:hover{ color:var(--neg); }
   #addRowBtn{
