@@ -604,6 +604,17 @@
   </div>
 </div>
 
+<div id="cardApprovalOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:90; display:none; align-items:center; justify-content:center; padding:20px;">
+  <div style="background:var(--bg); border-radius:12px; width:760px; max-width:100%; max-height:84vh; display:flex; flex-direction:column; overflow:hidden;">
+    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line);">
+      <div style="font-family:'Noto Sans KR', sans-serif; font-weight:700; font-size:15px;">💳 <span id="cardApprovalTitle"></span></div>
+      <button id="cardApprovalCloseBtn" style="border:none; background:transparent; font-size:18px; color:var(--muted); cursor:pointer;">✕</button>
+    </div>
+    <div id="cardApprovalControls" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 20px; border-bottom:1px solid var(--line);"></div>
+    <div id="cardApprovalList" style="padding:0 20px 14px; overflow:auto; flex:1;"></div>
+  </div>
+</div>
+
 <div id="colFilterDropdown" style="position:fixed; z-index:300; display:none; flex-direction:column; background:var(--bg); border:1px solid var(--line); border-radius:8px; box-shadow:0 4px 18px rgba(0,0,0,.28); width:230px; max-height:340px;">
   <div style="padding:8px; border-bottom:1px solid var(--line);">
     <input id="colFilterSearch" placeholder="값 검색" style="width:100%; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12px; box-sizing:border-box;">
@@ -1952,6 +1963,13 @@ function closeGenericHistoryOverlay(){
   genericHistoryContext = null;
 }
 document.getElementById('genericHistoryCloseBtn').addEventListener('click', closeGenericHistoryOverlay);
+// 카드번호별 승인내역 보기 — 배경을 눌러도 닫히게 한다.
+(function(){
+  const overlay = document.getElementById('cardApprovalOverlay');
+  const close = ()=>{ overlay.style.display = 'none'; };
+  document.getElementById('cardApprovalCloseBtn').addEventListener('click', close);
+  overlay.addEventListener('click', (e)=>{ if(e.target === overlay) close(); });
+})();
 // 탭 전체가 문서 하나인 경우 공통으로 쓰는 저장 래퍼 — recordGenericHistoryBeforeSave로
 // 이전 상태를 이력에 남긴 뒤에 새 값을 덮어쓴다.
 async function saveWithGenericHistory(storageKey, value){
@@ -9526,7 +9544,22 @@ async function readWorkbookFromFile(file){
 // 해당 카드 블록(B~Q열)만 자동으로 채워서 다시 다운로드할 수 있게 한다.
 // 카드별 관리대장을 별도로 올릴 필요가 없다 — 법인카드 탭 데이터가 곧 관리대장.
 const CORP_CARD_MASTER_LIST_KEY = 'corp-card-master-list';
-let corpCardMasterTemplates = []; // [{id, label, fileName, buffer(선택적, 캐시)}]
+// 업로드 시각(ISO)을 "2026-09-15 14:30"처럼 읽기 쉽게 보여준다.
+function fmtUploadedAt(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return String(iso);
+  const p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+// 승인내역은 올릴 때마다 항목에 업로드 시각을 찍어두므로, 그중 가장 최근 값이
+// "마지막 업로드" 시각이 된다(이 기능 추가 전에 올린 항목엔 값이 없다).
+function lastApprovalUploadAt(){
+  let latest = '';
+  (corpCardState.approvalEntries||[]).forEach(a=>{ if(a.uploadedAt && a.uploadedAt > latest) latest = a.uploadedAt; });
+  return latest;
+}
+let corpCardMasterTemplates = []; // [{id, label, fileName, uploadedAt, buffer(선택적, 캐시)}]
 let corpCardMasterLoaded = false;
 async function ensureCardMasterLoaded(){
   if(corpCardMasterLoaded) return;
@@ -9535,13 +9568,13 @@ async function ensureCardMasterLoaded(){
   corpCardMasterLoaded = true;
 }
 async function saveCardMasterList(){
-  await saveWithGenericHistory(CORP_CARD_MASTER_LIST_KEY, JSON.stringify(corpCardMasterTemplates.map(t=>({ id:t.id, label:t.label, fileName:t.fileName }))));
+  await saveWithGenericHistory(CORP_CARD_MASTER_LIST_KEY, JSON.stringify(corpCardMasterTemplates.map(t=>({ id:t.id, label:t.label, fileName:t.fileName, uploadedAt:t.uploadedAt||'' }))));
 }
 async function handleCardMasterAdd(file){
   const { buf } = await readWorkbookFromFile(file);
   const id = rid();
   await saveFileToStorage('corp-card-master-buf:'+id, arrayBufferToBase64(buf), 30000);
-  corpCardMasterTemplates.push({ id, label:file.name.replace(/\.xlsx$/i,''), fileName:file.name, buffer:buf });
+  corpCardMasterTemplates.push({ id, label:file.name.replace(/\.xlsx$/i,''), fileName:file.name, uploadedAt: new Date().toISOString(), buffer:buf });
   await saveCardMasterList();
 }
 // "7월"이든 "2026-01월"이든 뒤에 붙은 "N월"의 월 숫자만 뽑아서, 법인카드 탭의
@@ -9659,7 +9692,7 @@ async function renderCardReconMain(){
       <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <input type="file" id="cardApprovalFile2" accept=".xlsx,.xls" style="display:none;">
         <button id="cardApprovalBtn2" style="padding:8px 14px; border-radius:7px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600; font-size:12.5px;">🧾 승인내역 업로드</button>
-        <span style="font-size:12px; color:var(--muted);">${corpCardState.approvalEntries.length ? `누적 ${fmtNum(corpCardState.approvalEntries.length)}건` : '업로드된 내역 없음'}</span>
+        <span style="font-size:12px; color:var(--muted);">${corpCardState.approvalEntries.length ? `누적 ${fmtNum(corpCardState.approvalEntries.length)}건${lastApprovalUploadAt() ? ` · 마지막 업로드 ${fmtUploadedAt(lastApprovalUploadAt())}` : ''}` : '업로드된 내역 없음'}</span>
       </div>
     </div>
 
@@ -9674,6 +9707,7 @@ async function renderCardReconMain(){
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600;">${escapeHtml(t.label)}</div>
             <div style="font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(t.fileName)}">${escapeHtml(t.fileName)}</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:2px;">${t.uploadedAt ? `업로드 ${fmtUploadedAt(t.uploadedAt)}` : '업로드 날짜 기록 없음(이 기능 추가 전에 올린 파일)'}</div>
           </div>
           <button class="cardmaster-refresh-btn" data-id="${t.id}" style="padding:8px 14px; border-radius:7px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600; font-size:12.5px;">최신 데이터로 갱신 후 다운로드</button>
           <button class="cardmaster-remove-btn" data-id="${t.id}" style="padding:8px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">제거</button>
@@ -11053,7 +11087,14 @@ function reconcileCorpCardWithApproval(ledgerRows, approvalEntries){
       // 같은 전혀 다른 건일 수 있으니) 안내 자체를 내보내지 않는다. 후보가
       // 딱 하나뿐이면 사용처가 다르게 적혀 있어도 그게 맞을 가능성이 높으니
       // 그대로 인정한다.
-      const amountCandidates = approvalEntries.filter(a=>a.amount===r.amount && a.isoDate!==r.isoDate);
+      // 날짜가 잘못 적힌 것으로 볼 후보는 "같은 달" 승인내역으로만 한정한다 —
+      // 승인내역은 여러 달치가 누적돼 쌓이기 때문에, 달을 안 가리면 9월 행에
+      // 금액만 같은 8월 승인내역이 걸려서 "날짜가 잘못된 것 같습니다
+      // (승인내역: 2026-08-19)"처럼 엉뚱한 안내가 나갔다. 날짜를 잘못 적는 건
+      // 보통 같은 달 안에서 일어나므로, 다른 달 건은 후보로 보지 않는다.
+      const rowMonth = String(r.isoDate||'').slice(0,7);
+      const sameMonth = a => String(a.isoDate||'').slice(0,7) === rowMonth;
+      const amountCandidates = approvalEntries.filter(a=>a.amount===r.amount && a.isoDate!==r.isoDate && sameMonth(a));
       const dateCandidates = approvalEntries.filter(a=>a.isoDate===r.isoDate && a.amount!==r.amount);
       const pickCandidate = list => list.length===1 ? list[0] : list.find(a=>placesSimilar(r.place, a.place));
       const sameAmount = pickCandidate(amountCandidates);
@@ -11069,6 +11110,79 @@ function reconcileCorpCardWithApproval(ledgerRows, approvalEntries){
     }
   });
   return mismatchMap;
+}
+// ===== 카드번호별 승인내역 보기 =====
+// 올려둔 카드사 승인내역은 여러 카드·여러 달치가 한 곳에 누적돼 쌓이기 때문에,
+// "이 카드의 이 달 승인내역"만 따로 펼쳐볼 수 있어야 장부와 맞춰보기 쉽다.
+let cardApprovalView = { cardId:'', month:'' }; // month:'' 이면 전체 달
+function approvalEntriesForCard(cardId){
+  const card = corpCardState.cards.find(c=>c.id===cardId);
+  if(!card) return [];
+  const parts = cardParts(card.cardNumber);
+  if(!parts) return [];
+  return corpCardState.approvalEntries
+    .filter(a=>approvalRowMatchesCard(a.cardNoStr, parts))
+    .slice()
+    .sort((a,b)=> String(a.isoDate||'').localeCompare(String(b.isoDate||'')));
+}
+function openCardApprovalOverlay(cardId, month){
+  cardApprovalView = { cardId, month: month || '' };
+  renderCardApprovalOverlay();
+  document.getElementById('cardApprovalOverlay').style.display = 'flex';
+}
+function renderCardApprovalOverlay(){
+  const s = corpCardState;
+  const card = s.cards.find(c=>c.id===cardApprovalView.cardId);
+  if(!card) return;
+  const all = approvalEntriesForCard(card.id);
+  const months = [...new Set(all.map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean))].sort();
+  const month = cardApprovalView.month;
+  const shown = month ? all.filter(a=>String(a.isoDate||'').slice(0,7)===month) : all;
+  // 장부에 이미 적어둔 건인지 표시해준다 — 날짜+금액이 같은 행이 있으면 "장부 있음".
+  const ledgerKeys = new Set();
+  Object.values(s.rowsByCard[card.id]||{}).forEach(monthRows=>{
+    (monthRows||[]).forEach(r=>{ if(r.date) ledgerKeys.add(`${r.date}|${Math.abs(Number(r.amount)||0)}`); });
+  });
+
+  const tail = cardParts(card.cardNumber);
+  document.getElementById('cardApprovalTitle').textContent =
+    `${card.name || '카드'} 승인내역${tail ? ` · ${tail.p4}` : ''}`;
+
+  const total = shown.reduce((sum,a)=>sum + (Number(a.amount)||0), 0);
+  const btn = (label, value, active) =>
+    `<button class="cardapproval-month-btn" data-month="${escapeHtml(value)}" style="padding:6px 11px; border-radius:6px; border:1px solid ${active?'var(--gold-dim)':'var(--line)'}; background:${active?'rgba(224,163,57,.14)':'transparent'}; color:${active?'var(--gold)':'var(--muted)'}; font-size:12px; cursor:pointer; font-weight:${active?'600':'400'};">${escapeHtml(label)}</button>`;
+  document.getElementById('cardApprovalControls').innerHTML =
+    btn('전체', '', !month) + months.map(m=>btn(m.replace('-','년 ')+'월', m, m===month)).join('')
+    + `<span style="margin-left:auto; font-size:12px; color:var(--muted);">${fmtNum(shown.length)}건 · 합계 ${fmtWon(total)}</span>`;
+
+  document.getElementById('cardApprovalList').innerHTML = !shown.length
+    ? `<div class="empty-side" style="margin-top:14px;">이 카드로 올려둔 승인내역이 없습니다.<br>"카드관리" 화면에서 카드사 승인내역 파일을 올려주세요.</div>`
+    : `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+        <thead><tr>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:110px; position:sticky; top:0; background:var(--bg);">승인일자</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:left; position:sticky; top:0; background:var(--bg);">사용처</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:right; width:110px; position:sticky; top:0; background:var(--bg);">금액</th>
+          <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:90px; position:sticky; top:0; background:var(--bg);">장부</th>
+        </tr></thead>
+        <tbody>
+          ${shown.map(a=>{
+            const inLedger = ledgerKeys.has(`${a.isoDate}|${Math.abs(Number(a.amount)||0)}`);
+            return `<tr>
+              <td style="padding:6px; text-align:center; color:var(--text);">${escapeHtml(a.isoDate||'')}</td>
+              <td style="padding:6px; color:var(--text);">${escapeHtml(a.place||'')}</td>
+              <td style="padding:6px; text-align:right; font-family:'Roboto Mono', monospace;">${fmtNum(Number(a.amount)||0)}</td>
+              <td style="padding:6px; text-align:center; font-size:11.5px; ${inLedger?'color:var(--pos); font-weight:700;':'color:var(--neg);'}">${inLedger?'✓ 있음':'없음'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+
+  document.querySelectorAll('.cardapproval-month-btn').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      cardApprovalView.month = b.dataset.month;
+      renderCardApprovalOverlay();
+    });
+  });
 }
 function recomputeCorpCardMismatches(){
   const s = corpCardState;
@@ -11099,6 +11213,10 @@ async function handleCorpCardApprovalUpload(file){
   if(!totalRaw){ alert('승인내역 시트에서 "승인일자"/"승인금액" 헤더를 찾지 못했습니다.'); return; }
   const cancelledCount = totalRaw - parsedRows.length;
   const before = corpCardState.approvalEntries.length;
+  // 언제 올린 건인지 남겨둔다 — 화면에 "마지막 업로드" 날짜를 보여주고, 나중에
+  // 어느 시점까지의 승인내역이 들어와 있는지 확인할 수 있게 하기 위함이다.
+  const uploadedAt = new Date().toISOString();
+  parsedRows.forEach(r=>{ r.uploadedAt = uploadedAt; r.uploadedFile = file.name; });
   corpCardState.approvalEntries = mergeApprovalEntries(corpCardState.approvalEntries, parsedRows);
   const added = corpCardState.approvalEntries.length - before;
   await saveCorpCardApprovalEntries();
@@ -11500,7 +11618,7 @@ async function renderCorpCardMain(){
     </div>
     <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">
       ${escapeHtml(s.activeMonth)} · 총 ${rows.length}건${visibleRows.length!==rows.length?` (필터로 ${visibleRows.length}건 표시 중)`:''} · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다
-      ${s.approvalEntries.length ? ` · 승인내역 누적 ${fmtNum(s.approvalEntries.length)}건` : ''}
+      ${s.approvalEntries.length ? ` · 승인내역 누적 ${fmtNum(s.approvalEntries.length)}건 <button id="corpCardApprovalViewBtn" style="margin-left:4px; font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">이 카드 승인내역 보기</button>` : ''}
       ${issueCountInMonth ? ` · <span style="color:var(--neg); font-weight:600;">🔴 확인 필요 ${issueCountInMonth}건(빈칸·승인내역 불일치 등)</span>` : ' · ✅ 이번 달 전부 문제 없음'}
     </div>
     <datalist id="corpCardCarNoOptions"><option value="자차"></option></datalist>
@@ -11725,6 +11843,9 @@ async function renderCorpCardMain(){
   });
   const exportBtn = document.getElementById('corpCardExportBtn');
   if(exportBtn) exportBtn.addEventListener('click', async ()=>{ await exportCorpCardToExcel(activeCard.id); });
+  // 지금 보고 있는 카드·달의 승인내역을 따로 펼쳐본다.
+  const approvalViewBtn = document.getElementById('corpCardApprovalViewBtn');
+  if(approvalViewBtn) approvalViewBtn.addEventListener('click', ()=> openCardApprovalOverlay(activeCard.id, s.activeMonth));
   const printDocBtn = document.getElementById('corpCardPrintDocBtn');
   if(printDocBtn) printDocBtn.addEventListener('click', ()=>{
     const selectedRows = rows.filter(r=>corpCardSelectedIds.has(r.id));
