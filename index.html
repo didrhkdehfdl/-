@@ -11172,8 +11172,24 @@ function approvalEntriesForCard(cardId){
     .slice()
     .sort((a,b)=> String(a.isoDate||'').localeCompare(String(b.isoDate||'')));
 }
+// 장부 탭의 달(예: 2026-09)과 승인내역에 들어와 있는 달이 어긋나 있으면
+// (연도가 다르거나 그 달 승인내역을 아직 안 올렸으면) 아무 달도 선택되지 않아
+// 빈 화면이 떠서 "승인내역이 아예 없나?" 하고 헷갈린다. 그래서 요청한 달이
+// 없으면 같은 '월'(09월)을 가진 가장 최근 달 → 그것도 없으면 가장 최근 달로
+// 자동으로 맞춰준다.
+function resolveApprovalViewMonth(cardId, wanted){
+  const months = [...new Set(approvalEntriesForCard(cardId).map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean))].sort();
+  if(!months.length) return '';
+  if(wanted && months.includes(wanted)) return wanted;
+  const mm = String(wanted||'').slice(5,7);
+  if(mm){
+    const sameMonthNo = months.filter(m=>m.slice(5,7)===mm);
+    if(sameMonthNo.length) return sameMonthNo[sameMonthNo.length-1];
+  }
+  return months[months.length-1];
+}
 function openCardApprovalOverlay(cardId, month, missingOnly){
-  cardApprovalView = { cardId, month: month || '', missingOnly: !!missingOnly };
+  cardApprovalView = { cardId, month: resolveApprovalViewMonth(cardId, month), missingOnly: !!missingOnly };
   renderCardApprovalOverlay();
   document.getElementById('cardApprovalOverlay').style.display = 'flex';
 }
@@ -11205,8 +11221,15 @@ function renderCardApprovalOverlay(){
     + missingBtn
     + `<span style="margin-left:auto; font-size:12px; color:var(--muted);">${fmtNum(shown.length)}건 · 합계 ${fmtWon(total)}</span>`;
 
+  // 비어 있는 이유를 구분해서 안내한다 — "이 카드 승인내역이 아예 없음"과
+  // "이 달만 없음", "필터 때문에 안 보임"은 해야 할 일이 서로 다르다.
+  const emptyMsg = !all.length
+    ? '이 카드로 올려둔 승인내역이 없습니다.<br>"카드관리" 화면에서 카드사 승인내역 파일을 올려주세요.'
+    : cardApprovalView.missingOnly
+      ? '이 달 승인내역은 전부 장부에 적혀 있습니다.'
+      : `${escapeHtml(month || '')} 승인내역은 아직 올라와 있지 않습니다.<br>위에서 다른 달을 골라보거나, "카드관리" 화면에서 그 달 승인내역을 올려주세요.`;
   document.getElementById('cardApprovalList').innerHTML = !shown.length
-    ? `<div class="empty-side" style="margin-top:14px;">이 카드로 올려둔 승인내역이 없습니다.<br>"카드관리" 화면에서 카드사 승인내역 파일을 올려주세요.</div>`
+    ? `<div class="empty-side" style="margin-top:14px;">${emptyMsg}</div>`
     : `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
         <thead><tr>
           <th style="padding:8px 6px; font-size:11px; color:var(--muted); text-align:center; width:110px; position:sticky; top:0; background:var(--bg);">승인일자</th>
