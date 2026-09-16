@@ -11471,6 +11471,25 @@ function unrecordedApprovalCountForMonth(cardId, month, includeEmptyMonth){
   if(!approvals.length) return 0;
   return unrecordedApprovals(cardId, approvals).length;
 }
+// 카드 전체를 훑어서 "승인내역에는 있는데 장부에 안 적힌 건"이 몇 건씩
+// 남아 있는지 카드·달별로 모아준다. 카드가 여러 장이라 한 장씩 눌러보지 않으면
+// 빠진 걸 알기 어려워서, 법인카드 화면 위에 한 번에 보여준다.
+function unrecordedSummaryAll(){
+  const out = [];
+  corpCardState.cards.forEach(card=>{
+    const approvals = approvalEntriesForCard(card.id);
+    if(!approvals.length) return;
+    const months = [...new Set(approvals.map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean))].sort();
+    months.forEach(month=>{
+      const n = unrecordedApprovalCountForMonth(card.id, month, true);
+      if(n > 0){
+        const parts = cardParts(card.cardNumber);
+        out.push({ cardId: card.id, cardName: card.name || '카드', tail: parts ? parts.p4 : '', month, count: n });
+      }
+    });
+  });
+  return out;
+}
 function approvalEntriesForCard(cardId){
   const card = corpCardState.cards.find(c=>c.id===cardId);
   if(!card) return [];
@@ -11498,7 +11517,7 @@ function approvalMonthsForCard(cardId){
 // 맞춰 장부에 행으로 먼저 깔아준다. 사람이 일일이 옮겨 적다 보면 빠뜨리거나
 // 금액을 잘못 치기 쉬운데, 날짜·사용처·금액은 카드사 기록이 정확하므로 그
 // 세 칸만 채워두고 나머지(성명·업무내용·지출내역 등)는 사람이 채우게 둔다.
-async function fillMissingApprovalRows(cardId, month){
+async function fillMissingApprovalRows(cardId, month, opts){
   const s = corpCardState;
   const card = s.cards.find(c=>c.id===cardId);
   if(!card || !month) return 0;
@@ -11506,8 +11525,11 @@ async function fillMissingApprovalRows(cardId, month){
   const missing = unrecordedApprovals(cardId, approvals)
     .slice()
     .sort((a,b)=> String(a.isoDate||'').localeCompare(String(b.isoDate||'')));
-  if(!missing.length){ alert('이 달은 승인내역이 전부 장부에 적혀 있습니다.'); return 0; }
-  if(!confirm(`승인내역에는 있는데 장부에 없는 ${missing.length}건을 승인일자 순서로 채웁니다.\n날짜·사용처·금액만 채우고 나머지 칸은 비워 둡니다.\n계속할까요?`)) return 0;
+  if(!missing.length){
+    if(!opts || !opts.skipConfirm) alert('이 달은 승인내역이 전부 장부에 적혀 있습니다.');
+    return 0;
+  }
+  if((!opts || !opts.skipConfirm) && !confirm(`승인내역에는 있는데 장부에 없는 ${missing.length}건을 승인일자 순서로 채웁니다.\n날짜·사용처·금액만 채우고 나머지 칸은 비워 둡니다.\n계속할까요?`)) return 0;
 
   s.rowsByCard[cardId] = s.rowsByCard[cardId] || {};
   const rows = s.rowsByCard[cardId][month] = s.rowsByCard[cardId][month] || [];
@@ -12132,6 +12154,19 @@ async function renderCorpCardMain(){
     </div>
     ${!activeCard ? `<div class="empty-side">등록된 카드가 없습니다. "+ 카드 추가"로 카드별 관리대장 엑셀을 올려주세요.</div>` : !tmpl ? `<div class="empty-side">이 카드의 양식 파일을 다시 올려주세요.</div>` : `
     <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">카드번호: ${escapeHtml(activeCard.cardNumber)} · 양식 파일: ${escapeHtml(tmpl.fileName)}</div>
+    ${(() => {
+      const pending = unrecordedSummaryAll();
+      if(!pending.length) return `<div style="font-size:12px; color:var(--pos); margin-bottom:12px;">✅ 모든 카드의 승인내역이 리스트에 다 적혀 있습니다.</div>`;
+      const total = pending.reduce((n,p)=>n+p.count, 0);
+      return `<div style="border:1px solid var(--gold-dim); background:rgba(224,163,57,.08); border-radius:9px; padding:10px 12px; margin-bottom:12px;">
+        <div style="font-size:12.5px; font-weight:700; color:var(--gold); margin-bottom:7px;">⚠ 승인내역에는 있는데 리스트에 안 적힌 건이 모두 ${fmtNum(total)}건 남아 있습니다</div>
+        <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
+          ${pending.map(p=>`<button class="corpcard-pending-btn" data-card="${escapeHtml(p.cardId)}" data-month="${escapeHtml(p.month)}" style="font-size:11.5px; padding:4px 10px; border-radius:6px; border:1px solid ${p.cardId===activeCard.id && p.month===s.activeMonth ? 'var(--gold)' : 'var(--line)'}; background:var(--panel-2); color:var(--text); cursor:pointer;">${escapeHtml(p.cardName)}${p.tail?` ${escapeHtml(p.tail)}`:''} · ${escapeHtml(p.month)} <b style="color:var(--neg);">${p.count}건</b></button>`).join('')}
+        </div>
+        <button id="corpCardFillAllBtn" style="font-size:11.5px; padding:5px 12px; border-radius:6px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.16); color:var(--gold); font-weight:700; cursor:pointer;">⬇ 전부 리스트에 채우기 (${fmtNum(total)}건)</button>
+        <span style="font-size:11.5px; color:var(--muted); margin-left:6px;">날짜·사용처·금액만 채웁니다</span>
+      </div>`;
+    })()}
     <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
       ${months.map(m => `<button class="corpcard-month-btn" data-month="${escapeHtml(m)}" style="padding:7px 12px; border-radius:6px; border:1px solid ${m===s.activeMonth?'var(--gold)':'var(--line)'}; background:${m===s.activeMonth?'rgba(224,163,57,.12)':'transparent'}; color:${m===s.activeMonth?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12px;">${escapeHtml(m)}</button>`).join('')}
       <button id="corpCardAddMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12px;">+ 월 추가</button>
@@ -12482,6 +12517,34 @@ async function renderCorpCardMain(){
       else { corpCardDirty = false; corpCardDirtyCardId = ''; }
       updateCorpCardSaveBtn();
     });
+  });
+  // 다른 카드/달에 남아 있는 "안 적은 승인내역" 바로가기 & 전부 채우기
+  main.querySelectorAll('.corpcard-pending-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      await flushCorpCardSave();
+      s.activeCardId = btn.dataset.card;
+      s.activeMonth = btn.dataset.month;
+      corpCardSelectedIds.clear();
+      await saveCorpCardList();
+      renderCorpCardMain();
+    });
+  });
+  const fillAllBtn = document.getElementById('corpCardFillAllBtn');
+  if(fillAllBtn) fillAllBtn.addEventListener('click', async ()=>{
+    const pending = unrecordedSummaryAll();
+    if(!pending.length) return;
+    const total = pending.reduce((n,p)=>n+p.count, 0);
+    const detail = pending.map(p=>`  · ${p.cardName}${p.tail?' '+p.tail:''} ${p.month} — ${p.count}건`).join('\n');
+    if(!confirm(`아래 카드·달에 승인내역 ${total}건을 승인일자 순서로 채웁니다.\n날짜·사용처·금액만 채우고 나머지 칸은 비워 둡니다.\n\n${detail}\n\n계속할까요?`)) return;
+    let done = 0;
+    for(const p of pending){
+      // 카드마다 한 번씩 채우고 저장한다(fillMissingApprovalRows가 자체 확인
+      // 창을 띄우지 않도록 여기서는 내부 로직만 쓰는 대신 확인을 이미 받았으므로
+      // skipConfirm으로 호출한다).
+      done += await fillMissingApprovalRows(p.cardId, p.month, { skipConfirm:true });
+    }
+    renderCorpCardMain();
+    alert(`${done}건을 각 카드·달에 채웠습니다.\n성명·업무내용 등 나머지 칸을 채워주세요.`);
   });
   const saveBtn = document.getElementById('corpCardSaveBtn');
   if(saveBtn) saveBtn.addEventListener('click', async ()=>{
