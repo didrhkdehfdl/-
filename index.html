@@ -12105,8 +12105,11 @@ let corpCardSelectedIds = new Set();
 function groupCorpCardRowsForDoc(rows){
   const order = [];
   const groups = new Map();
+  // 같은 날짜에 쓴 건은 부서·성명이 달라도 한 장(전표 하나)에 모아 적는다 —
+  // 원본 서식이 "하루치"를 한 장에 담는 형식이라, 날짜만 같으면 같은 전표다.
+  // (한 장에 4건까지라 그보다 많으면 아래에서 장을 나눈다.)
   rows.forEach(r=>{
-    const key = `${r.date}|${r.dept}|${r.name}`;
+    const key = `${r.date}`;
     if(!groups.has(key)){ groups.set(key, []); order.push(key); }
     groups.get(key).push(r);
   });
@@ -12119,6 +12122,10 @@ function groupCorpCardRowsForDoc(rows){
 }
 function buildCorpCardUsageDocPage(items, card){
   const first = items[0];
+  // 한 장에 여러 사람이 섞이면 부서·성명을 모아서 적는다(중복은 한 번만).
+  const uniq = arr => [...new Set(arr.map(v=>String(v||'').trim()).filter(Boolean))];
+  const deptText = uniq(items.map(r=>r.dept)).join(', ');
+  const nameText = uniq(items.map(r=>`${String(r.name||'').trim()}${String(r.position||'').trim() ? ' ' + String(r.position).trim() : ''}`)).join(', ');
   const total = items.reduce((sum,r)=> sum + (Number(r.amount)||0), 0);
   const approvers = ['담 당','팀 장','전 무','전 무','대 표'];
   const carNo = (items.find(r=>String(r.carNo||'').trim())||{}).carNo || '';
@@ -12160,9 +12167,9 @@ function buildCorpCardUsageDocPage(items, card){
         <td style="${labelB} width:11%;">사용일</td>
         <td style="${cellB} width:22%;">${escapeHtml(first.date)}</td>
         <td style="${labelB} width:9%;">부서</td>
-        <td style="${cellB} width:20%;">${escapeHtml(first.dept)}</td>
+        <td style="${cellB} width:20%;">${escapeHtml(deptText || first.dept)}</td>
         <td style="${labelB} width:13%;">성명/직급</td>
-        <td style="${cellB} width:25%;">${escapeHtml(first.name)}${first.position ? '&nbsp;&nbsp;' + escapeHtml(first.position) : ''}</td>
+        <td style="${cellB} width:25%;">${escapeHtml(nameText || first.name)}</td>
       </tr>
     </table>
     <table class="print-table" style="margin-top:-1px;">
