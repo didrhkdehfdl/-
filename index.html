@@ -9993,7 +9993,18 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress){
   }
   const wb = XLSX.read(buf, { type:'array' });
   const monthSheets = wb.SheetNames.filter(n=>/\d{1,2}\s*월/.test(n));
-  const applied = []; const skipped = [];
+  const applied = []; const skipped = []; const noBlock = [];
+  // 통합본 파일 자체에 그 달 시트가 없으면 넣을 자리가 없다. 지금까지는 조용히
+  // 건너뛰어서 "갱신했는데 9월이 없다"처럼 보였으므로, 어느 달이 빠졌는지 알려준다.
+  const sheetMonthNums = new Set(monthSheets.map(monthNumFromLabel).filter(Boolean));
+  const monthsWithData = new Set();
+  corpCardState.cards.forEach(card=>{
+    Object.entries(corpCardState.rowsByCard[card.id]||{}).forEach(([label, rows])=>{
+      const n = monthNumFromLabel(label);
+      if(n && (rows||[]).some(r=>r.date)) monthsWithData.add(n);
+    });
+  });
+  const missingSheets = [...monthsWithData].filter(n=>!sheetMonthNums.has(n)).sort((a,b)=>a-b);
   const totalSteps = monthSheets.length * corpCardState.cards.length;
   let doneSteps = 0;
   for(const sheetLabel of monthSheets){
@@ -10012,15 +10023,19 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress){
       if(result.error === 'overflow'){
         skipped.push(`${sheetLabel} · 카드 ${parts.p4}: 블록 칸(${result.blockSize}행)보다 입력 건수(${result.needed}건)가 더 많음`);
       } else if(result.error){
-        // 그 시트에 이 카드 블록이 아예 없는 경우 등은 조용히 건너뛴다
+        // 그 시트에 이 카드 블록이 없는 경우 — 어느 카드·어느 달인지 남겨둔다
+        noBlock.push(`${sheetLabel} · 카드 ${parts.p4}`);
       } else {
         buf = await result.blob.arrayBuffer();
         applied.push(`${sheetLabel}·${parts.p4}`);
       }
     }
   }
+  const missingMsg = missingSheets.length
+    ? `\n\n※ 이 통합본 파일에는 ${missingSheets.map(n=>n+'월').join('·')} 시트가 없어서 그 달 내역은 넣을 자리가 없습니다.\n엑셀에서 그 달 시트를 만든 통합본을 다시 올려주세요.\n(통합본에 있는 달: ${monthSheets.join(', ') || '없음'})`
+    : '';
   if(!applied.length){
-    alert('갱신할 수 있는 카드 블록을 찾지 못했습니다. (등록된 카드에 입력된 월별 내역이 없거나, 이 통합본에 해당 카드 블록이 없습니다)');
+    alert(`갱신할 수 있는 카드 블록을 찾지 못했습니다.${missingMsg || '\n(등록된 카드에 입력된 월별 내역이 없거나, 이 통합본에 해당 카드 블록이 없습니다)'}`);
     return;
   }
   const finalBlob = new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -10031,7 +10046,12 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress){
   a.download = `${base}_갱신_${isoDate(new Date())}.xlsx`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
-  if(skipped.length) alert(`${applied.length}개 블록을 반영했습니다. 다만 일부는 반영하지 못했습니다:\n`+skipped.join('\n'));
+  const notes = [];
+  if(skipped.length) notes.push('블록 칸보다 입력이 많아 넣지 못한 곳:\n  ' + skipped.join('\n  '));
+  if(noBlock.length) notes.push(`통합본에 해당 카드 블록이 없어 건너뛴 곳 ${noBlock.length}건:\n  ` + noBlock.slice(0,10).join('\n  ') + (noBlock.length>10 ? `\n  …외 ${noBlock.length-10}건` : ''));
+  if(notes.length || missingMsg){
+    alert(`${applied.length}개 블록을 반영해서 내려받았습니다.${missingMsg}${notes.length ? '\n\n' + notes.join('\n\n') : ''}`);
+  }
 }
 async function renderCardReconMain(){
   const main = document.getElementById('main');
