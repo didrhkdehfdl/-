@@ -11172,21 +11172,18 @@ function approvalEntriesForCard(cardId){
     .slice()
     .sort((a,b)=> String(a.isoDate||'').localeCompare(String(b.isoDate||'')));
 }
-// 장부 탭의 달(예: 2026-09)과 승인내역에 들어와 있는 달이 어긋나 있으면
-// (연도가 다르거나 그 달 승인내역을 아직 안 올렸으면) 아무 달도 선택되지 않아
-// 빈 화면이 떠서 "승인내역이 아예 없나?" 하고 헷갈린다. 그래서 요청한 달이
-// 없으면 같은 '월'(09월)을 가진 가장 최근 달 → 그것도 없으면 가장 최근 달로
-// 자동으로 맞춰준다.
+// 승인내역 창은 "지금 보고 있는 장부의 달"로 열리는 것이 언제나 맞다 —
+// 9월 탭을 보다가 승인내역을 열었는데 8월이 떠 있으면 카드마다 보이는 달이
+// 달라져서 헷갈린다. 그래서 그 달에 승인내역이 아직 없더라도 그 달을 그대로
+// 선택해 두고(버튼도 0건으로 같이 보여준다), 비어 있는 이유를 아래에 안내한다.
+// 카드를 특정할 수 없을 때만 승인내역이 있는 가장 최근 달로 맞춘다.
 function resolveApprovalViewMonth(cardId, wanted){
-  const months = [...new Set(approvalEntriesForCard(cardId).map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean))].sort();
-  if(!months.length) return '';
-  if(wanted && months.includes(wanted)) return wanted;
-  const mm = String(wanted||'').slice(5,7);
-  if(mm){
-    const sameMonthNo = months.filter(m=>m.slice(5,7)===mm);
-    if(sameMonthNo.length) return sameMonthNo[sameMonthNo.length-1];
-  }
-  return months[months.length-1];
+  if(wanted) return wanted;
+  const months = approvalMonthsForCard(cardId);
+  return months.length ? months[months.length-1] : '';
+}
+function approvalMonthsForCard(cardId){
+  return [...new Set(approvalEntriesForCard(cardId).map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean))].sort();
 }
 function openCardApprovalOverlay(cardId, month, missingOnly){
   cardApprovalView = { cardId, month: resolveApprovalViewMonth(cardId, month), missingOnly: !!missingOnly };
@@ -11198,8 +11195,9 @@ function renderCardApprovalOverlay(){
   const card = s.cards.find(c=>c.id===cardApprovalView.cardId);
   if(!card) return;
   const all = approvalEntriesForCard(card.id);
-  const months = [...new Set(all.map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean))].sort();
   const month = cardApprovalView.month;
+  // 보고 있는 달에 승인내역이 없어도 그 달 버튼은 띄워준다(0건인 것이 정보다).
+  const months = [...new Set(all.map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean).concat(month?[month]:[]))].sort();
   const inMonth = month ? all.filter(a=>String(a.isoDate||'').slice(0,7)===month) : all;
   // 장부에 아직 안 적은 건이 어느 것인지 미리 가려둔다(건수까지 맞춰 1:1로 짝지음).
   const missingSet = new Set(unrecordedApprovals(card.id, all));
@@ -11215,9 +11213,12 @@ function renderCardApprovalOverlay(){
     `<button class="cardapproval-month-btn" data-month="${escapeHtml(value)}" style="padding:6px 11px; border-radius:6px; border:1px solid ${active?'var(--gold-dim)':'var(--line)'}; background:${active?'rgba(224,163,57,.14)':'transparent'}; color:${active?'var(--gold)':'var(--muted)'}; font-size:12px; cursor:pointer; font-weight:${active?'600':'400'};">${escapeHtml(label)}</button>`;
   const missingBtn = missingInMonth.length
     ? `<button id="cardApprovalMissingBtn" style="padding:6px 11px; border-radius:6px; border:1px solid var(--neg); background:${cardApprovalView.missingOnly?'rgba(178,59,46,.22)':'transparent'}; color:var(--neg); font-size:12px; font-weight:700; cursor:pointer;">🔴 장부에 없음 ${missingInMonth.length}건${cardApprovalView.missingOnly?' (보는 중)':''}</button>`
-    : `<span style="font-size:12px; color:var(--pos); font-weight:600;">✅ 전부 장부에 있음</span>`;
+    : (inMonth.length ? `<span style="font-size:12px; color:var(--pos); font-weight:600;">✅ 전부 장부에 있음</span>` : '');
   document.getElementById('cardApprovalControls').innerHTML =
-    btn('전체', '', !month) + months.map(m=>btn(m.replace('-','년 ')+'월', m, m===month)).join('')
+    btn('전체', '', !month) + months.map(m=>{
+      const n = all.filter(a=>String(a.isoDate||'').slice(0,7)===m).length;
+      return btn(`${m.replace('-','년 ')}월${n?'':' (0건)'}`, m, m===month);
+    }).join('')
     + missingBtn
     + `<span style="margin-left:auto; font-size:12px; color:var(--muted);">${fmtNum(shown.length)}건 · 합계 ${fmtWon(total)}</span>`;
 
