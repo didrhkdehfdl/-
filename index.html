@@ -9640,16 +9640,18 @@ function isoDateUTC(d){
 // 열 위치를 가정하지 않고 헤더 이름으로 찾아야, 카드사마다 열 순서가 달라도
 // 관리대장의 날짜·금액과 정확히 같은 값끼리 비교할 수 있다).
 // 머리글 없이 시각만 들어 있는 열을 값 모양으로 찾아낸다(앞 30줄만 훑는다).
-function findApprovalTimeColumn(aoa, headerIdx, colDate){
+function findApprovalTimeColumn(aoa, headerIdx, colDate, colAmount){
   const width = Math.max(...aoa.slice(headerIdx+1, headerIdx+31).map(r=>(r||[]).length), 0);
   for(let c=0;c<width;c++){
-    if(c === colDate) continue;
+    if(c === colDate || c === colAmount) continue;
     let looksTime = 0, seen = 0;
     for(let i=headerIdx+1;i<Math.min(aoa.length, headerIdx+31);i++){
       const v = (aoa[i]||[])[c];
       if(v === '' || v === undefined || v === null) continue;
       seen++;
       if(v instanceof Date){ if(v.getUTCHours()||v.getUTCMinutes()||v.getUTCSeconds()) looksTime++; }
+      // 엑셀 시각 서식은 0 이상 1 미만의 숫자로 온다(하루를 1로 본 비율).
+      else if(typeof v === 'number' && isFinite(v) && v > 0 && v < 1) looksTime++;
       else if(/^\s*\d{1,2}:\d{2}(:\d{2})?\s*$/.test(String(v))) looksTime++;
     }
     if(seen >= 2 && looksTime === seen) return c;
@@ -9678,15 +9680,24 @@ function approvalParseAoa(aoa){
   if(colPlace<0) colPlace = 3; // 가맹점명/사용처 열을 못 찾으면 기존 위치를 그대로 사용
   // 승인시각 열에 머리글이 없거나 이름이 제각각인 파일이 있어서, 머리글로 못
   // 찾으면 실제 값이 "19:59:29"처럼 시각으로 보이는 열을 찾아 쓴다.
-  if(colTime < 0) colTime = findApprovalTimeColumn(aoa, headerIdx, colDate);
+  if(colTime < 0) colTime = findApprovalTimeColumn(aoa, headerIdx, colDate, colAmount);
   return { headerIdx, colCard, colDate, colAmount, colPlace, colTime };
 }
 // 승인일자 칸이나 별도 승인시각 칸에서 "HH:MM(:SS)"을 뽑아낸다(없으면 빈 문자열).
 function approvalTimeOf(dateCell, timeCell){
+  const hms = (h,mi,se) => (h||mi||se)
+    ? `${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(se).padStart(2,'0')}`
+    : '';
   const pick = v => {
-    if(v instanceof Date){
-      const h = v.getUTCHours(), mi = v.getUTCMinutes(), se = v.getUTCSeconds();
-      return (h||mi||se) ? `${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(se).padStart(2,'0')}` : '';
+    if(v instanceof Date) return hms(v.getUTCHours(), v.getUTCMinutes(), v.getUTCSeconds());
+    // 엑셀에서 시각 서식으로 된 칸은 숫자(하루를 1로 본 비율, 예: 19:59:29 →
+    // 0.8329…)로 넘어온다. 날짜+시각이면 정수 부분이 날짜라 소수부만 쓴다.
+    if(typeof v === 'number' && isFinite(v)){
+      const frac = v - Math.floor(v);
+      if(frac <= 0) return '';
+      let total = Math.round(frac * 86400);
+      if(total >= 86400) total = 86399;
+      return hms(Math.floor(total/3600), Math.floor(total/60)%60, total%60);
     }
     const m = String(v||'').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
     return m ? `${m[1].padStart(2,'0')}:${m[2]}:${m[3]||'00'}` : '';
@@ -11968,7 +11979,7 @@ async function handleCorpCardApprovalUpload(file){
   await saveCorpCardApprovalEntries();
   recomputeCorpCardMismatches();
   notifyApprovalUpload(parsedRows.length, added, corpCardState.approvalEntries.length);
-  alert(`승인내역 ${parsedRows.length}건을 확인해서 ${added}건을 새로 추가했습니다. (누적 ${corpCardState.approvalEntries.length}건)${cancelledCount ? `\n결제 후 취소된 건 ${cancelledCount}건은 대사 대상에서 제외했습니다.` : ''}${withTime ? `\n승인시각이 있는 건 ${withTime}건 — 법인카드 탭에서 "🕘 승인시각 순으로 정렬"을 누르면 실제 사용 순서대로 정리됩니다.` : ''}`);
+  alert(`승인내역 ${parsedRows.length}건을 확인해서 ${added}건을 새로 추가했습니다. (누적 ${corpCardState.approvalEntries.length}건)${cancelledCount ? `\n결제 후 취소된 건 ${cancelledCount}건은 대사 대상에서 제외했습니다.` : ''}${withTime ? `\n승인시각이 있는 건 ${withTime}건 — 법인카드 탭에서 "🕘 승인시각 순으로 정렬"을 누르면 실제 사용 순서대로 정리됩니다.` : '\n\n※ 이 파일에서 승인시각 열을 찾지 못했습니다. 같은 날 여러 건의 순서는 날짜까지만 맞춥니다.'}`);
 }
 // change(blur)와 input 디바운스 자동저장이 겹쳐 호출될 수 있어(차량관리와
 // 같은 이유), 저장 요청을 한 번에 하나씩 순서대로만 실행되게 줄세운다.
