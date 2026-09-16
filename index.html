@@ -9752,6 +9752,129 @@ function reconcileCardEntries(ledgerEntries, approvalEntries){
 const CARD_BLOCK_COLS = ['B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q'];
 const CARD_NUMERIC_COLS = new Set(['B','L','M','N']);
 function colIndexLetter(letter){ return letter.charCodeAt(0); } // 단일 알파벳 열만 다루므로 충분
+// 통합본에 없는 달 시트를 만들어 넣는다. 서식(카드 블록 틀·수식·열 너비)이
+// 그대로여야 하므로 이미 있는 달 시트를 통째로 복제한 뒤, 카드 블록의 입력
+// 칸(B~Q)만 전부 비워서 "빈 달"로 만든다. 그래야 앱에 등록되지 않은 카드의
+// 지난달 값이 새 달에 남지 않는다.
+async function addMasterMonthSheet(masterArrayBuffer, sourceLabel, newLabel){
+  await loadJSZipLib();
+  const zip = await window.JSZip.loadAsync(masterArrayBuffer);
+  const parser = new DOMParser();
+  const serializer = new XMLSerializer();
+  const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const SS_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+
+  const wbFile = zip.file('xl/workbook.xml');
+  const relsFile = zip.file('xl/_rels/workbook.xml.rels');
+  const ctFile = zip.file('[Content_Types].xml');
+  if(!wbFile || !relsFile || !ctFile) return { error:'통합본 파일 구조를 인식할 수 없습니다.' };
+
+  const wbDoc = parser.parseFromString(await wbFile.async('string'), 'application/xml');
+  const sheets = Array.from(wbDoc.getElementsByTagName('sheet'));
+  if(sheets.some(el=>el.getAttribute('name') === newLabel)) return { error:'already' };
+  const srcEl = sheets.find(el => el.getAttribute('name') === sourceLabel);
+  if(!srcEl) return { error:`"${sourceLabel}" 시트를 찾을 수 없습니다.` };
+
+  const relsDoc = parser.parseFromString(await relsFile.async('string'), 'application/xml');
+  const rels = Array.from(relsDoc.getElementsByTagName('Relationship'));
+  const srcRel = rels.find(el => el.getAttribute('Id') === srcEl.getAttributeNS(REL_NS,'id'));
+  if(!srcRel) return { error:'시트 경로 정보를 찾을 수 없습니다.' };
+  const srcTarget = (srcRel.getAttribute('Target')||'').replace(/^\.?\//,'');
+  const srcPath = srcTarget.startsWith('xl/') ? srcTarget : ('xl/' + srcTarget);
+  const srcFile = zip.file(srcPath);
+  if(!srcFile) return { error:`시트 파일(${srcPath})을 찾을 수 없습니다.` };
+
+  // 새 시트 파일 이름 정하기(기존과 겹치지 않게)
+  let n = 1;
+  while(zip.file(`xl/worksheets/sheet_new${n}.xml`)) n++;
+  const newPath = `xl/worksheets/sheet_new${n}.xml`;
+
+  // 시트 내용 복제 + 카드 블록 입력칸 비우기
+  const sheetDoc = parser.parseFromString(await srcFile.async('string'), 'application/xml');
+  const sheetDataEl = sheetDoc.getElementsByTagName('sheetData')[0];
+  if(!sheetDataEl) return { error:'시트 데이터 영역을 찾을 수 없습니다.' };
+  // R열이 카드 끝 4자리인 행만 "카드 블록 행"이다. 머리글처럼 R열에 다른 글자가
+  // 적힌 행까지 비우면 서식이 깨지므로 4자리 숫자인지 확인한다.
+  let sharedStrings = [];
+  const ssFile2 = zip.file('xl/sharedStrings.xml');
+  if(ssFile2){
+    const ssDoc = parser.parseFromString(await ssFile2.async('string'), 'application/xml');
+    sharedStrings = Array.from(ssDoc.getElementsByTagName('si')).map(si =>
+      Array.from(si.getElementsByTagName('t')).map(t=>t.textContent).join(''));
+  }
+  const cellTextOf = cEl => {
+    if(!cEl) return '';
+    const t = cEl.getAttribute('t');
+    if(t === 's'){
+      const v = cEl.getElementsByTagName('v')[0];
+      const i = v ? parseInt(v.textContent,10) : -1;
+      return sharedStrings[i] || '';
+    }
+    if(t === 'inlineStr'){
+      const is = cEl.getElementsByTagName('is')[0];
+      return is ? Array.from(is.getElementsByTagName('t')).map(t=>t.textContent).join('') : '';
+    }
+    const v = cEl.getElementsByTagName('v')[0];
+    return v ? v.textContent : '';
+  };
+  Array.from(sheetDataEl.getElementsByTagName('row')).forEach(rowEl=>{
+    const rowNum = rowEl.getAttribute('r');
+    const cells = Array.from(rowEl.getElementsByTagName('c'));
+    const rCell = cells.find(el => el.getAttribute('r') === 'R'+rowNum);
+    if(!/^\d{4}$/.test(cellTextOf(rCell).trim())) return;   // 카드 블록 행이 아니면 그대로 둔다
+    CARD_BLOCK_COLS.forEach(col=>{
+      const cEl = cells.find(el => el.getAttribute('r') === col+rowNum);
+      if(!cEl) return;
+      while(cEl.firstChild) cEl.removeChild(cEl.firstChild);
+      cEl.removeAttribute('t');
+    });
+  });
+  zip.file(newPath, serializer.serializeToString(sheetDoc));
+
+  // 시트에 딸린 관계 파일(그림·조건부서식 등)이 있으면 같이 복제
+  const srcRelsPath = srcPath.replace(/worksheets\/([^/]+)$/, 'worksheets/_rels/$1.rels');
+  const srcSheetRels = zip.file(srcRelsPath);
+  if(srcSheetRels){
+    zip.file(newPath.replace(/worksheets\/([^/]+)$/, 'worksheets/_rels/$1.rels'), await srcSheetRels.async('string'));
+  }
+
+  // [Content_Types].xml에 새 시트 등록
+  const ctDoc = parser.parseFromString(await ctFile.async('string'), 'application/xml');
+  const ov = ctDoc.createElementNS('http://schemas.openxmlformats.org/package/2006/content-types','Override');
+  ov.setAttribute('PartName', '/'+newPath);
+  ov.setAttribute('ContentType', 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml');
+  ctDoc.documentElement.appendChild(ov);
+  zip.file('[Content_Types].xml', serializer.serializeToString(ctDoc));
+
+  // 워크북 관계에 새 시트 추가
+  let idNum = 1;
+  const usedIds = new Set(rels.map(el=>el.getAttribute('Id')));
+  while(usedIds.has('rId'+idNum)) idNum++;
+  const newRid = 'rId'+idNum;
+  const newRel = relsDoc.createElementNS('http://schemas.openxmlformats.org/package/2006/relationships','Relationship');
+  newRel.setAttribute('Id', newRid);
+  newRel.setAttribute('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet');
+  newRel.setAttribute('Target', newPath.replace(/^xl\//,''));
+  relsDoc.documentElement.appendChild(newRel);
+  zip.file('xl/_rels/workbook.xml.rels', serializer.serializeToString(relsDoc));
+
+  // 워크북에 시트 탭 추가(복제한 달 바로 뒤에 놓는다)
+  const maxSheetId = Math.max(0, ...sheets.map(el=>parseInt(el.getAttribute('sheetId')||'0',10)||0));
+  const newSheet = wbDoc.createElementNS(SS_NS, 'sheet');
+  newSheet.setAttribute('name', newLabel);
+  newSheet.setAttribute('sheetId', String(maxSheetId+1));
+  newSheet.setAttributeNS(REL_NS, 'r:id', newRid);
+  newSheet.removeAttribute('state');
+  if(srcEl.nextSibling) srcEl.parentNode.insertBefore(newSheet, srcEl.nextSibling);
+  else srcEl.parentNode.appendChild(newSheet);
+  let calcPr = wbDoc.getElementsByTagName('calcPr')[0];
+  if(!calcPr){ calcPr = wbDoc.createElementNS(SS_NS,'calcPr'); wbDoc.documentElement.appendChild(calcPr); }
+  calcPr.setAttribute('fullCalcOnLoad','1');
+  zip.file('xl/workbook.xml', serializer.serializeToString(wbDoc));
+
+  const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
+  return { blob };
+}
 async function patchFile3CardBlock(masterArrayBuffer, sheetLabel, cardLast4, entryBlocks){
   await loadJSZipLib();
   const zip = await window.JSZip.loadAsync(masterArrayBuffer);
@@ -10005,6 +10128,26 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress){
     });
   });
   const missingSheets = [...monthsWithData].filter(n=>!sheetMonthNums.has(n)).sort((a,b)=>a-b);
+  // 없는 달은 이미 있는 달 시트를 복제해서 빈 달로 만들어 넣는다(가장 가까운
+  // 이전 달을 본으로 삼고, 없으면 가장 마지막 달).
+  const createdSheets = [];
+  for(const mnum of missingSheets){
+    const sorted = monthSheets.slice().sort((a,b)=>monthNumFromLabel(a)-monthNumFromLabel(b));
+    const before = sorted.filter(l=>monthNumFromLabel(l) < mnum).pop();
+    const sourceLabel = before || sorted[sorted.length-1];
+    if(!sourceLabel) break;
+    const label = /\d\s+월/.test(sourceLabel) ? `${mnum} 월` : `${mnum}월`;
+    const made = await addMasterMonthSheet(buf, sourceLabel, label);
+    if(made.error){
+      if(made.error !== 'already') skipped.push(`${mnum}월 시트를 만들지 못했습니다: ${made.error}`);
+      continue;
+    }
+    buf = await made.blob.arrayBuffer();
+    monthSheets.push(label);
+    sheetMonthNums.add(mnum);
+    createdSheets.push(label);
+  }
+  const stillMissing = [...monthsWithData].filter(n=>!sheetMonthNums.has(n)).sort((a,b)=>a-b);
   const totalSteps = monthSheets.length * corpCardState.cards.length;
   let doneSteps = 0;
   for(const sheetLabel of monthSheets){
@@ -10031,11 +10174,14 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress){
       }
     }
   }
-  const missingMsg = missingSheets.length
-    ? `\n\n※ 이 통합본 파일에는 ${missingSheets.map(n=>n+'월').join('·')} 시트가 없어서 그 달 내역은 넣을 자리가 없습니다.\n엑셀에서 그 달 시트를 만든 통합본을 다시 올려주세요.\n(통합본에 있는 달: ${monthSheets.join(', ') || '없음'})`
+  const createdMsg = createdSheets.length
+    ? `\n\n※ 통합본에 없던 ${createdSheets.join('·')} 시트를 새로 만들어 넣었습니다(가장 가까운 이전 달 서식을 복제하고 내용은 비웠습니다).`
+    : '';
+  const missingMsg = stillMissing.length
+    ? `\n\n※ ${stillMissing.map(n=>n+'월').join('·')} 시트는 만들지 못했습니다. 엑셀에서 그 달 시트를 만든 통합본을 다시 올려주세요.\n(통합본에 있는 달: ${monthSheets.join(', ') || '없음'})`
     : '';
   if(!applied.length){
-    alert(`갱신할 수 있는 카드 블록을 찾지 못했습니다.${missingMsg || '\n(등록된 카드에 입력된 월별 내역이 없거나, 이 통합본에 해당 카드 블록이 없습니다)'}`);
+    alert(`갱신할 수 있는 카드 블록을 찾지 못했습니다.${createdMsg}${missingMsg || '\n(등록된 카드에 입력된 월별 내역이 없거나, 이 통합본에 해당 카드 블록이 없습니다)'}`);
     return;
   }
   const finalBlob = new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -10049,8 +10195,8 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress){
   const notes = [];
   if(skipped.length) notes.push('블록 칸보다 입력이 많아 넣지 못한 곳:\n  ' + skipped.join('\n  '));
   if(noBlock.length) notes.push(`통합본에 해당 카드 블록이 없어 건너뛴 곳 ${noBlock.length}건:\n  ` + noBlock.slice(0,10).join('\n  ') + (noBlock.length>10 ? `\n  …외 ${noBlock.length-10}건` : ''));
-  if(notes.length || missingMsg){
-    alert(`${applied.length}개 블록을 반영해서 내려받았습니다.${missingMsg}${notes.length ? '\n\n' + notes.join('\n\n') : ''}`);
+  if(notes.length || missingMsg || createdMsg){
+    alert(`${applied.length}개 블록을 반영해서 내려받았습니다.${createdMsg}${missingMsg}${notes.length ? '\n\n' + notes.join('\n\n') : ''}`);
   }
 }
 async function renderCardReconMain(){
