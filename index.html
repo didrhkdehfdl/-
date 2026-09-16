@@ -11156,6 +11156,42 @@ function newCorpCardRow(){
 // 비고 칸에 직접 타이핑할 수 있는 지출내역 — 그 밖의 지출내역은 업무내용 칸에
 // 적어야 할 내용이 비고로 새는 걸 막으려고 잠가둔다.
 const CORP_CARD_NOTE_ALLOWED_TYPES = ['식대','접대비','회식비'];
+// 칸을 채웠는데도 "빈칸을 채워주세요"가 그대로 남아 있는 일이 없도록, 타이핑
+// 하는 즉시 그 행의 경고만 다시 계산해서 화면에 반영한다(표 전체를 다시 그리면
+// 입력 중인 칸의 커서가 튀기 때문에 그 행만 손본다).
+function refreshCorpCardRowIssues(row){
+  if(!row) return;
+  const mm = (corpCardState.mismatchByCard[corpCardState.activeCardId]||new Map()).get(row.id);
+  const issues = corpCardRowIssues(row, mm);
+  const tr = document.querySelector(`#main tbody tr[data-id="${CSS.escape(row.id)}"]`);
+  if(!tr) return;
+  tr.querySelectorAll('.corpcard-f').forEach(el=>{
+    const f = el.dataset.field;
+    const msg = issues[f] || '';
+    const td = el.parentElement;
+    let div = td.querySelector(`.corpcard-issue[data-field="${CSS.escape(f)}"]`);
+    if(msg){
+      el.style.borderColor = 'var(--neg)';
+      if(!div){
+        div = document.createElement('div');
+        div.className = 'corpcard-issue';
+        div.dataset.id = row.id; div.dataset.field = f;
+        div.style.cssText = 'font-size:10px; color:var(--neg); margin-top:2px;';
+        td.appendChild(div);
+      }
+      div.textContent = msg;
+    } else {
+      el.style.borderColor = '';
+      if(div) div.remove();
+    }
+  });
+  const hasIssue = Object.keys(issues).length > 0;
+  tr.style.background = hasIssue ? 'rgba(220,53,69,.18)' : '';
+  tr.querySelectorAll('td[style*="position:sticky"]').forEach(td=>{
+    td.style.background = hasIssue ? 'rgba(220,53,69,.18)' : 'var(--panel-2)';
+  });
+  if(hasIssue) tr.title = Object.values(issues).join(' / '); else tr.removeAttribute('title');
+}
 function corpCardRowIssues(row, mm){
   const issues = {};
   const requiredFields = ['date','dept','name','corp','bizCategory','project','plantName','place','workDetail','expenseType','amount','hipass','carNo'];
@@ -12407,7 +12443,7 @@ async function renderCorpCardMain(){
             const isMismatch = Object.keys(issues).length>0;
             const rowTitle = Object.values(issues).join(' / ');
             const errBorder = 'border-color:var(--neg) !important;';
-            const note = f => issues[f] ? `<div style="font-size:10px; color:var(--neg); margin-top:2px;">${escapeHtml(issues[f])}</div>` : '';
+            const note = f => issues[f] ? `<div class="corpcard-issue" data-id="${row.id}" data-field="${f}" style="font-size:10px; color:var(--neg); margin-top:2px;">${escapeHtml(issues[f])}</div>` : '';
             const checked = corpCardSelectedIds.has(row.id);
             const bizCategoryVal = String(row.bizCategory||'').trim();
             const isOfficeCategory = bizCategoryVal === '사무실';
@@ -12669,6 +12705,7 @@ async function renderCorpCardMain(){
         row[field] = el.value;
       }
       markCorpCardDirty(activeCard.id);
+      refreshCorpCardRowIssues(row);
       corpCardDebouncedSave();
     });
     el.addEventListener('change', async ()=>{
@@ -12694,6 +12731,7 @@ async function renderCorpCardMain(){
         }
         if(field==='expenseType' || field==='hipass') renderCorpCardMain();
       }
+      refreshCorpCardRowIssues(row);
       const result = await saveCorpCardRows(activeCard.id);
       if(result && result.ok===false) notifyRowSaveFailure(result.reason);
       else { corpCardDirty = false; corpCardDirtyCardId = ''; }
