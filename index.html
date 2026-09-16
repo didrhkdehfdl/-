@@ -3352,6 +3352,9 @@ function renderSidebar(){
   });
 }
 function switchTab(tab){
+  // 법인카드 표에서 타이핑한 내용이 아직 저장 중이거나 저장 전이면 먼저 저장한다
+  // (자동 저장이 끝나기 전에 탭을 옮기면 그대로 유실될 수 있다).
+  if(typeof corpCardDirty !== 'undefined' && corpCardDirty) flushCorpCardSave({ silent:true });
   state.activeTab = tab;
   try{ localStorage.setItem('lastActiveTab', tab); }catch(e){}
   activeCase = null;
@@ -11692,6 +11695,53 @@ async function handleCorpCardApprovalUpload(file){
 }
 // change(blur)와 input 디바운스 자동저장이 겹쳐 호출될 수 있어(차량관리와
 // 같은 이유), 저장 요청을 한 번에 하나씩 순서대로만 실행되게 줄세운다.
+// 타이핑한 내용이 아직 서버에 안 올라간 상태인지 표시해두고, 화면을 벗어나기
+// 전에 반드시 저장되게 한다. 자동 저장(입력 후 0.5초)만 있으면 저장이 끝나기
+// 전에 탭을 옮기거나 창을 닫았을 때 그대로 유실될 수 있다.
+let corpCardDirty = false;
+let corpCardDirtyCardId = '';
+function markCorpCardDirty(cardId){
+  corpCardDirty = true;
+  corpCardDirtyCardId = cardId;
+  updateCorpCardSaveBtn();
+}
+function updateCorpCardSaveBtn(saving){
+  const btn = document.getElementById('corpCardSaveBtn');
+  if(!btn) return;
+  if(saving){
+    btn.textContent = '저장 중…';
+    btn.disabled = true;
+    btn.style.borderColor = 'var(--line)'; btn.style.color = 'var(--muted)';
+    btn.style.background = 'transparent';
+    return;
+  }
+  btn.disabled = false;
+  if(corpCardDirty){
+    btn.textContent = '💾 저장 (저장 안 된 변경 있음)';
+    btn.style.borderColor = 'var(--gold-dim)'; btn.style.color = '#1a1a1a';
+    btn.style.background = 'var(--gold)';
+  } else {
+    btn.textContent = '✅ 저장됨';
+    btn.style.borderColor = 'var(--line)'; btn.style.color = 'var(--muted)';
+    btn.style.background = 'transparent';
+  }
+}
+// 지금 카드의 내용을 즉시 저장한다(자동 저장을 기다리지 않음).
+async function flushCorpCardSave(opts){
+  const cardId = corpCardDirtyCardId || corpCardState.activeCardId;
+  if(!corpCardDirty || !cardId) return { ok:true, skipped:true };
+  updateCorpCardSaveBtn(true);
+  const result = await saveCorpCardRows(cardId);
+  if(result && result.ok === false){
+    updateCorpCardSaveBtn();
+    if(!opts || !opts.silent) notifyRowSaveFailure(result.reason);
+    return result;
+  }
+  corpCardDirty = false;
+  corpCardDirtyCardId = '';
+  updateCorpCardSaveBtn();
+  return { ok:true };
+}
 let corpCardSaveQueue = Promise.resolve();
 function saveCorpCardRows(cardId){
   corpCardSaveQueue = corpCardSaveQueue.catch(()=>{}).then(
@@ -12092,8 +12142,9 @@ async function renderCorpCardMain(){
       ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedPositionInput" placeholder="직급 고정값" value="${escapeHtml(activeCard.fixedPosition||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
       ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedDeptInput" placeholder="부서 고정값" value="${escapeHtml(activeCard.fixedDept||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
       ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedCorpInput" placeholder="법인 고정값" value="${escapeHtml(activeCard.fixedCorp||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
-      ${s.approvalEntries.length ? `<button id="corpCardApprovalViewBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--sky); background:rgba(90,155,213,.1); color:var(--sky); cursor:pointer; font-weight:600;">💳 이 카드 승인내역 보기</button>` : ''}
-      <button id="corpCardPrintDocBtn" style="${s.approvalEntries.length?'':'margin-left:auto;'} font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>
+      <button id="corpCardSaveBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:700;">✅ 저장됨</button>
+      ${s.approvalEntries.length ? `<button id="corpCardApprovalViewBtn" style=" font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--sky); background:rgba(90,155,213,.1); color:var(--sky); cursor:pointer; font-weight:600;">💳 이 카드 승인내역 보기</button>` : ''}
+      <button id="corpCardPrintDocBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>
       <button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">🖨 이 달 PDF로 내보내기</button>
       <button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
     </div>
@@ -12213,6 +12264,7 @@ async function renderCorpCardMain(){
 
   main.querySelectorAll('.corpcard-tab-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
+      await flushCorpCardSave(); // 카드를 옮기기 전에 지금 카드 내용을 저장
       s.activeCardId = btn.dataset.id;
       const tmpl2 = corpCardTemplates[s.activeCardId];
       s.activeMonth = pickDefaultCorpCardMonth(tmpl2 && tmpl2.months);
@@ -12222,7 +12274,10 @@ async function renderCorpCardMain(){
     });
   });
   main.querySelectorAll('.corpcard-month-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{ s.activeMonth = btn.dataset.month; corpCardSelectedIds.clear(); renderCorpCardMain(); });
+    btn.addEventListener('click', async ()=>{
+      await flushCorpCardSave(); // 달을 옮기기 전에 저장
+      s.activeMonth = btn.dataset.month; corpCardSelectedIds.clear(); renderCorpCardMain();
+    });
   });
   const addMonthBtn = document.getElementById('corpCardAddMonthBtn');
   if(addMonthBtn) addMonthBtn.addEventListener('click', async ()=>{
@@ -12374,7 +12429,12 @@ async function renderCorpCardMain(){
   // 하는 최종 정리(금액 반올림, 발전소명 자동입력, 비고 입력가능 여부 등)와
   // 재렌더링은 그대로 blur 시점에만 한다.
   wireAutoSizeTextInputs(main);
-  const corpCardDebouncedSave = debounce(()=>{ saveCorpCardRows(activeCard.id); }, 500);
+  const corpCardDebouncedSave = debounce(async ()=>{
+    updateCorpCardSaveBtn(true);
+    const r = await saveCorpCardRows(activeCard.id);
+    if(!r || r.ok !== false){ corpCardDirty = false; corpCardDirtyCardId = ''; }
+    updateCorpCardSaveBtn();
+  }, 500);
   main.querySelectorAll('.corpcard-f').forEach(el=>{
     el.addEventListener('input', ()=>{
       const row = rows.find(r=>r.id===el.dataset.id);
@@ -12385,6 +12445,7 @@ async function renderCorpCardMain(){
       } else {
         row[field] = el.value;
       }
+      markCorpCardDirty(activeCard.id);
       corpCardDebouncedSave();
     });
     el.addEventListener('change', async ()=>{
@@ -12412,8 +12473,23 @@ async function renderCorpCardMain(){
       }
       const result = await saveCorpCardRows(activeCard.id);
       if(result && result.ok===false) notifyRowSaveFailure(result.reason);
+      else { corpCardDirty = false; corpCardDirtyCardId = ''; }
+      updateCorpCardSaveBtn();
     });
   });
+  const saveBtn = document.getElementById('corpCardSaveBtn');
+  if(saveBtn) saveBtn.addEventListener('click', async ()=>{
+    if(!corpCardDirty){
+      // 눌렀는데 아무 일도 안 일어나면 불안하니, 지금 내용을 한 번 더 저장해준다.
+      markCorpCardDirty(activeCard.id);
+    }
+    const r = await flushCorpCardSave();
+    if(r && r.ok !== false){
+      saveBtn.textContent = '✅ 저장했습니다';
+      setTimeout(updateCorpCardSaveBtn, 1200);
+    }
+  });
+  updateCorpCardSaveBtn();
   main.querySelectorAll('.corpcard-del-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!confirm('이 행을 삭제할까요?')) return;
@@ -16507,6 +16583,17 @@ function renderPresenceBanner(){
   el.style.display = 'block';
 }
 
+// 저장이 안 끝난 채로 창을 닫거나 다른 앱으로 넘어가면 입력이 유실될 수 있어,
+// 그 순간 한 번 더 저장을 시도하고 브라우저 경고도 띄운다.
+window.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'hidden' && corpCardDirty) flushCorpCardSave({ silent:true });
+});
+window.addEventListener('beforeunload', (e)=>{
+  if(!corpCardDirty) return;
+  flushCorpCardSave({ silent:true });
+  e.preventDefault();
+  e.returnValue = '';
+});
 fbAuth.onAuthStateChanged(async (user) => {
   if(!user){
     isAdminUser = false;
