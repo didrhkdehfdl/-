@@ -11474,12 +11474,23 @@ function unrecordedApprovalCountForMonth(cardId, month, includeEmptyMonth){
 // 카드 전체를 훑어서 "승인내역에는 있는데 장부에 안 적힌 건"이 몇 건씩
 // 남아 있는지 카드·달별로 모아준다. 카드가 여러 장이라 한 장씩 눌러보지 않으면
 // 빠진 걸 알기 어려워서, 법인카드 화면 위에 한 번에 보여준다.
+// 이 달부터만 요약·일괄채우기 대상으로 삼는다. 그 이전 달은 이미 다른 방식으로
+// 정리를 끝낸 기간이라, 승인내역과 안 맞는 건이 남아 있어도 지금 와서 행을
+// 새로 깔면 오히려 장부가 흐트러진다. (그 달을 직접 열어 "리스트에 채우기"를
+// 누르는 것은 그대로 가능하다.)
+const CORP_CARD_SUMMARY_FROM_MONTH = '2026-09';
+function corpCardSummaryFromLabel(){
+  const [y,m] = CORP_CARD_SUMMARY_FROM_MONTH.split('-');
+  return `${y}년 ${Number(m)}월분부터`;
+}
 function unrecordedSummaryAll(){
   const out = [];
   corpCardState.cards.forEach(card=>{
     const approvals = approvalEntriesForCard(card.id);
     if(!approvals.length) return;
-    const months = [...new Set(approvals.map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean))].sort();
+    const months = [...new Set(approvals.map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean))]
+      .filter(m => m >= CORP_CARD_SUMMARY_FROM_MONTH)
+      .sort();
     months.forEach(month=>{
       const n = unrecordedApprovalCountForMonth(card.id, month, true);
       if(n > 0){
@@ -12156,10 +12167,10 @@ async function renderCorpCardMain(){
     <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">카드번호: ${escapeHtml(activeCard.cardNumber)} · 양식 파일: ${escapeHtml(tmpl.fileName)}</div>
     ${(() => {
       const pending = unrecordedSummaryAll();
-      if(!pending.length) return `<div style="font-size:12px; color:var(--pos); margin-bottom:12px;">✅ 모든 카드의 승인내역이 리스트에 다 적혀 있습니다.</div>`;
+      if(!pending.length) return `<div style="font-size:12px; color:var(--pos); margin-bottom:12px;">✅ 모든 카드의 승인내역이 리스트에 다 적혀 있습니다. <span style="color:var(--muted);">(${escapeHtml(corpCardSummaryFromLabel())} 확인)</span></div>`;
       const total = pending.reduce((n,p)=>n+p.count, 0);
       return `<div style="border:1px solid var(--gold-dim); background:rgba(224,163,57,.08); border-radius:9px; padding:10px 12px; margin-bottom:12px;">
-        <div style="font-size:12.5px; font-weight:700; color:var(--gold); margin-bottom:7px;">⚠ 승인내역에는 있는데 리스트에 안 적힌 건이 모두 ${fmtNum(total)}건 남아 있습니다</div>
+        <div style="font-size:12.5px; font-weight:700; color:var(--gold); margin-bottom:7px;">⚠ 승인내역에는 있는데 리스트에 안 적힌 건이 모두 ${fmtNum(total)}건 남아 있습니다 <span style="font-weight:400; color:var(--muted);">(${escapeHtml(corpCardSummaryFromLabel())})</span></div>
         <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
           ${pending.map(p=>`<button class="corpcard-pending-btn" data-card="${escapeHtml(p.cardId)}" data-month="${escapeHtml(p.month)}" style="font-size:11.5px; padding:4px 10px; border-radius:6px; border:1px solid ${p.cardId===activeCard.id && p.month===s.activeMonth ? 'var(--gold)' : 'var(--line)'}; background:var(--panel-2); color:var(--text); cursor:pointer;">${escapeHtml(p.cardName)}${p.tail?` ${escapeHtml(p.tail)}`:''} · ${escapeHtml(p.month)} <b style="color:var(--neg);">${p.count}건</b></button>`).join('')}
         </div>
