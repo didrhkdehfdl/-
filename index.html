@@ -9641,7 +9641,7 @@ function isoDateUTC(d){
 // 관리대장의 날짜·금액과 정확히 같은 값끼리 비교할 수 있다).
 function approvalParseAoa(aoa){
   const norm = v => String(v||'').replace(/\s/g,'');
-  let headerIdx=-1, colCard=-1, colDate=-1, colAmount=-1, colPlace=-1;
+  let headerIdx=-1, colCard=-1, colDate=-1, colAmount=-1, colPlace=-1, colTime=-1;
   for(let i=0;i<aoa.length;i++){
     const row = aoa[i]||[];
     const idxDate = row.findIndex(c=>norm(c)==='승인일자');
@@ -9650,13 +9650,28 @@ function approvalParseAoa(aoa){
       headerIdx = i; colDate = idxDate; colAmount = idxAmount;
       colCard = row.findIndex(c=>norm(c)==='카드번호');
       colPlace = row.findIndex(c=>/가맹점|사용처/.test(norm(c)));
+      // 카드사에 따라 "승인시각"이 따로 있는 파일이 있다 — 같은 날 여러 건을
+      // 실제로 쓴 순서대로 줄 세우려면 이 값이 필요하다.
+      colTime = row.findIndex(c=>/^(승인시각|승인시간|거래시각|거래시간|시각|시간)$/.test(norm(c)));
       break;
     }
   }
   if(headerIdx<0) return { error: '승인내역 시트에서 헤더 행("승인일자"/"승인금액")을 찾지 못했습니다. 시트를 다시 확인해주세요.' };
   if(colCard<0) colCard = 0; // 카드번호 열을 못 찾으면 기존 위치(첫 열)를 그대로 사용
   if(colPlace<0) colPlace = 3; // 가맹점명/사용처 열을 못 찾으면 기존 위치를 그대로 사용
-  return { headerIdx, colCard, colDate, colAmount, colPlace };
+  return { headerIdx, colCard, colDate, colAmount, colPlace, colTime };
+}
+// 승인일자 칸이나 별도 승인시각 칸에서 "HH:MM(:SS)"을 뽑아낸다(없으면 빈 문자열).
+function approvalTimeOf(dateCell, timeCell){
+  const pick = v => {
+    if(v instanceof Date){
+      const h = v.getUTCHours(), mi = v.getUTCMinutes(), se = v.getUTCSeconds();
+      return (h||mi||se) ? `${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(se).padStart(2,'0')}` : '';
+    }
+    const m = String(v||'').match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    return m ? `${m[1].padStart(2,'0')}:${m[2]}:${m[3]||'00'}` : '';
+  };
+  return pick(timeCell) || pick(dateCell);
 }
 function normalizeDotDate(s){
   // 승인내역 파일의 날짜 열이 텍스트가 아니라 진짜 엑셀 날짜 서식이면 SheetJS가
@@ -11350,6 +11365,7 @@ function parseApprovalWorkbookForCorpCard(wb){
         approvalNo: colApprovalNo>=0 ? String(row[colApprovalNo]||'').trim() : '',
         cardNoStr,
         isoDate: normalizeDotDate(row[cols.colDate]),
+        apprTime: approvalTimeOf(row[cols.colDate], cols.colTime>=0 ? row[cols.colTime] : ''),
         rawAmount: Math.round(Number(row[cols.colAmount])||0), // 부호를 그대로 남겨서 취소 짝을 찾는다
         place: String(row[cols.colPlace]||'').trim(),
       });
@@ -11621,6 +11637,59 @@ function approvalMonthsForCard(cardId){
 // 맞춰 장부에 행으로 먼저 깔아준다. 사람이 일일이 옮겨 적다 보면 빠뜨리거나
 // 금액을 잘못 치기 쉬운데, 날짜·사용처·금액은 카드사 기록이 정확하므로 그
 // 세 칸만 채워두고 나머지(성명·업무내용·지출내역 등)는 사람이 채우게 둔다.
+// 승인내역 정렬 기준: 날짜 → 승인시각(없으면 맨 뒤)
+function approvalOrderKey(a){
+  return `${String(a.isoDate||'9999-99-99')} ${String(a.apprTime||'~')}`;
+}
+// 장부 행에 승인시각이 비어 있으면, 날짜+금액이 같은 승인내역에서 시각을 받아
+// 채워준다(같은 날 같은 금액이 여러 건이면 순서대로 하나씩 배정).
+function stampApprovalTimesOnRows(cardId, rows){
+  const byKey = new Map();
+  approvalEntriesForCard(cardId).forEach(a=>{
+    if(!a.apprTime) return;
+    const k = `${a.isoDate}|${Math.abs(Number(a.amount)||0)}`;
+    if(!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(a.apprTime);
+  });
+  byKey.forEach(list=>list.sort());
+  const used = new Map();
+  rows.forEach(r=>{
+    if(r.apprTime) return;
+    const k = `${r.date}|${Math.abs(Number(r.amount)||0)}`;
+    const list = byKey.get(k);
+    if(!list || !list.length) return;
+    const i = used.get(k) || 0;
+    if(i >= list.length) return;
+    r.apprTime = list[i];
+    used.set(k, i+1);
+  });
+}
+// 날짜 → 승인시각 순으로 줄 세운다. 시각을 모르는 행은 같은 날짜 안에서
+// 원래 순서를 그대로 지킨다(안정 정렬).
+function sortRowsByDateAndTime(rows){
+  rows.forEach((r,i)=>{ r.__ord = i; });
+  rows.sort((x,y)=>{
+    const dx = x.date || '9999-99-99', dy = y.date || '9999-99-99';
+    if(dx !== dy) return dx.localeCompare(dy);
+    const tx = x.apprTime || '', ty = y.apprTime || '';
+    if(tx && ty && tx !== ty) return tx.localeCompare(ty);
+    return x.__ord - y.__ord;
+  });
+  rows.forEach(r=>{ delete r.__ord; });
+}
+// 지금 보고 있는 달을 승인시각 순으로 다시 정렬한다(이미 적어둔 행 포함).
+async function sortCorpCardMonthByApprovalTime(cardId, monthLabel){
+  const rows = (corpCardState.rowsByCard[cardId]||{})[monthLabel];
+  if(!rows || !rows.length) return 0;
+  stampApprovalTimesOnRows(cardId, rows);
+  const before = rows.map(r=>r.id).join(',');
+  sortRowsByDateAndTime(rows);
+  const changed = rows.map(r=>r.id).join(',') !== before;
+  renderCorpCardMain();
+  const result = await saveCorpCardRows(cardId);
+  if(result && result.ok===false) notifyRowSaveFailure(result.reason);
+  return changed ? rows.length : 0;
+}
 async function fillMissingApprovalRows(cardId, month, opts){
   const s = corpCardState;
   const card = s.cards.find(c=>c.id===cardId);
@@ -11633,7 +11702,7 @@ async function fillMissingApprovalRows(cardId, month, opts){
   const approvals = approvalEntriesForCard(cardId).filter(a=>String(a.isoDate||'').slice(0,7)===iso);
   const missing = unrecordedApprovals(cardId, approvals)
     .slice()
-    .sort((a,b)=> String(a.isoDate||'').localeCompare(String(b.isoDate||'')));
+    .sort((a,b)=> approvalOrderKey(a).localeCompare(approvalOrderKey(b)));
   if(!missing.length){
     if(!opts || !opts.skipConfirm) alert('이 달은 승인내역이 전부 장부에 적혀 있습니다.');
     return 0;
@@ -11653,17 +11722,14 @@ async function fillMissingApprovalRows(cardId, month, opts){
     row.date = a.isoDate || '';
     row.place = a.place || '';
     row.amount = Math.abs(Number(a.amount)||0);
+    row.apprTime = a.apprTime || '';   // 같은 날 여러 건의 순서를 잡는 데 쓴다
     row.fromApproval = true; // 승인내역에서 자동으로 깔아준 행이라는 표시
     rows.push(row);
   });
   // 사용 순서(승인일자 순)로 다시 줄 세운다. 날짜가 같으면 원래 있던 행이
   // 먼저 오도록 안정 정렬을 쓰고, 날짜가 비어 있는 행은 맨 뒤로 보낸다.
-  rows.forEach((r,i)=>{ r.__ord = i; });
-  rows.sort((x,y)=>{
-    const dx = x.date || '9999-99-99', dy = y.date || '9999-99-99';
-    return dx === dy ? x.__ord - y.__ord : dx.localeCompare(dy);
-  });
-  rows.forEach(r=>{ delete r.__ord; });
+  stampApprovalTimesOnRows(cardId, rows);
+  sortRowsByDateAndTime(rows);
 
   recomputeCorpCardMismatches();
   renderCorpCardMain();
@@ -12302,6 +12368,7 @@ async function renderCorpCardMain(){
       ${s.approvalEntries.length ? ` · 승인내역 누적 ${fmtNum(s.approvalEntries.length)}건${lastApprovalUploadAt() ? ` (마지막 업로드 ${fmtUploadedAt(lastApprovalUploadAt())})` : ''}` : ''}
       ${approvalCov ? ` · <span title="이 구간 밖 날짜는 비교할 승인내역이 아직 없어서 대사하지 않습니다.">승인내역 확인 구간 ${escapeHtml(covTxt)} (${fmtNum(approvalCov.count)}건)</span>` : (s.approvalEntries.length ? ` · <span style="color:var(--gold);">이 달 승인내역이 아직 없어 대사하지 않았습니다</span>` : '')}
       ${unrecordedThisMonth ? ` · <button id="corpCardMissingApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--neg); background:rgba(178,59,46,.12); color:var(--neg); font-weight:700; cursor:pointer;">🔴 승인내역엔 있는데 여기 안 적은 건 ${unrecordedThisMonth}건 보기</button>` : ''}
+      ${rows.length > 1 ? ` · <button id="corpCardSortTimeBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">🕘 승인시각 순으로 정렬</button>` : ''}
       ${fillableThisMonth ? ` · <button id="corpCardFillApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.12); color:var(--gold); font-weight:700; cursor:pointer;">⬇ 승인내역 ${fillableThisMonth}건 리스트에 채우기</button>` : ''}
       ${noApprovalIds.size ? ` · <button id="corpCardNoApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--neg); background:${noApprovalOnly?'rgba(178,59,46,.28)':'rgba(178,59,46,.12)'}; color:var(--neg); font-weight:700; cursor:pointer;">🔴 여기 적었는데 승인내역에 없는 건 ${noApprovalIds.size}건${noApprovalOnly?' (보는 중)':' 보기'}</button>` : ''}
       ${issueCountInMonth ? ` · <span style="color:var(--neg); font-weight:600;">🔴 확인 필요 ${issueCountInMonth}건(빈칸·승인내역 불일치 등)</span>` : ' · ✅ 이번 달 전부 문제 없음'}
@@ -12536,6 +12603,12 @@ async function renderCorpCardMain(){
   const approvalViewBtn = document.getElementById('corpCardApprovalViewBtn');
   if(approvalViewBtn) approvalViewBtn.addEventListener('click', ()=> openCardApprovalOverlay(activeCard.id, s.activeMonth));
   // 안 적은 건만 바로 펼쳐서 보여준다.
+  const sortTimeBtn = document.getElementById('corpCardSortTimeBtn');
+  if(sortTimeBtn) sortTimeBtn.addEventListener('click', async ()=>{
+    await flushCorpCardSave();
+    const n = await sortCorpCardMonthByApprovalTime(activeCard.id, s.activeMonth);
+    if(!n) alert('순서가 이미 승인시각 순입니다.\n(승인내역 파일에 승인시각이 없으면 날짜 순까지만 맞춥니다 — 카드사 승인내역을 다시 올리면 시각까지 반영됩니다.)');
+  });
   const fillApprovalBtn = document.getElementById('corpCardFillApprovalBtn');
   if(fillApprovalBtn) fillApprovalBtn.addEventListener('click', async ()=>{
     const n = await fillMissingApprovalRows(activeCard.id, s.activeMonth);
