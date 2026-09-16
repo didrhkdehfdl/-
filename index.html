@@ -11459,11 +11459,14 @@ function unrecordedApprovals(cardId, approvals){
 // 지금 보고 있는 카드의 특정 달에서 "장부에 안 적힌 승인내역"이 몇 건인지.
 // 장부 행이 하나도 없는 달은 아직 입력을 시작도 안 한 달일 수 있으니 세지 않는다
 // (그런 달까지 경고하면 매달 초마다 전부 빨갛게 뜬다).
-function unrecordedApprovalCountForMonth(cardId, month){
+// includeEmptyMonth를 켜면 "아직 한 줄도 안 적은 달"도 세어준다 — 경고(빨간
+// 안내)는 그런 달까지 띄우면 매달 초마다 전부 빨갛게 뜨지만, "리스트에 채우기"는
+// 오히려 그 달에 가장 필요하기 때문에 용도에 따라 구분한다.
+function unrecordedApprovalCountForMonth(cardId, month, includeEmptyMonth){
   const card = corpCardState.cards.find(c=>c.id===cardId);
   if(!card || !month) return 0;
   const rowsThisMonth = (corpCardState.rowsByCard[cardId]||{})[month]||[];
-  if(!rowsThisMonth.some(r=>r.date)) return 0;
+  if(!includeEmptyMonth && !rowsThisMonth.some(r=>r.date)) return 0;
   const approvals = approvalEntriesForCard(cardId).filter(a=>String(a.isoDate||'').slice(0,7)===month);
   if(!approvals.length) return 0;
   return unrecordedApprovals(cardId, approvals).length;
@@ -12075,6 +12078,8 @@ async function renderCorpCardMain(){
   const issueCountInMonth = rows.filter(r=>Object.keys(corpCardRowIssues(r, mismatchMap.get(r.id))).length>0).length;
   // 카드사 승인내역엔 있는데 이 표에는 아직 안 적은 건 — 빠뜨린 결제를 찾는 용도.
   const unrecordedThisMonth = unrecordedApprovalCountForMonth(activeCard.id, s.activeMonth);
+  // 채우기 버튼은 아직 한 줄도 안 적은 달에서도 보여야 한다(그때가 제일 필요하다).
+  const fillableThisMonth = unrecordedApprovalCountForMonth(activeCard.id, s.activeMonth, true);
   // 이 달 승인내역이 어느 날짜까지 들어와 있는지 — 구간 밖 행은 대사하지 않으므로
   // 그 사실을 화면에 알려줘야 "왜 이 행은 아무 표시가 없지?"로 헷갈리지 않는다.
   const approvalCov = approvalCoverageForMonth(activeCard.id, s.activeMonth);
@@ -12152,7 +12157,8 @@ async function renderCorpCardMain(){
       ${escapeHtml(s.activeMonth)} · 총 ${rows.length}건${visibleRows.length!==rows.length?` (필터로 ${visibleRows.length}건 표시 중)`:''} · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다
       ${s.approvalEntries.length ? ` · 승인내역 누적 ${fmtNum(s.approvalEntries.length)}건${lastApprovalUploadAt() ? ` (마지막 업로드 ${fmtUploadedAt(lastApprovalUploadAt())})` : ''}` : ''}
       ${approvalCov ? ` · <span title="이 구간 밖 날짜는 비교할 승인내역이 아직 없어서 대사하지 않습니다.">승인내역 확인 구간 ${escapeHtml(covTxt)} (${fmtNum(approvalCov.count)}건)</span>` : (s.approvalEntries.length ? ` · <span style="color:var(--gold);">이 달 승인내역이 아직 없어 대사하지 않았습니다</span>` : '')}
-      ${unrecordedThisMonth ? ` · <button id="corpCardMissingApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--neg); background:rgba(178,59,46,.12); color:var(--neg); font-weight:700; cursor:pointer;">🔴 승인내역엔 있는데 여기 안 적은 건 ${unrecordedThisMonth}건 보기</button> <button id="corpCardFillApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.12); color:var(--gold); font-weight:700; cursor:pointer;">⬇ 리스트에 채우기</button>` : ''}
+      ${unrecordedThisMonth ? ` · <button id="corpCardMissingApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--neg); background:rgba(178,59,46,.12); color:var(--neg); font-weight:700; cursor:pointer;">🔴 승인내역엔 있는데 여기 안 적은 건 ${unrecordedThisMonth}건 보기</button>` : ''}
+      ${fillableThisMonth ? ` · <button id="corpCardFillApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.12); color:var(--gold); font-weight:700; cursor:pointer;">⬇ 승인내역 ${fillableThisMonth}건 리스트에 채우기</button>` : ''}
       ${noApprovalIds.size ? ` · <button id="corpCardNoApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--neg); background:${noApprovalOnly?'rgba(178,59,46,.28)':'rgba(178,59,46,.12)'}; color:var(--neg); font-weight:700; cursor:pointer;">🔴 여기 적었는데 승인내역에 없는 건 ${noApprovalIds.size}건${noApprovalOnly?' (보는 중)':' 보기'}</button>` : ''}
       ${issueCountInMonth ? ` · <span style="color:var(--neg); font-weight:600;">🔴 확인 필요 ${issueCountInMonth}건(빈칸·승인내역 불일치 등)</span>` : ' · ✅ 이번 달 전부 문제 없음'}
     </div>
