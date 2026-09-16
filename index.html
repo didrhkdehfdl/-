@@ -11126,7 +11126,39 @@ function reconcileCorpCardWithApproval(ledgerRows, approvalEntries){
 // ===== 카드번호별 승인내역 보기 =====
 // 올려둔 카드사 승인내역은 여러 카드·여러 달치가 한 곳에 누적돼 쌓이기 때문에,
 // "이 카드의 이 달 승인내역"만 따로 펼쳐볼 수 있어야 장부와 맞춰보기 쉽다.
-let cardApprovalView = { cardId:'', month:'' }; // month:'' 이면 전체 달
+let cardApprovalView = { cardId:'', month:'', missingOnly:false }; // month:'' 이면 전체 달
+// 승인내역과 장부(법인카드 탭 입력)를 날짜+금액으로 1:1 짝지어서, 짝을 못 찾은
+// 승인내역 — 즉 "카드사에는 있는데 아직 장부에 안 적은 건" — 만 골라낸다.
+// 같은 날 같은 금액으로 여러 번 결제하는 일이 흔하므로 "같은 값이 있나"가
+// 아니라 건수까지 맞춰 세야 한다(2건 중 1건만 적어둔 경우를 놓치지 않도록).
+function unrecordedApprovals(cardId, approvals){
+  const remaining = new Map();
+  Object.values(corpCardState.rowsByCard[cardId]||{}).forEach(monthRows=>{
+    (monthRows||[]).forEach(r=>{
+      if(!r.date) return;
+      const k = `${r.date}|${Math.abs(Number(r.amount)||0)}`;
+      remaining.set(k, (remaining.get(k)||0) + 1);
+    });
+  });
+  return approvals.filter(a=>{
+    const k = `${a.isoDate}|${Math.abs(Number(a.amount)||0)}`;
+    const left = remaining.get(k)||0;
+    if(left > 0){ remaining.set(k, left-1); return false; } // 장부에 있는 건 — 한 건 소진
+    return true;
+  });
+}
+// 지금 보고 있는 카드의 특정 달에서 "장부에 안 적힌 승인내역"이 몇 건인지.
+// 장부 행이 하나도 없는 달은 아직 입력을 시작도 안 한 달일 수 있으니 세지 않는다
+// (그런 달까지 경고하면 매달 초마다 전부 빨갛게 뜬다).
+function unrecordedApprovalCountForMonth(cardId, month){
+  const card = corpCardState.cards.find(c=>c.id===cardId);
+  if(!card || !month) return 0;
+  const rowsThisMonth = (corpCardState.rowsByCard[cardId]||{})[month]||[];
+  if(!rowsThisMonth.some(r=>r.date)) return 0;
+  const approvals = approvalEntriesForCard(cardId).filter(a=>String(a.isoDate||'').slice(0,7)===month);
+  if(!approvals.length) return 0;
+  return unrecordedApprovals(cardId, approvals).length;
+}
 function approvalEntriesForCard(cardId){
   const card = corpCardState.cards.find(c=>c.id===cardId);
   if(!card) return [];
@@ -11137,8 +11169,8 @@ function approvalEntriesForCard(cardId){
     .slice()
     .sort((a,b)=> String(a.isoDate||'').localeCompare(String(b.isoDate||'')));
 }
-function openCardApprovalOverlay(cardId, month){
-  cardApprovalView = { cardId, month: month || '' };
+function openCardApprovalOverlay(cardId, month, missingOnly){
+  cardApprovalView = { cardId, month: month || '', missingOnly: !!missingOnly };
   renderCardApprovalOverlay();
   document.getElementById('cardApprovalOverlay').style.display = 'flex';
 }
@@ -11149,12 +11181,11 @@ function renderCardApprovalOverlay(){
   const all = approvalEntriesForCard(card.id);
   const months = [...new Set(all.map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean))].sort();
   const month = cardApprovalView.month;
-  const shown = month ? all.filter(a=>String(a.isoDate||'').slice(0,7)===month) : all;
-  // 장부에 이미 적어둔 건인지 표시해준다 — 날짜+금액이 같은 행이 있으면 "장부 있음".
-  const ledgerKeys = new Set();
-  Object.values(s.rowsByCard[card.id]||{}).forEach(monthRows=>{
-    (monthRows||[]).forEach(r=>{ if(r.date) ledgerKeys.add(`${r.date}|${Math.abs(Number(r.amount)||0)}`); });
-  });
+  const inMonth = month ? all.filter(a=>String(a.isoDate||'').slice(0,7)===month) : all;
+  // 장부에 아직 안 적은 건이 어느 것인지 미리 가려둔다(건수까지 맞춰 1:1로 짝지음).
+  const missingSet = new Set(unrecordedApprovals(card.id, all));
+  const missingInMonth = inMonth.filter(a=>missingSet.has(a));
+  const shown = cardApprovalView.missingOnly ? missingInMonth : inMonth;
 
   const tail = cardParts(card.cardNumber);
   document.getElementById('cardApprovalTitle').textContent =
@@ -11163,8 +11194,12 @@ function renderCardApprovalOverlay(){
   const total = shown.reduce((sum,a)=>sum + (Number(a.amount)||0), 0);
   const btn = (label, value, active) =>
     `<button class="cardapproval-month-btn" data-month="${escapeHtml(value)}" style="padding:6px 11px; border-radius:6px; border:1px solid ${active?'var(--gold-dim)':'var(--line)'}; background:${active?'rgba(224,163,57,.14)':'transparent'}; color:${active?'var(--gold)':'var(--muted)'}; font-size:12px; cursor:pointer; font-weight:${active?'600':'400'};">${escapeHtml(label)}</button>`;
+  const missingBtn = missingInMonth.length
+    ? `<button id="cardApprovalMissingBtn" style="padding:6px 11px; border-radius:6px; border:1px solid var(--neg); background:${cardApprovalView.missingOnly?'rgba(178,59,46,.22)':'transparent'}; color:var(--neg); font-size:12px; font-weight:700; cursor:pointer;">🔴 장부에 없음 ${missingInMonth.length}건${cardApprovalView.missingOnly?' (보는 중)':''}</button>`
+    : `<span style="font-size:12px; color:var(--pos); font-weight:600;">✅ 전부 장부에 있음</span>`;
   document.getElementById('cardApprovalControls').innerHTML =
     btn('전체', '', !month) + months.map(m=>btn(m.replace('-','년 ')+'월', m, m===month)).join('')
+    + missingBtn
     + `<span style="margin-left:auto; font-size:12px; color:var(--muted);">${fmtNum(shown.length)}건 · 합계 ${fmtWon(total)}</span>`;
 
   document.getElementById('cardApprovalList').innerHTML = !shown.length
@@ -11178,12 +11213,12 @@ function renderCardApprovalOverlay(){
         </tr></thead>
         <tbody>
           ${shown.map(a=>{
-            const inLedger = ledgerKeys.has(`${a.isoDate}|${Math.abs(Number(a.amount)||0)}`);
-            return `<tr>
+            const missing = missingSet.has(a);
+            return `<tr ${missing?'style="background:rgba(178,59,46,.10);"':''}>
               <td style="padding:6px; text-align:center; color:var(--text);">${escapeHtml(a.isoDate||'')}</td>
               <td style="padding:6px; color:var(--text);">${escapeHtml(a.place||'')}</td>
               <td style="padding:6px; text-align:right; font-family:'Roboto Mono', monospace;">${fmtNum(Number(a.amount)||0)}</td>
-              <td style="padding:6px; text-align:center; font-size:11.5px; ${inLedger?'color:var(--pos); font-weight:700;':'color:var(--neg);'}">${inLedger?'✓ 있음':'없음'}</td>
+              <td style="padding:6px; text-align:center; font-size:11.5px; ${missing?'color:var(--neg); font-weight:700;':'color:var(--pos); font-weight:700;'}">${missing?'🔴 안 적음':'✓ 있음'}</td>
             </tr>`;
           }).join('')}
         </tbody>
@@ -11194,6 +11229,11 @@ function renderCardApprovalOverlay(){
       cardApprovalView.month = b.dataset.month;
       renderCardApprovalOverlay();
     });
+  });
+  const missingToggle = document.getElementById('cardApprovalMissingBtn');
+  if(missingToggle) missingToggle.addEventListener('click', ()=>{
+    cardApprovalView.missingOnly = !cardApprovalView.missingOnly;
+    renderCardApprovalOverlay();
   });
 }
 function recomputeCorpCardMismatches(){
@@ -11569,6 +11609,8 @@ async function renderCorpCardMain(){
   const rows = (activeCard && s.rowsByCard[activeCard.id] && s.rowsByCard[activeCard.id][s.activeMonth]) || [];
   const mismatchMap = (activeCard && s.mismatchByCard[activeCard.id]) || new Map();
   const issueCountInMonth = rows.filter(r=>Object.keys(corpCardRowIssues(r, mismatchMap.get(r.id))).length>0).length;
+  // 카드사 승인내역엔 있는데 이 표에는 아직 안 적은 건 — 빠뜨린 결제를 찾는 용도.
+  const unrecordedThisMonth = unrecordedApprovalCountForMonth(activeCard.id, s.activeMonth);
   // 카드·달마다 필터 상태를 따로 두어서, 다른 카드나 다른 달로 넘어가면
   // 필터가 새로 시작된다(엉뚱한 필터가 다른 화면까지 이어지지 않게).
   const colFilterTabKey = `corpCard:${activeCard?activeCard.id:'none'}:${s.activeMonth}`;
@@ -11632,6 +11674,7 @@ async function renderCorpCardMain(){
     <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">
       ${escapeHtml(s.activeMonth)} · 총 ${rows.length}건${visibleRows.length!==rows.length?` (필터로 ${visibleRows.length}건 표시 중)`:''} · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다
       ${s.approvalEntries.length ? ` · 승인내역 누적 ${fmtNum(s.approvalEntries.length)}건${lastApprovalUploadAt() ? ` (마지막 업로드 ${fmtUploadedAt(lastApprovalUploadAt())})` : ''}` : ''}
+      ${unrecordedThisMonth ? ` · <button id="corpCardMissingApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--neg); background:rgba(178,59,46,.12); color:var(--neg); font-weight:700; cursor:pointer;">🔴 승인내역엔 있는데 여기 안 적은 건 ${unrecordedThisMonth}건 보기</button>` : ''}
       ${issueCountInMonth ? ` · <span style="color:var(--neg); font-weight:600;">🔴 확인 필요 ${issueCountInMonth}건(빈칸·승인내역 불일치 등)</span>` : ' · ✅ 이번 달 전부 문제 없음'}
     </div>
     <datalist id="corpCardCarNoOptions"><option value="자차"></option></datalist>
@@ -11859,6 +11902,9 @@ async function renderCorpCardMain(){
   // 지금 보고 있는 카드·달의 승인내역을 따로 펼쳐본다.
   const approvalViewBtn = document.getElementById('corpCardApprovalViewBtn');
   if(approvalViewBtn) approvalViewBtn.addEventListener('click', ()=> openCardApprovalOverlay(activeCard.id, s.activeMonth));
+  // 안 적은 건만 바로 펼쳐서 보여준다.
+  const missingApprovalBtn = document.getElementById('corpCardMissingApprovalBtn');
+  if(missingApprovalBtn) missingApprovalBtn.addEventListener('click', ()=> openCardApprovalOverlay(activeCard.id, s.activeMonth, true));
   const printDocBtn = document.getElementById('corpCardPrintDocBtn');
   if(printDocBtn) printDocBtn.addEventListener('click', ()=>{
     const selectedRows = rows.filter(r=>corpCardSelectedIds.has(r.id));
