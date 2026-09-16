@@ -11275,8 +11275,20 @@ async function ensureCorpCardLoaded(){
     const approvalText = await loadFileFromStorage(CORP_CARD_APPROVAL_KEY, 30000);
     corpCardState.approvalEntries = approvalText ? JSON.parse(approvalText) : [];
     // 예전에 "2026-09" 같은 이름의 안 보이는 칸으로 들어간 행을 제 달 탭으로 옮긴다.
+    const recovered = [];
     for(const cardId of needsMonthFix){
-      if(normalizeCorpCardMonthBuckets(cardId)) await saveCorpCardRows(cardId);
+      const n = normalizeCorpCardMonthBuckets(cardId);
+      if(n > 0){
+        await saveCorpCardRows(cardId);
+        const card = corpCardState.cards.find(c=>c.id===cardId);
+        const parts = card ? cardParts(card.cardNumber) : null;
+        recovered.push(`${card ? (card.name||'카드') : '카드'}${parts?` ${parts.p4}`:''} — ${n}건`);
+      }
+    }
+    if(recovered.length){
+      // 어느 카드에서 몇 건이 되살아났는지 한 번만 알려준다(같은 안내가 새로고침
+      // 때마다 반복되지 않도록, 옮긴 게 있을 때만 뜬다).
+      setTimeout(()=>alert(`화면에 안 보이던 법인카드 내역을 제 달 탭으로 되돌렸습니다.\n\n${recovered.join('\n')}\n\n각 카드의 해당 월 탭에서 확인해주세요.`), 300);
     }
     await fixCorpCard2025Dates();
     recomputeCorpCardMismatches();
@@ -11518,14 +11530,14 @@ function cardMonthForIsoMonth(cardId, isoMonth){
 // 자리(그 달 탭)로 옮긴다. 같은 날짜·금액·사용처가 이미 있으면 중복이므로 버린다.
 function normalizeCorpCardMonthBuckets(cardId){
   const byMonth = corpCardState.rowsByCard[cardId];
-  if(!byMonth) return false;
-  let moved = false;
+  if(!byMonth) return 0;
+  let moved = 0;
   Object.keys(byMonth).forEach(key=>{
     if(!/^\d{4}-\d{2}$/.test(key)) return;
     const target = cardMonthForIsoMonth(cardId, key);
     const rows = byMonth[key] || [];
     if(!target || target === key){
-      if(!rows.length){ delete byMonth[key]; moved = true; }
+      if(!rows.length){ delete byMonth[key]; }
       return;
     }
     byMonth[target] = byMonth[target] || [];
@@ -11535,10 +11547,10 @@ function normalizeCorpCardMonthBuckets(cardId){
       if(seen.has(k)) return;
       seen.add(k);
       byMonth[target].push(r);
+      moved++;
     });
     byMonth[target].sort((x,y)=> String(x.date||'9999').localeCompare(String(y.date||'9999')));
     delete byMonth[key];
-    moved = true;
   });
   return moved;
 }
