@@ -3456,10 +3456,12 @@ function autoSizeTextInput(el){
   const min = 56, max = 420;
   el.style.width = Math.min(max, Math.max(min, Math.ceil(textWidth) + 22)) + 'px';
 }
-function wireAutoSizeTextInputs(scopeEl){
+function wireAutoSizeTextInputs(scopeEl, delegated){
   scopeEl.querySelectorAll('.corpcard-f-auto, .vehicle-f-auto').forEach(el=>{
     autoSizeTextInput(el);
-    el.addEventListener('input', ()=>autoSizeTextInput(el));
+    // 법인카드 표는 입력 이벤트를 표 하나에 모아서 받으므로(위임) 칸마다 따로
+    // 달지 않는다 — 칸이 수백 개라 그 차이가 크다.
+    if(!delegated) el.addEventListener('input', ()=>autoSizeTextInput(el));
   });
 }
 
@@ -11220,6 +11222,36 @@ function focusCorpCardField(rowId, field){
     if(el.select && el.type === 'text') el.select();
   });
 }
+// 대사 결과(어느 행이 왜 빨간지)가 바뀌었는지 싸게 비교하기 위한 지문.
+function corpCardMismatchSignature(){
+  const mm = corpCardState.mismatchByCard[corpCardState.activeCardId];
+  if(!mm) return '';
+  const parts = [];
+  mm.forEach((v,k)=>parts.push(`${k}:${v.reason}`));
+  return parts.sort().join('|');
+}
+// 금액에서 자동으로 계산되는 칸(공급가액·부가세)만 다시 채운다.
+function updateCorpCardComputedCells(row){
+  const sv = corpCardSupplyVat(Number(row.amount)||0);
+  const supply = document.querySelector(`.corpcard-supply[data-id="${CSS.escape(row.id)}"]`);
+  const vat = document.querySelector(`.corpcard-vat[data-id="${CSS.escape(row.id)}"]`);
+  if(supply) supply.textContent = sv.supply ? fmtNum(sv.supply) : '';
+  if(vat) vat.textContent = sv.vat ? fmtNum(sv.vat) : '';
+  refreshCorpCardRowIssues(row);
+}
+// 선택 상태가 바뀌었을 때 화면에서 실제로 달라지는 부분만 갱신한다.
+function updateCorpCardSelectionUi(){
+  const btn = document.getElementById('corpCardPrintDocBtn');
+  if(btn){
+    btn.textContent = `🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력`;
+    btn.disabled = corpCardSelectedIds.size === 0;
+  }
+  const all = document.getElementById('corpCardSelectAllBox');
+  if(all){
+    const boxes = [...document.querySelectorAll('.corpcard-select-box')];
+    all.checked = boxes.length > 0 && boxes.every(b=>b.checked);
+  }
+}
 function refreshCorpCardRowIssues(row){
   if(!row) return;
   const mm = (corpCardState.mismatchByCard[corpCardState.activeCardId]||new Map()).get(row.id);
@@ -11716,15 +11748,26 @@ function unrecordedSummaryAll(){
   });
   return out;
 }
+// 카드마다 승인내역 전체(수백~수천 건)를 걸러 정렬하는 일이 화면을 그릴 때마다
+// 카드·달 수만큼 되풀이돼 눈에 띄게 느렸다. 승인내역 배열이 바뀌지 않는 한
+// 결과는 같으므로 카드별로 기억해둔다.
+let approvalForCardCache = { src:null, byCard:new Map() };
 function approvalEntriesForCard(cardId){
+  if(approvalForCardCache.src !== corpCardState.approvalEntries){
+    approvalForCardCache = { src: corpCardState.approvalEntries, byCard: new Map() };
+  }
+  const hit = approvalForCardCache.byCard.get(cardId);
+  if(hit) return hit;
   const card = corpCardState.cards.find(c=>c.id===cardId);
   if(!card) return [];
   const parts = cardParts(card.cardNumber);
   if(!parts) return [];
-  return corpCardState.approvalEntries
+  const list = corpCardState.approvalEntries
     .filter(a=>approvalRowMatchesCard(a.cardNoStr, parts))
     .slice()
     .sort((a,b)=> String(a.isoDate||'').localeCompare(String(b.isoDate||'')));
+  approvalForCardCache.byCard.set(cardId, list);
+  return list;
 }
 // 승인내역 창은 "지금 보고 있는 장부의 달"로 열리는 것이 언제나 맞다 —
 // 9월 탭을 보다가 승인내역을 열었는데 8월이 떠 있으면 카드마다 보이는 달이
@@ -12640,11 +12683,11 @@ async function renderCorpCardMain(){
                 <input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="expenseType" value="${escapeHtml(row.expenseType)}" style="text-align:center; ${issues.expenseType?errBorder:''}">
                 ${note('expenseType')}
               </td>
-              <td style="padding:5px 4px; text-align:right; color:var(--muted);">${sv.supply?fmtNum(sv.supply):''}</td>
-              <td style="padding:5px 4px; text-align:right; color:var(--muted);">${sv.vat?fmtNum(sv.vat):''}</td>
+              <td class="corpcard-supply" data-id="${row.id}" style="padding:5px 4px; text-align:right; color:var(--muted);">${sv.supply?fmtNum(sv.supply):''}</td>
+              <td class="corpcard-vat" data-id="${row.id}" style="padding:5px 4px; text-align:right; color:var(--muted);">${sv.vat?fmtNum(sv.vat):''}</td>
               <td style="padding:3px 4px;">
                 <input type="text" inputmode="numeric" class="corpcard-f corpcard-money" data-id="${row.id}" data-field="amount" value="${row.amount?Number(row.amount).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right; ${issues.amount?errBorder:''}">
-                ${issues.amount ? `<div style="font-size:10px; color:var(--neg); margin-top:2px; text-align:right;">${escapeHtml(issues.amount)}</div>` : ''}
+                ${issues.amount ? `<div class="corpcard-issue" data-id="${row.id}" data-field="amount" style="font-size:10px; color:var(--neg); margin-top:2px; text-align:right;">${escapeHtml(issues.amount)}</div>` : ''}
               </td>
               <td style="padding:3px 4px;">
                 <select class="corpcard-f" data-id="${row.id}" data-field="hipass" style="width:100%; text-align:center; ${issues.hipass?errBorder:''}">
@@ -12832,14 +12875,17 @@ async function renderCorpCardMain(){
     selectAllBox.addEventListener('change', ()=>{
       if(selectAllBox.checked) rows.forEach(r=>corpCardSelectedIds.add(r.id));
       else rows.forEach(r=>corpCardSelectedIds.delete(r.id));
-      renderCorpCardMain();
+      document.querySelectorAll('.corpcard-select-box').forEach(b=>{ b.checked = corpCardSelectedIds.has(b.dataset.id); });
+      updateCorpCardSelectionUi();
     });
   }
   main.querySelectorAll('.corpcard-select-box').forEach(box=>{
     box.addEventListener('change', ()=>{
       if(box.checked) corpCardSelectedIds.add(box.dataset.id);
       else corpCardSelectedIds.delete(box.dataset.id);
-      renderCorpCardMain();
+      // 표 전체를 다시 그리면 행이 많을 때 체크 한 번에 0.2초씩 멈춘다 —
+      // 선택 때문에 달라지는 건 출력 버튼 문구뿐이라 그것만 고친다.
+      updateCorpCardSelectionUi();
     });
   });
   // 차량관리와 같은 이유로(모바일에서 다음 칸으로 옮기지 않고 바로 화면을
@@ -12847,15 +12893,21 @@ async function renderCorpCardMain(){
   // 잠깐(500ms) 멈추면 화면을 다시 그리지 않고 자동으로 저장해둔다. change에서
   // 하는 최종 정리(금액 반올림, 발전소명 자동입력, 비고 입력가능 여부 등)와
   // 재렌더링은 그대로 blur 시점에만 한다.
-  wireAutoSizeTextInputs(main);
+  wireAutoSizeTextInputs(main, true);
   const corpCardDebouncedSave = debounce(async ()=>{
     updateCorpCardSaveBtn(true);
     const r = await saveCorpCardRows(activeCard.id);
     if(!r || r.ok !== false){ corpCardDirty = false; corpCardDirtyCardId = ''; }
     updateCorpCardSaveBtn();
   }, 500);
-  main.querySelectorAll('.corpcard-f').forEach(el=>{
-    el.addEventListener('input', ()=>{
+  // 입력칸이 수백 개라 칸마다 리스너를 다는 것만으로도 표를 그릴 때 눈에 띄게
+  // 느려진다 — 표 전체에 하나씩만 달고 이벤트가 어느 칸에서 났는지 보고 처리한다.
+  const tableEl = main.querySelector('#corpCardTableWrap') || main;
+  tableEl.addEventListener('input', (ev)=>{
+    const el = ev.target.closest ? ev.target.closest('.corpcard-f') : null;
+    if(!el) return;
+    if(el.classList.contains('corpcard-f-auto')) autoSizeTextInput(el);
+    {
       const row = rows.find(r=>r.id===el.dataset.id);
       if(!row) return;
       const field = el.dataset.field;
@@ -12867,16 +12919,29 @@ async function renderCorpCardMain(){
       markCorpCardDirty(activeCard.id);
       refreshCorpCardRowIssues(row);
       corpCardDebouncedSave();
-    });
-    el.addEventListener('change', async ()=>{
+    }
+  });
+  tableEl.addEventListener('change', async (ev)=>{
+    const el = ev.target.closest ? ev.target.closest('.corpcard-f') : null;
+    if(!el) return;
+    {
       const row = rows.find(r=>r.id===el.dataset.id);
       if(!row) return;
       const field = el.dataset.field;
       if(el.classList.contains('corpcard-money')){
         const n = Number(String(el.value).replace(/[^0-9.-]/g,''))||0;
         row[field] = n;
+        const before = corpCardMismatchSignature();
         recomputeCorpCardMismatches();
-        renderCorpCardMain();
+        // 금액을 고칠 때마다 표 전체를 다시 그리면 행이 많은 달에서 눈에 띄게
+        // 버벅인다. 보통은 그 행의 공급가액·부가세와 경고만 달라지므로 그것만
+        // 고치고, 다른 행의 대사 결과까지 달라졌을 때만 전체를 다시 그린다.
+        if(corpCardMismatchSignature() === before){
+          el.value = n ? n.toLocaleString('ko-KR') : '';
+          updateCorpCardComputedCells(row);
+        } else {
+          renderCorpCardMain();
+        }
       } else {
         row[field] = el.value.trim();
         if(field==='date' || field==='place') recomputeCorpCardMismatches();
@@ -12904,7 +12969,7 @@ async function renderCorpCardMain(){
       if(result && result.ok===false) notifyRowSaveFailure(result.reason);
       else { corpCardDirty = false; corpCardDirtyCardId = ''; }
       updateCorpCardSaveBtn();
-    });
+    }
   });
   // 다른 카드/달에 남아 있는 "안 적은 승인내역" 바로가기 & 전부 채우기
   main.querySelectorAll('.corpcard-pending-btn').forEach(btn=>{
