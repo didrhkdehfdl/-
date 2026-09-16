@@ -9639,6 +9639,23 @@ function isoDateUTC(d){
 // 카드사 승인내역 시트에서 "승인일자"/"승인금액" 헤더가 있는 열을 찾는다(고정
 // 열 위치를 가정하지 않고 헤더 이름으로 찾아야, 카드사마다 열 순서가 달라도
 // 관리대장의 날짜·금액과 정확히 같은 값끼리 비교할 수 있다).
+// 머리글 없이 시각만 들어 있는 열을 값 모양으로 찾아낸다(앞 30줄만 훑는다).
+function findApprovalTimeColumn(aoa, headerIdx, colDate){
+  const width = Math.max(...aoa.slice(headerIdx+1, headerIdx+31).map(r=>(r||[]).length), 0);
+  for(let c=0;c<width;c++){
+    if(c === colDate) continue;
+    let looksTime = 0, seen = 0;
+    for(let i=headerIdx+1;i<Math.min(aoa.length, headerIdx+31);i++){
+      const v = (aoa[i]||[])[c];
+      if(v === '' || v === undefined || v === null) continue;
+      seen++;
+      if(v instanceof Date){ if(v.getUTCHours()||v.getUTCMinutes()||v.getUTCSeconds()) looksTime++; }
+      else if(/^\s*\d{1,2}:\d{2}(:\d{2})?\s*$/.test(String(v))) looksTime++;
+    }
+    if(seen >= 2 && looksTime === seen) return c;
+  }
+  return -1;
+}
 function approvalParseAoa(aoa){
   const norm = v => String(v||'').replace(/\s/g,'');
   let headerIdx=-1, colCard=-1, colDate=-1, colAmount=-1, colPlace=-1, colTime=-1;
@@ -9652,13 +9669,16 @@ function approvalParseAoa(aoa){
       colPlace = row.findIndex(c=>/가맹점|사용처/.test(norm(c)));
       // 카드사에 따라 "승인시각"이 따로 있는 파일이 있다 — 같은 날 여러 건을
       // 실제로 쓴 순서대로 줄 세우려면 이 값이 필요하다.
-      colTime = row.findIndex(c=>/^(승인시각|승인시간|거래시각|거래시간|시각|시간)$/.test(norm(c)));
+      colTime = row.findIndex((c,ci)=> ci!==idxDate && /(시각|시간|일시)/.test(norm(c)));
       break;
     }
   }
   if(headerIdx<0) return { error: '승인내역 시트에서 헤더 행("승인일자"/"승인금액")을 찾지 못했습니다. 시트를 다시 확인해주세요.' };
   if(colCard<0) colCard = 0; // 카드번호 열을 못 찾으면 기존 위치(첫 열)를 그대로 사용
   if(colPlace<0) colPlace = 3; // 가맹점명/사용처 열을 못 찾으면 기존 위치를 그대로 사용
+  // 승인시각 열에 머리글이 없거나 이름이 제각각인 파일이 있어서, 머리글로 못
+  // 찾으면 실제 값이 "19:59:29"처럼 시각으로 보이는 열을 찾아 쓴다.
+  if(colTime < 0) colTime = findApprovalTimeColumn(aoa, headerIdx, colDate);
   return { headerIdx, colCard, colDate, colAmount, colPlace, colTime };
 }
 // 승인일자 칸이나 별도 승인시각 칸에서 "HH:MM(:SS)"을 뽑아낸다(없으면 빈 문자열).
@@ -11159,6 +11179,18 @@ const CORP_CARD_NOTE_ALLOWED_TYPES = ['식대','접대비','회식비'];
 // 칸을 채웠는데도 "빈칸을 채워주세요"가 그대로 남아 있는 일이 없도록, 타이핑
 // 하는 즉시 그 행의 경고만 다시 계산해서 화면에 반영한다(표 전체를 다시 그리면
 // 입력 중인 칸의 커서가 튀기 때문에 그 행만 손본다).
+// 표를 다시 그린 뒤 원하는 칸에 다시 커서를 둔다(다시 그리기 전의 포커스는
+// 사라지므로, 그리기가 끝난 다음 프레임에 잡아준다).
+function focusCorpCardField(rowId, field){
+  requestAnimationFrame(()=>{
+    const tr = document.querySelector(`#main tbody tr[data-id="${CSS.escape(rowId)}"]`);
+    if(!tr) return;
+    const el = tr.querySelector(`.corpcard-f[data-field="${CSS.escape(field)}"]`);
+    if(!el || el.disabled || el.readOnly) return;
+    el.focus();
+    if(el.select && el.type === 'text') el.select();
+  });
+}
 function refreshCorpCardRowIssues(row){
   if(!row) return;
   const mm = (corpCardState.mismatchByCard[corpCardState.activeCardId]||new Map()).get(row.id);
@@ -11437,12 +11469,20 @@ function excludeCancelledApprovalPairs(rows){
 }
 function mergeApprovalEntries(existing, incoming){
   const keyOf = e => e.approvalNo ? ('no:'+e.approvalNo) : `ca:${e.cardNoStr}|${e.isoDate}|${e.amount}|${e.place}`;
-  const seen = new Set(existing.map(keyOf));
   const merged = existing.slice();
+  const byKey = new Map();
+  merged.forEach(e=>{ if(!byKey.has(keyOf(e))) byKey.set(keyOf(e), e); });
   incoming.forEach(e=>{
     const k = keyOf(e);
-    if(seen.has(k)) return;
-    seen.add(k);
+    const prev = byKey.get(k);
+    if(prev){
+      // 이미 있는 건이라도, 예전에 올렸을 땐 읽지 않던 값(승인시각)이 이번
+      // 파일에 들어 있으면 채워 넣는다 — 같은 파일을 다시 올리는 것만으로
+      // 시각이 반영되게 하기 위함이다.
+      if(e.apprTime && !prev.apprTime) prev.apprTime = e.apprTime;
+      return;
+    }
+    byKey.set(k, e);
     merged.push(e);
   });
   return merged;
@@ -11924,10 +11964,11 @@ async function handleCorpCardApprovalUpload(file){
   parsedRows.forEach(r=>{ r.uploadedAt = uploadedAt; r.uploadedFile = file.name; });
   corpCardState.approvalEntries = mergeApprovalEntries(corpCardState.approvalEntries, parsedRows);
   const added = corpCardState.approvalEntries.length - before;
+  const withTime = corpCardState.approvalEntries.filter(a=>a.apprTime).length;
   await saveCorpCardApprovalEntries();
   recomputeCorpCardMismatches();
   notifyApprovalUpload(parsedRows.length, added, corpCardState.approvalEntries.length);
-  alert(`승인내역 ${parsedRows.length}건을 확인해서 ${added}건을 새로 추가했습니다. (누적 ${corpCardState.approvalEntries.length}건)${cancelledCount ? `\n결제 후 취소된 건 ${cancelledCount}건은 대사 대상에서 제외했습니다.` : ''}`);
+  alert(`승인내역 ${parsedRows.length}건을 확인해서 ${added}건을 새로 추가했습니다. (누적 ${corpCardState.approvalEntries.length}건)${cancelledCount ? `\n결제 후 취소된 건 ${cancelledCount}건은 대사 대상에서 제외했습니다.` : ''}${withTime ? `\n승인시각이 있는 건 ${withTime}건 — 법인카드 탭에서 "🕘 승인시각 순으로 정렬"을 누르면 실제 사용 순서대로 정리됩니다.` : ''}`);
 }
 // change(blur)와 input 디바운스 자동저장이 겹쳐 호출될 수 있어(차량관리와
 // 같은 이유), 저장 요청을 한 번에 하나씩 순서대로만 실행되게 줄세운다.
@@ -12650,7 +12691,14 @@ async function renderCorpCardMain(){
   if(sortTimeBtn) sortTimeBtn.addEventListener('click', async ()=>{
     await flushCorpCardSave();
     const n = await sortCorpCardMonthByApprovalTime(activeCard.id, s.activeMonth);
-    if(!n) alert('순서가 이미 승인시각 순입니다.\n(승인내역 파일에 승인시각이 없으면 날짜 순까지만 맞춥니다 — 카드사 승인내역을 다시 올리면 시각까지 반영됩니다.)');
+    if(!n){
+      const iso = isoMonthForCardMonth(activeCard.id, s.activeMonth);
+      const hasTime = approvalEntriesForCard(activeCard.id)
+        .some(a=>a.apprTime && String(a.isoDate||'').slice(0,7)===iso);
+      alert(hasTime
+        ? '순서가 이미 승인시각 순입니다.'
+        : '지금 저장된 이 달 승인내역에는 승인시각이 들어 있지 않습니다.\n"카드관리" 화면에서 카드사 승인내역 파일을 다시 올리면 시각까지 저장되고,\n그 뒤 이 버튼을 누르면 실제 사용 순서대로 정리됩니다.');
+    }
   });
   const fillApprovalBtn = document.getElementById('corpCardFillApprovalBtn');
   if(fillApprovalBtn) fillApprovalBtn.addEventListener('click', async ()=>{
@@ -12735,8 +12783,16 @@ async function renderCorpCardMain(){
         if(field==='bizCategory'){
           if(row.bizCategory==='사무실'){ row.plantName = '사무실관리'; row.project = '관리(안성)'; }
           renderCorpCardMain();
+          // 표를 다시 그리면 눌러둔 자리가 사라져서, 다음에 Tab을 누르면 맨 위
+          // (카드 목록)로 튄다. 사업분류 다음에 사람이 실제로 채워야 하는 칸은
+          // 업무내용이므로 거기로 옮겨준다.
+          focusCorpCardField(row.id, 'workDetail');
         }
-        if(field==='expenseType' || field==='hipass') renderCorpCardMain();
+        if(field==='expenseType' || field==='hipass'){
+          renderCorpCardMain();
+          // 방금 고른 칸에 그대로 머무르게 해서 Tab이 자연스럽게 이어지도록 한다.
+          focusCorpCardField(row.id, field);
+        }
       }
       refreshCorpCardRowIssues(row);
       const result = await saveCorpCardRows(activeCard.id);
