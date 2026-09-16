@@ -11138,6 +11138,9 @@ function newCorpCardRow(){
 // 승인내역 대사 결과(mm)와 필수 입력칸 공백, "점심"으로 잘못 적은 지출내역까지
 // 한 곳에서 합쳐서 판단해야, 화면에서는 행 전체를 빨간줄로 칠하는 기준과
 // 칸마다 보여주는 안내문구가 서로 어긋나지 않는다.
+// 비고 칸에 직접 타이핑할 수 있는 지출내역 — 그 밖의 지출내역은 업무내용 칸에
+// 적어야 할 내용이 비고로 새는 걸 막으려고 잠가둔다.
+const CORP_CARD_NOTE_ALLOWED_TYPES = ['식대','접대비','회식비'];
 function corpCardRowIssues(row, mm){
   const issues = {};
   const requiredFields = ['date','dept','name','corp','bizCategory','project','plantName','place','workDetail','expenseType','amount','hipass','carNo'];
@@ -11153,8 +11156,13 @@ function corpCardRowIssues(row, mm){
   const isMealAllowance = String(row.expenseType||'').trim()==='식대';
   const isEntertainment = String(row.expenseType||'').trim()==='접대비';
   const isFuelCost = String(row.expenseType||'').trim()==='주유비';
+  // 회식비는 참석자를 비고에 적어두는 경우가 많아 입력은 열어두되, 반드시
+  // 적어야 하는 건 아니라서 비었다고 경고하지는 않는다.
+  const isCompanyDinner = String(row.expenseType||'').trim()==='회식비';
   const noteHasContent = /[^\s\-–—]/.test(row.note||'');
-  if(isMealAllowance){
+  if(isCompanyDinner){
+    // 적어도 되고 안 적어도 된다
+  } else if(isMealAllowance){
     if(!noteHasContent) issues.note = '빈칸을 채워주세요';
   } else if(isEntertainment){
     if(!/^.+\/\/.+\(.+\)\s*$/.test(String(row.note||'').trim())) issues.note = '"성명 // 상대방 (업체)" 형식으로 적어주세요';
@@ -12336,7 +12344,7 @@ async function renderCorpCardMain(){
             const checked = corpCardSelectedIds.has(row.id);
             const bizCategoryVal = String(row.bizCategory||'').trim();
             const isOfficeCategory = bizCategoryVal === '사무실';
-            const noteAllowedTypes = ['식대','접대비'];
+            const noteAllowedTypes = CORP_CARD_NOTE_ALLOWED_TYPES;
             const noteHasStrayContent = /[^\s\-–—]/.test(row.note||'');
             const noteLocked = !noteAllowedTypes.includes(String(row.expenseType||'').trim()) && !noteHasStrayContent;
             const lockedStyle = 'background:var(--panel-2); color:var(--muted); cursor:not-allowed;';
@@ -12604,7 +12612,7 @@ async function renderCorpCardMain(){
         if(field==='date' || field==='place') recomputeCorpCardMismatches();
         // 사업분류를 "사무실"로 고르면 발전소명은 "사무실관리", 프로젝트는
         // "관리(안성)"으로 강제로 맞추고 잠근다. 지출내역이 바뀌면 비고 입력
-        // 가능 여부(식대·접대비만 타이핑 허용)가, 하이패스(select)는 방금 고른
+        // 가능 여부(식대·접대비·회식비만 타이핑 허용)가, 하이패스(select)는 방금 고른
         // 값이 "빈칸을 채워주세요" 경고에 바로 반영되도록 다시 그린다 — 안
         // 그리면 값은 저장돼도 화면에는 고르기 전의 빨간 경고가 그대로 남는다.
         if(field==='bizCategory'){
