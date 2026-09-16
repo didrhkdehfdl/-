@@ -1608,6 +1608,171 @@ async function recordCaseHistoryBeforeSave(newCase){
     await saveCaseHistory(newCase.id, history);
   }catch(e){ console.error(e); }
 }
+// ===== 변동내역에 "무엇이 바뀌었는지" 요약해 보여주기 =====
+// 이력에는 그 시점의 JSON 전체가 통째로 들어 있을 뿐이라, 지금까지는 날짜만
+// 보고 "이 시점으로 복원"을 눌러봐야 뭐가 달라졌는지 알 수 있었다. 두 시점의
+// JSON을 비교해서 사람이 읽을 수 있는 문장으로 바꿔 보여준다.
+const HISTORY_FIELD_LABELS = {
+  // 공통
+  id:'번호', title:'제목', docNo:'문서번호', date:'날짜', note:'비고', memo:'메모',
+  customer:'고객명', name:'성명', amount:'금액', dept:'부서', corp:'법인',
+  address:'주소', phone:'연락처', status:'상태', updated:'수정시각', createdAt:'작성시각',
+  // 영업비 정산 / 이윤정산
+  module:'모듈', capacity:'용량', companyPrice:'입금가', deposit:'입금액', depositDate:'입금일자',
+  vat:'부가세', vatAuto:'부가세(자동)', vatManual:'부가세(수동)', extra:'추가비',
+  agent:'영업자', agentPhone:'영업자 연락처', salesCost:'영업비', salesDeduction:'영업비 공제',
+  salesDeductionNote:'영업비 공제 비고', inspectionCert:'사용전점검일', certDate:'준공일',
+  profit:'이윤', constructionCost:'공사비', records:'입력 항목',
+  // 법인카드
+  place:'사용처', workDetail:'업무내용', expenseType:'지출내역', bizCategory:'사업분류',
+  project:'프로젝트', plantName:'발전소명', hipass:'하이패스', carNo:'차량번호',
+  position:'직급', venue:'사용장소', cardNumber:'카드번호', cards:'카드 목록',
+  // 차량관리
+  driver:'운전자', purpose:'사용목적', startKm:'출발 주행거리', endKm:'도착 주행거리',
+  distance:'주행거리', departure:'출발지', destination:'도착지',
+};
+function historyFieldLabel(field){
+  if(HISTORY_FIELD_LABELS[field]) return HISTORY_FIELD_LABELS[field];
+  if(/^\d{4}-\d{2}$/.test(field)) return field + '월';
+  return field;
+}
+// 행/건 하나를 사람이 알아볼 수 있는 이름으로 (예: "09-14 한국철도공사")
+function historyRecordDesc(obj){
+  if(!obj || typeof obj !== 'object') return '';
+  const parts = [];
+  if(obj.date) parts.push(String(obj.date).slice(5));
+  const nameLike = obj.title || obj.customer || obj.place || obj.name || obj.plantName || obj.label;
+  if(nameLike) parts.push(String(nameLike));
+  return parts.join(' ');
+}
+function historyFlatten(val, path, out, labels){
+  if(val === null || val === undefined){ out.set(path, ''); return; }
+  if(Array.isArray(val)){
+    if(!val.length){ out.set(path, '(빈 목록)'); return; }
+    // id가 있는 목록은 id로 짝지어야 중간에 한 건만 지워도 "전부 바뀐 것"처럼
+    // 보이지 않는다.
+    const keyed = val.every(v => v && typeof v==='object' && !Array.isArray(v) && v.id !== undefined);
+    val.forEach((v,i)=>{
+      const key = keyed ? String(v.id) : String(i+1);
+      const p = path ? `${path}/${key}` : key;
+      const desc = historyRecordDesc(v);
+      if(!labels.has(p)) labels.set(p, desc || `${i+1}번째`);
+      historyFlatten(v, p, out, labels);
+    });
+    return;
+  }
+  if(typeof val === 'object'){
+    const keys = Object.keys(val);
+    if(!keys.length){ out.set(path, '(빈 값)'); return; }
+    keys.forEach(k=>{
+      const p = path ? `${path}/${k}` : k;
+      if(val[k] && typeof val[k]==='object') labels.set(p, labels.get(p) || historyFieldLabel(k));
+      historyFlatten(val[k], p, out, labels);
+    });
+    return;
+  }
+  out.set(path, val);
+}
+function historyValueText(v){
+  if(v === undefined || v === null || v === '') return '(빈칸)';
+  if(typeof v === 'boolean') return v ? '켜짐' : '꺼짐';
+  if(typeof v === 'number') return v.toLocaleString('ko-KR');
+  const t = String(v);
+  return t.length > 40 ? t.slice(0,40)+'…' : t;
+}
+// 같은 부모(=같은 행/건)에 속한 변경들을 묶어서, 행 추가/삭제인지 칸 수정인지
+// 구분해 문장으로 만든다.
+function summarizeDataChange(prevRaw, nextRaw, maxLines){
+  maxLines = maxLines || 8;
+  let a, b;
+  try{ a = JSON.parse(prevRaw); b = JSON.parse(nextRaw); }
+  catch(e){ return null; }
+  const pm = new Map(), nm = new Map(), labels = new Map();
+  historyFlatten(a, '', pm, labels);
+  historyFlatten(b, '', nm, labels);
+  const groups = new Map();
+  new Set([...pm.keys(), ...nm.keys()]).forEach(k=>{
+    const pv = pm.has(k) ? pm.get(k) : undefined;
+    const nv = nm.has(k) ? nm.get(k) : undefined;
+    if(pv === nv) return;
+    if(pv !== undefined && nv !== undefined && String(pv) === String(nv)) return;
+    const cut = k.lastIndexOf('/');
+    const parent = cut < 0 ? '' : k.slice(0, cut);
+    const field = cut < 0 ? k : k.slice(cut+1);
+    const g = groups.get(parent) || { added:[], removed:[], changed:[] };
+    if(pv === undefined) g.added.push([field, nv]);
+    else if(nv === undefined) g.removed.push([field, pv]);
+    else g.changed.push([field, pv, nv]);
+    groups.set(parent, g);
+  });
+  if(!groups.size) return { lines: [], added:0, removed:0, changed:0 };
+  const hadParent = (map, parent) => {
+    if(!parent) return true;
+    for(const k of map.keys()){ if(k === parent || k.startsWith(parent+'/')) return true; }
+    return false;
+  };
+  const lines = [];
+  let added = 0, removed = 0, changed = 0;
+  // 이름표(예: "09-14 한국철도공사")에 이미 들어간 칸과 내부 번호는 괄호 설명에서 뺀다.
+  const BRIEF_SKIP = new Set(['id','date','place','title','customer','name','label']);
+  const briefOf = pairs => pairs
+    .filter(([f,v])=> !BRIEF_SKIP.has(f) && v!=='' && v!==0 && v!=null)
+    .slice(0,3)
+    .map(([f,v])=>`${historyFieldLabel(f)} ${historyValueText(v)}`)
+    .join(', ');
+  const label = parent => labels.get(parent) || (parent ? historyFieldLabel(parent.split('/').pop()) : '');
+  [...groups.entries()].forEach(([parent, g])=>{
+    const isNew = !g.changed.length && !g.removed.length && g.added.length && !hadParent(pm, parent);
+    const isGone = !g.changed.length && !g.added.length && g.removed.length && !hadParent(nm, parent);
+    if(isNew){
+      added++;
+      const brief = briefOf(g.added);
+      lines.push({ kind:'add', text:`➕ 추가 — ${label(parent) || brief || '새 항목'}${label(parent)&&brief?` (${brief})`:''}` });
+      return;
+    }
+    if(isGone){
+      removed++;
+      const brief = briefOf(g.removed);
+      lines.push({ kind:'del', text:`➖ 삭제 — ${label(parent) || brief || '항목'}${label(parent)&&brief?` (${brief})`:''}` });
+      return;
+    }
+    const where = label(parent);
+    g.changed.forEach(([f,pv,nv])=>{
+      changed++;
+      lines.push({ kind:'edit', text:`✏️ ${where ? where+' · ' : ''}${historyFieldLabel(f)}: ${historyValueText(pv)} → ${historyValueText(nv)}` });
+    });
+    g.added.forEach(([f,nv])=>{
+      changed++;
+      lines.push({ kind:'edit', text:`✏️ ${where ? where+' · ' : ''}${historyFieldLabel(f)}: (없음) → ${historyValueText(nv)}` });
+    });
+    g.removed.forEach(([f,pv])=>{
+      changed++;
+      lines.push({ kind:'edit', text:`✏️ ${where ? where+' · ' : ''}${historyFieldLabel(f)}: ${historyValueText(pv)} → (없음)` });
+    });
+  });
+  // 추가/삭제를 먼저, 그 다음 수정 순으로 보여준다.
+  const order = { add:0, del:1, edit:2 };
+  lines.sort((x,y)=> order[x.kind] - order[y.kind]);
+  return { lines: lines.slice(0, maxLines), total: lines.length, added, removed, changed };
+}
+// 변동내역 한 줄에 붙일 요약 HTML. prevRaw(그 시점) → nextRaw(그 다음 시점)
+function historyChangeHtml(prevRaw, nextRaw){
+  if(!nextRaw) return `<div style="font-size:11.5px; color:var(--muted); margin-top:4px;">(가장 최근 상태와 비교할 수 없습니다)</div>`;
+  const sum = summarizeDataChange(prevRaw, nextRaw);
+  if(!sum) return `<div style="font-size:11.5px; color:var(--muted); margin-top:4px;">(내용을 비교할 수 없는 형식입니다)</div>`;
+  if(!sum.lines.length) return `<div style="font-size:11.5px; color:var(--muted); margin-top:4px;">변경된 내용이 없습니다</div>`;
+  const head = [
+    sum.added ? `➕ 추가 ${sum.added}` : '',
+    sum.removed ? `➖ 삭제 ${sum.removed}` : '',
+    sum.changed ? `✏️ 수정 ${sum.changed}` : '',
+  ].filter(Boolean).join(' · ');
+  const more = sum.total > sum.lines.length ? `<div style="font-size:11.5px; color:var(--muted);">…외 ${sum.total - sum.lines.length}건</div>` : '';
+  return `<div style="margin-top:6px; padding:7px 9px; border-radius:6px; background:var(--panel-2); display:flex; flex-direction:column; gap:3px;">
+    <div style="font-size:11.5px; color:var(--muted); font-weight:700;">이 시점 이후 바뀐 내용 — ${head}</div>
+    ${sum.lines.map(l=>`<div style="font-size:12px; color:var(--text);">${escapeHtml(l.text)}</div>`).join('')}
+    ${more}
+  </div>`;
+}
 function fmtHistoryTimestamp(ts){
   const d = new Date(ts);
   const pad = n => String(n).padStart(2,'0');
@@ -1625,6 +1790,8 @@ async function openCaseHistoryOverlay(caseId){
     listEl.innerHTML = '<div class="empty-side">아직 남은 변경 이력이 없습니다. 이 건을 수정하시면 그때부터 이전 상태가 기록됩니다.</div>';
     return;
   }
+  // 가장 최근 이력은 "지금 저장돼 있는 내용"과 비교해야 최근 변경이 보인다.
+  const currentRaw = await loadFileFromStorage('case:'+caseId);
   const ordered = [...history].reverse(); // 최신이 위로
   listEl.innerHTML = ordered.map((entry, i) => {
     const idx = history.length - 1 - i; // 원본 배열에서의 위치 (복원 시 필요)
@@ -1633,13 +1800,17 @@ async function openCaseHistoryOverlay(caseId){
       const d = JSON.parse(entry.data);
       preview = d.caseType === 'profit' ? (d.customer || '(고객명 없음)') : (d.title || '(제목 없음)');
     }catch(e){ preview = '(미리보기 불가)'; }
+    const nextRaw = idx < history.length - 1 ? history[idx+1].data : currentRaw;
     return `
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:8px;">
-        <div>
-          <div style="font-size:12.5px; color:var(--muted);">${fmtHistoryTimestamp(entry.timestamp)}</div>
-          <div style="font-size:13px; margin-top:2px;">${escapeHtml(preview)}</div>
+      <div style="padding:10px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:8px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <div>
+            <div style="font-size:12.5px; color:var(--muted);">${fmtHistoryTimestamp(entry.timestamp)}${idx === history.length-1 ? ' <span style="color:var(--gold);">(가장 최근)</span>' : ''}</div>
+            <div style="font-size:13px; margin-top:2px;">${escapeHtml(preview)}</div>
+          </div>
+          <button class="case-history-restore-btn" data-idx="${idx}" style="font-size:11.5px; padding:6px 12px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; white-space:nowrap;">이 시점으로 복원</button>
         </div>
-        <button class="case-history-restore-btn" data-idx="${idx}" style="font-size:11.5px; padding:6px 12px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; white-space:nowrap;">이 시점으로 복원</button>
+        ${historyChangeHtml(entry.data, nextRaw)}
       </div>`;
   }).join('');
   listEl.querySelectorAll('.case-history-restore-btn').forEach(btn=>{
@@ -2071,13 +2242,20 @@ async function openGenericHistoryOverlay(storageKey, label, onRestore){
     listEl.innerHTML = '<div class="empty-side">아직 남은 변경 이력이 없습니다. 이 항목을 수정하시면 그때부터 이전 상태가 기록됩니다.</div>';
     return;
   }
+  // 각 시점 다음에 무엇이 바뀌었는지 보여주려면 "그 다음 시점"의 내용이 필요하다.
+  // 가장 최근 이력의 비교 대상은 지금 저장돼 있는 현재 내용이다.
+  const currentRaw = await loadFileFromStorage(storageKey);
   const ordered = [...history].reverse(); // 최신이 위로
   listEl.innerHTML = ordered.map((entry, i) => {
     const idx = history.length - 1 - i;
+    const nextRaw = idx < history.length - 1 ? history[idx+1].data : currentRaw;
     return `
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:8px;">
-        <div style="font-size:12.5px; color:var(--muted);">${fmtHistoryTimestamp(entry.timestamp)}</div>
-        <button class="generic-history-restore-btn" data-idx="${idx}" style="font-size:11.5px; padding:6px 12px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; white-space:nowrap;">이 시점으로 복원</button>
+      <div style="padding:10px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:8px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <div style="font-size:12.5px; color:var(--muted);">${fmtHistoryTimestamp(entry.timestamp)}${idx === history.length-1 ? ' <span style="color:var(--gold);">(가장 최근)</span>' : ''}</div>
+          <button class="generic-history-restore-btn" data-idx="${idx}" style="font-size:11.5px; padding:6px 12px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; white-space:nowrap;">이 시점으로 복원</button>
+        </div>
+        ${historyChangeHtml(entry.data, nextRaw)}
       </div>`;
   }).join('');
   listEl.querySelectorAll('.generic-history-restore-btn').forEach(btn=>{
