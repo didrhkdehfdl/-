@@ -11185,6 +11185,53 @@ function resolveApprovalViewMonth(cardId, wanted){
 function approvalMonthsForCard(cardId){
   return [...new Set(approvalEntriesForCard(cardId).map(a=>String(a.isoDate||'').slice(0,7)).filter(Boolean))].sort();
 }
+// 승인내역에는 있는데 장부에 아직 안 적은 건을, 카드 쓴 순서(승인일자 순)에
+// 맞춰 장부에 행으로 먼저 깔아준다. 사람이 일일이 옮겨 적다 보면 빠뜨리거나
+// 금액을 잘못 치기 쉬운데, 날짜·사용처·금액은 카드사 기록이 정확하므로 그
+// 세 칸만 채워두고 나머지(성명·업무내용·지출내역 등)는 사람이 채우게 둔다.
+async function fillMissingApprovalRows(cardId, month){
+  const s = corpCardState;
+  const card = s.cards.find(c=>c.id===cardId);
+  if(!card || !month) return 0;
+  const approvals = approvalEntriesForCard(cardId).filter(a=>String(a.isoDate||'').slice(0,7)===month);
+  const missing = unrecordedApprovals(cardId, approvals)
+    .slice()
+    .sort((a,b)=> String(a.isoDate||'').localeCompare(String(b.isoDate||'')));
+  if(!missing.length){ alert('이 달은 승인내역이 전부 장부에 적혀 있습니다.'); return 0; }
+  if(!confirm(`승인내역에는 있는데 장부에 없는 ${missing.length}건을 승인일자 순서로 채웁니다.\n날짜·사용처·금액만 채우고 나머지 칸은 비워 둡니다.\n계속할까요?`)) return 0;
+
+  s.rowsByCard[cardId] = s.rowsByCard[cardId] || {};
+  const rows = s.rowsByCard[cardId][month] = s.rowsByCard[cardId][month] || [];
+  missing.forEach(a=>{
+    const row = newCorpCardRow();
+    if(card.nameMode === 'fixed'){
+      if((card.fixedName||'').trim()) row.name = card.fixedName.trim();
+      if((card.fixedPosition||'').trim()) row.position = card.fixedPosition.trim();
+      if((card.fixedDept||'').trim()) row.dept = card.fixedDept.trim();
+      if((card.fixedCorp||'').trim()) row.corp = card.fixedCorp.trim();
+    }
+    row.date = a.isoDate || '';
+    row.place = a.place || '';
+    row.amount = Math.abs(Number(a.amount)||0);
+    row.fromApproval = true; // 승인내역에서 자동으로 깔아준 행이라는 표시
+    rows.push(row);
+  });
+  // 사용 순서(승인일자 순)로 다시 줄 세운다. 날짜가 같으면 원래 있던 행이
+  // 먼저 오도록 안정 정렬을 쓰고, 날짜가 비어 있는 행은 맨 뒤로 보낸다.
+  rows.forEach((r,i)=>{ r.__ord = i; });
+  rows.sort((x,y)=>{
+    const dx = x.date || '9999-99-99', dy = y.date || '9999-99-99';
+    return dx === dy ? x.__ord - y.__ord : dx.localeCompare(dy);
+  });
+  rows.forEach(r=>{ delete r.__ord; });
+
+  recomputeCorpCardMismatches();
+  renderCorpCardMain();
+  if(document.getElementById('cardApprovalOverlay').style.display === 'flex') renderCardApprovalOverlay();
+  const result = await saveCorpCardRows(cardId);
+  if(result && result.ok===false) notifyRowSaveFailure(result.reason);
+  return missing.length;
+}
 function openCardApprovalOverlay(cardId, month, missingOnly){
   cardApprovalView = { cardId, month: resolveApprovalViewMonth(cardId, month), missingOnly: !!missingOnly };
   renderCardApprovalOverlay();
@@ -11213,6 +11260,7 @@ function renderCardApprovalOverlay(){
     `<button class="cardapproval-month-btn" data-month="${escapeHtml(value)}" style="padding:6px 11px; border-radius:6px; border:1px solid ${active?'var(--gold-dim)':'var(--line)'}; background:${active?'rgba(224,163,57,.14)':'transparent'}; color:${active?'var(--gold)':'var(--muted)'}; font-size:12px; cursor:pointer; font-weight:${active?'600':'400'};">${escapeHtml(label)}</button>`;
   const missingBtn = missingInMonth.length
     ? `<button id="cardApprovalMissingBtn" style="padding:6px 11px; border-radius:6px; border:1px solid var(--neg); background:${cardApprovalView.missingOnly?'rgba(178,59,46,.22)':'transparent'}; color:var(--neg); font-size:12px; font-weight:700; cursor:pointer;">🔴 장부에 없음 ${missingInMonth.length}건${cardApprovalView.missingOnly?' (보는 중)':''}</button>`
+      + `<button id="cardApprovalFillBtn" style="padding:6px 11px; border-radius:6px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.12); color:var(--gold); font-size:12px; font-weight:700; cursor:pointer;">⬇ ${missingInMonth.length}건 리스트에 채우기</button>`
     : (inMonth.length ? `<span style="font-size:12px; color:var(--pos); font-weight:600;">✅ 전부 장부에 있음</span>` : '');
   document.getElementById('cardApprovalControls').innerHTML =
     btn('전체', '', !month) + months.map(m=>{
@@ -11256,6 +11304,11 @@ function renderCardApprovalOverlay(){
       cardApprovalView.month = b.dataset.month;
       renderCardApprovalOverlay();
     });
+  });
+  const fillBtn = document.getElementById('cardApprovalFillBtn');
+  if(fillBtn) fillBtn.addEventListener('click', async ()=>{
+    const n = await fillMissingApprovalRows(card.id, month);
+    if(n) alert(`${n}건을 승인일자 순서로 장부에 채웠습니다.\n성명·업무내용 등 나머지 칸을 채워주세요.`);
   });
   const missingToggle = document.getElementById('cardApprovalMissingBtn');
   if(missingToggle) missingToggle.addEventListener('click', ()=>{
@@ -11745,7 +11798,7 @@ async function renderCorpCardMain(){
       ${escapeHtml(s.activeMonth)} · 총 ${rows.length}건${visibleRows.length!==rows.length?` (필터로 ${visibleRows.length}건 표시 중)`:''} · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다
       ${s.approvalEntries.length ? ` · 승인내역 누적 ${fmtNum(s.approvalEntries.length)}건${lastApprovalUploadAt() ? ` (마지막 업로드 ${fmtUploadedAt(lastApprovalUploadAt())})` : ''}` : ''}
       ${approvalCov ? ` · <span title="이 구간 밖 날짜는 비교할 승인내역이 아직 없어서 대사하지 않습니다.">승인내역 확인 구간 ${escapeHtml(covTxt)} (${fmtNum(approvalCov.count)}건)</span>` : (s.approvalEntries.length ? ` · <span style="color:var(--gold);">이 달 승인내역이 아직 없어 대사하지 않았습니다</span>` : '')}
-      ${unrecordedThisMonth ? ` · <button id="corpCardMissingApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--neg); background:rgba(178,59,46,.12); color:var(--neg); font-weight:700; cursor:pointer;">🔴 승인내역엔 있는데 여기 안 적은 건 ${unrecordedThisMonth}건 보기</button>` : ''}
+      ${unrecordedThisMonth ? ` · <button id="corpCardMissingApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--neg); background:rgba(178,59,46,.12); color:var(--neg); font-weight:700; cursor:pointer;">🔴 승인내역엔 있는데 여기 안 적은 건 ${unrecordedThisMonth}건 보기</button> <button id="corpCardFillApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.12); color:var(--gold); font-weight:700; cursor:pointer;">⬇ 리스트에 채우기</button>` : ''}
       ${noApprovalIds.size ? ` · <button id="corpCardNoApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--neg); background:${noApprovalOnly?'rgba(178,59,46,.28)':'rgba(178,59,46,.12)'}; color:var(--neg); font-weight:700; cursor:pointer;">🔴 여기 적었는데 승인내역에 없는 건 ${noApprovalIds.size}건${noApprovalOnly?' (보는 중)':' 보기'}</button>` : ''}
       ${issueCountInMonth ? ` · <span style="color:var(--neg); font-weight:600;">🔴 확인 필요 ${issueCountInMonth}건(빈칸·승인내역 불일치 등)</span>` : ' · ✅ 이번 달 전부 문제 없음'}
     </div>
@@ -11975,6 +12028,11 @@ async function renderCorpCardMain(){
   const approvalViewBtn = document.getElementById('corpCardApprovalViewBtn');
   if(approvalViewBtn) approvalViewBtn.addEventListener('click', ()=> openCardApprovalOverlay(activeCard.id, s.activeMonth));
   // 안 적은 건만 바로 펼쳐서 보여준다.
+  const fillApprovalBtn = document.getElementById('corpCardFillApprovalBtn');
+  if(fillApprovalBtn) fillApprovalBtn.addEventListener('click', async ()=>{
+    const n = await fillMissingApprovalRows(activeCard.id, s.activeMonth);
+    if(n) alert(`${n}건을 승인일자 순서로 장부에 채웠습니다.\n성명·업무내용 등 나머지 칸을 채워주세요.`);
+  });
   const missingApprovalBtn = document.getElementById('corpCardMissingApprovalBtn');
   if(missingApprovalBtn) missingApprovalBtn.addEventListener('click', ()=> openCardApprovalOverlay(activeCard.id, s.activeMonth, true));
   // 승인내역에 없는 행만 모아보기 — 한 번 더 누르면 전체로 돌아온다.
