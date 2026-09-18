@@ -10217,6 +10217,7 @@ async function renderCardReconMain(){
   const main = document.getElementById('main');
   await ensureCardMasterLoaded();
   await ensureCorpCardLoaded();
+  await ensurePrintReasonsLoaded();
 
   main.innerHTML = `
     <h2 class="section-title">카드관리 — 통합본 자동 갱신</h2>
@@ -10261,6 +10262,27 @@ async function renderCardReconMain(){
         </div>
       `).join('') : `<div class="empty-side">등록된 통합본이 없습니다. "+ 통합본 파일 추가"로 올려주세요.</div>`}
     </div>
+
+    <h2 class="section-title" style="margin-top:26px;">승인내역 확인 전 출력 기록</h2>
+    <p style="font-size:12.5px; color:var(--muted); line-height:1.7; margin:0 0 12px;">
+      법인카드 사용내역서를 <b>승인내역으로 확인되지 않은 건</b>이 섞인 채 출력할 때 받아둔 사유입니다.
+      출력물에는 인쇄되지 않고 여기에만 남습니다.
+    </p>
+    <div class="table-wrap">
+      ${corpCardPrintReasons.length ? corpCardPrintReasons.slice().reverse().map(e=>`
+        <div style="padding:12px 14px; border-bottom:1px solid var(--line);">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px; color:var(--muted);">
+            <span>${escapeHtml(fmtUploadedAt(e.at))}</span>
+            <span>·</span><span>${escapeHtml(e.by||'(작성자 미상)')}</span>
+            <span>·</span><span>${escapeHtml(e.cardName||'카드')}${e.tail?` ${escapeHtml(e.tail)}`:''}${e.month?` · ${escapeHtml(e.month)}`:''}</span>
+            <span>·</span><span>출력 ${fmtNum(e.selectedCount||0)}건 중 <b style="color:var(--neg);">${fmtNum(e.unverifiedCount||0)}건 미확인</b></span>
+            <button class="print-reason-del-btn" data-id="${escapeHtml(e.id)}" style="margin-left:auto; font-size:11px; padding:3px 9px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">삭제</button>
+          </div>
+          <div style="font-size:13px; color:var(--text); margin-top:5px; white-space:pre-wrap;">${escapeHtml(e.reason||'')}</div>
+          ${(e.items||[]).length ? `<div style="font-size:11.5px; color:var(--muted); margin-top:5px;">${(e.items||[]).map(it=>`${escapeHtml(it.date)} ${escapeHtml(it.place)} ${fmtNum(it.amount||0)}원${it.why?` (${escapeHtml(it.why)})`:''}`).join('<br>')}${(e.unverifiedCount||0) > (e.items||[]).length ? `<br>…외 ${fmtNum((e.unverifiedCount||0)-(e.items||[]).length)}건` : ''}</div>` : ''}
+        </div>
+      `).join('') : `<div class="empty-side">아직 기록이 없습니다.</div>`}
+    </div>
   `;
 
   const approvalAlertConfigBtn = document.getElementById('approvalAlertConfigBtn');
@@ -10278,6 +10300,14 @@ async function renderCardReconMain(){
     }
     e.target.value = '';
     renderCardReconMain();
+  });
+  main.querySelectorAll('.print-reason-del-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('이 출력 기록을 지울까요?')) return;
+      corpCardPrintReasons = corpCardPrintReasons.filter(e=>e.id !== btn.dataset.id);
+      await saveFileToStorage(CORP_CARD_PRINT_REASON_KEY, JSON.stringify(corpCardPrintReasons));
+      renderCardReconMain();
+    });
   });
   const reparseBtn = document.getElementById('cardApprovalReparseBtn');
   if(reparseBtn) reparseBtn.addEventListener('click', async ()=>{
@@ -12486,7 +12516,7 @@ function groupCorpCardRowsForDoc(rows){
   });
   return pages;
 }
-function buildCorpCardUsageDocPage(items, card, reason){
+function buildCorpCardUsageDocPage(items, card){
   const first = items[0];
   // 한 장에 여러 사람이 섞이면 부서·성명을 모아서 적는다(중복은 한 번만).
   const uniq = arr => [...new Set(arr.map(v=>String(v||'').trim()).filter(Boolean))];
@@ -12569,11 +12599,31 @@ function buildCorpCardUsageDocPage(items, card, reason){
     <div style="flex:1 1 auto; min-height:0;">
       <div style="border:1px solid #000; border-top:none; box-sizing:border-box; width:100%; height:98%; padding:8px;"></div>
     </div>
-    ${reason ? `<div style="flex:none; border:1px solid #000; padding:6px 8px; font-size:11.5px; color:#000; margin-top:4px;"><b>※ 카드사 승인내역 미등록 상태로 출력 — 사유:</b> ${escapeHtml(reason)}</div>` : ''}
     <div style="flex:none; text-align:center; font-size:11.5px; color:#000; margin-top:2px;">
       ※ 영수증 첨부 및 추가 상세 내용 기입(부족 시 별지 사용)
     </div>
   </div>`;
+}
+// 승인내역 없이 출력할 때 받은 사유는 서류에 찍지 않고 따로 남겨서
+// "카드관리" 탭에서 모아 볼 수 있게 한다(누가·언제·어느 카드·어떤 건인지).
+const CORP_CARD_PRINT_REASON_KEY = 'corp-card-print-reasons';
+let corpCardPrintReasons = [];
+let corpCardPrintReasonsLoaded = false;
+async function ensurePrintReasonsLoaded(force){
+  if(corpCardPrintReasonsLoaded && !force) return corpCardPrintReasons;
+  try{
+    const raw = await loadFileFromStorage(CORP_CARD_PRINT_REASON_KEY);
+    corpCardPrintReasons = raw ? JSON.parse(raw) : [];
+  }catch(e){ corpCardPrintReasons = []; }
+  corpCardPrintReasonsLoaded = true;
+  return corpCardPrintReasons;
+}
+async function recordPrintReason(entry){
+  await ensurePrintReasonsLoaded(true);
+  corpCardPrintReasons.push(Object.assign({ id: rid(), at: new Date().toISOString(), by: currentUserName || '' }, entry));
+  while(corpCardPrintReasons.length > 300) corpCardPrintReasons.shift();
+  const r = await saveFileToStorage(CORP_CARD_PRINT_REASON_KEY, JSON.stringify(corpCardPrintReasons));
+  if(r && r.ok === false) console.error('출력 사유 저장 실패', r.reason);
 }
 // 사유를 받아서 돌려준다(취소하거나 빈칸이면 출력하지 않는다).
 function askPrintReason(desc){
@@ -12603,11 +12653,11 @@ function askPrintReason(desc){
     cancel.addEventListener('click', onCancel);
   });
 }
-function buildCorpCardUsageDocHtml(rows, card, reason){
-  return groupCorpCardRowsForDoc(rows).map(items=>buildCorpCardUsageDocPage(items, card, reason)).join('');
+function buildCorpCardUsageDocHtml(rows, card){
+  return groupCorpCardRowsForDoc(rows).map(items=>buildCorpCardUsageDocPage(items, card)).join('');
 }
-function openCorpCardUsageDocPrint(rows, card, reason){
-  const html = buildCorpCardUsageDocHtml(rows, card, reason);
+function openCorpCardUsageDocPrint(rows, card){
+  const html = buildCorpCardUsageDocHtml(rows, card);
   document.getElementById('printSheet').innerHTML = html;
   document.getElementById('printOverlay').classList.add('show');
   document.body.classList.add('printing-preview');
@@ -13086,16 +13136,46 @@ async function renderCorpCardMain(){
       const cov = coverage.get(iso.slice(0,7));
       if(!cov || iso < cov.min || iso > cov.max) return true;          // 그 날짜까지 승인내역이 안 올라옴
       const mm = mmMap.get(r.id);
-      return !!(mm && mm.reason === 'no_match');                        // 승인내역에서 짝을 못 찾은 건
+      // 승인내역에서 짝을 못 찾았거나, 날짜·금액이 승인내역과 다른 건도
+      // 그대로 결재에 올리면 안 되므로 사유를 받는다(사용처만 다른 건은
+      // "일치로 처리"로 정리할 수 있어 막지 않는다).
+      return !!(mm && (mm.reason === 'no_match' || mm.reason === 'date' || mm.reason === 'amount'));
     });
     if(unverified.length){
-      if(!confirm(`카드사 승인내역이 아직 업로드되지 않았습니다. 출력하시겠습니까?\n(선택한 ${selectedRows.length}건 중 ${unverified.length}건이 승인내역으로 확인되지 않았습니다)`)) return;
-      const sample = unverified.slice(0,5).map(r=>`${r.date} ${r.place||''}`.trim()).join('\n · ');
-      const answer = await askPrintReason(`승인내역으로 확인되지 않은 ${unverified.length}건이 있습니다.\n · ${sample}${unverified.length>5?`\n · …외 ${unverified.length-5}건`:''}\n\n승인내역 없이 출력하는 사유를 적어주세요. (사유는 출력물 아래에 함께 인쇄됩니다)`);
+      // 아직 안 올라온 건과, 올라왔는데 안 맞는 건은 이유가 다르니 문구도 나눈다.
+      const anyMissing = unverified.some(r=>{
+        const iso = String(r.date||'');
+        const cov = coverage.get(iso.slice(0,7));
+        return !cov || iso < cov.min || iso > cov.max;
+      });
+      const head = anyMissing
+        ? '카드사 승인내역이 아직 업로드되지 않았습니다. 출력하시겠습니까?'
+        : '승인내역과 맞지 않는 건이 있습니다(날짜·금액 확인 필요). 출력하시겠습니까?';
+      if(!confirm(`${head}\n(선택한 ${selectedRows.length}건 중 ${unverified.length}건이 승인내역으로 확인되지 않았습니다)`)) return;
+      const why = r => {
+        const mm = mmMap.get(r.id);
+        if(mm && mm.reason === 'date') return '날짜 확인 필요';
+        if(mm && mm.reason === 'amount') return '금액 확인 필요';
+        if(mm && mm.reason === 'no_match') return '승인내역에 없음';
+        return '승인내역 미등록';
+      };
+      const sample = unverified.slice(0,5).map(r=>`${r.date} ${r.place||''} (${why(r)})`.trim()).join('\n · ');
+      const answer = await askPrintReason(`승인내역으로 확인되지 않은 ${unverified.length}건이 있습니다.\n · ${sample}${unverified.length>5?`\n · …외 ${unverified.length-5}건`:''}\n\n승인내역 없이 출력하는 사유를 적어주세요. (출력물에는 인쇄되지 않고, 카드관리 탭에 기록으로 남습니다)`);
       if(!answer) return;   // 취소하거나 사유를 안 적으면 출력하지 않는다
       reason = answer;
+      const parts = cardParts(activeCard.cardNumber);
+      await recordPrintReason({
+        cardId: activeCard.id,
+        cardName: activeCard.name || '카드',
+        tail: parts ? parts.p4 : '',
+        month: s.activeMonth,
+        selectedCount: selectedRows.length,
+        unverifiedCount: unverified.length,
+        items: unverified.slice(0,20).map(r=>({ date:r.date||'', place:r.place||'', amount:Number(r.amount)||0, why: why(r) })),
+        reason,
+      });
     }
-    openCorpCardUsageDocPrint(selectedRows, activeCard, reason);
+    openCorpCardUsageDocPrint(selectedRows, activeCard);
   });
   const monthPdfBtn = document.getElementById('corpCardMonthPdfBtn');
   if(monthPdfBtn) monthPdfBtn.addEventListener('click', ()=> openCorpCardMonthPrintPreview(activeCard, s.activeMonth, rows));
