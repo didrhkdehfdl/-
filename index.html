@@ -645,6 +645,20 @@
 
 <!-- 나에게 온 알림함 — 접속하면 안 읽은 알림이 있을 때 제일 먼저 뜨고,
      읽을 때까지 계속 쌓여 있는다(종 버튼으로 언제든 다시 열 수 있음). -->
+<!-- 출력 전 사유 입력 — 카드사 승인내역이 아직 없는 달을 출력할 때처럼,
+     그대로 출력하면 안 되는 상황에서 왜 출력하는지 남기게 한다. -->
+<div id="printReasonOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:96; display:none; align-items:center; justify-content:center; padding:20px;">
+  <div style="background:var(--panel); border:1px solid var(--line); border-radius:12px; width:min(480px, 96vw); padding:18px 20px; display:flex; flex-direction:column; gap:12px;">
+    <div style="font-family:'Noto Sans KR', sans-serif; font-weight:700; font-size:15px;">✍️ 출력 사유</div>
+    <div id="printReasonDesc" style="font-size:12.5px; color:var(--muted); line-height:1.5;"></div>
+    <textarea id="printReasonText" rows="3" placeholder="예: 월말 결재 일정상 승인내역 도착 전 선결재 필요" style="background:var(--panel-2); border:1px solid var(--line); border-radius:7px; padding:9px 11px; color:var(--text); font-size:13px; width:100%; resize:vertical; font-family:inherit;"></textarea>
+    <div id="printReasonWarn" style="font-size:12px; color:var(--neg); min-height:16px;"></div>
+    <div style="display:flex; gap:8px;">
+      <button id="printReasonOkBtn" style="flex:1; padding:10px 14px; border-radius:8px; border:none; background:var(--gold); color:#1a1a1a; font-weight:700; cursor:pointer;">사유 작성 완료 · 출력</button>
+      <button id="printReasonCancelBtn" style="padding:10px 14px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); font-weight:600; cursor:pointer;">취소</button>
+    </div>
+  </div>
+</div>
 <div id="myNotifyOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:95; display:none; align-items:center; justify-content:center; padding:20px;">
   <div style="background:var(--panel); border:1px solid var(--line); border-radius:12px; width:min(560px, 96vw); max-height:86vh; display:flex; flex-direction:column;">
     <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line);">
@@ -12472,7 +12486,7 @@ function groupCorpCardRowsForDoc(rows){
   });
   return pages;
 }
-function buildCorpCardUsageDocPage(items, card){
+function buildCorpCardUsageDocPage(items, card, reason){
   const first = items[0];
   // 한 장에 여러 사람이 섞이면 부서·성명을 모아서 적는다(중복은 한 번만).
   const uniq = arr => [...new Set(arr.map(v=>String(v||'').trim()).filter(Boolean))];
@@ -12555,16 +12569,45 @@ function buildCorpCardUsageDocPage(items, card){
     <div style="flex:1 1 auto; min-height:0;">
       <div style="border:1px solid #000; border-top:none; box-sizing:border-box; width:100%; height:98%; padding:8px;"></div>
     </div>
+    ${reason ? `<div style="flex:none; border:1px solid #000; padding:6px 8px; font-size:11.5px; color:#000; margin-top:4px;"><b>※ 카드사 승인내역 미등록 상태로 출력 — 사유:</b> ${escapeHtml(reason)}</div>` : ''}
     <div style="flex:none; text-align:center; font-size:11.5px; color:#000; margin-top:2px;">
       ※ 영수증 첨부 및 추가 상세 내용 기입(부족 시 별지 사용)
     </div>
   </div>`;
 }
-function buildCorpCardUsageDocHtml(rows, card){
-  return groupCorpCardRowsForDoc(rows).map(items=>buildCorpCardUsageDocPage(items, card)).join('');
+// 사유를 받아서 돌려준다(취소하거나 빈칸이면 출력하지 않는다).
+function askPrintReason(desc){
+  return new Promise(resolve=>{
+    const ov = document.getElementById('printReasonOverlay');
+    const text = document.getElementById('printReasonText');
+    const warn = document.getElementById('printReasonWarn');
+    const ok = document.getElementById('printReasonOkBtn');
+    const cancel = document.getElementById('printReasonCancelBtn');
+    document.getElementById('printReasonDesc').textContent = desc || '';
+    text.value = ''; warn.textContent = '';
+    ov.style.display = 'flex';
+    setTimeout(()=>text.focus(), 50);
+    const close = (val)=>{
+      ov.style.display = 'none';
+      ok.removeEventListener('click', onOk);
+      cancel.removeEventListener('click', onCancel);
+      resolve(val);
+    };
+    const onOk = ()=>{
+      const v = text.value.trim();
+      if(!v){ warn.textContent = '사유를 입력해야 출력할 수 있습니다.'; text.focus(); return; }
+      close(v);
+    };
+    const onCancel = ()=> close(null);
+    ok.addEventListener('click', onOk);
+    cancel.addEventListener('click', onCancel);
+  });
 }
-function openCorpCardUsageDocPrint(rows, card){
-  const html = buildCorpCardUsageDocHtml(rows, card);
+function buildCorpCardUsageDocHtml(rows, card, reason){
+  return groupCorpCardRowsForDoc(rows).map(items=>buildCorpCardUsageDocPage(items, card, reason)).join('');
+}
+function openCorpCardUsageDocPrint(rows, card, reason){
+  const html = buildCorpCardUsageDocHtml(rows, card, reason);
   document.getElementById('printSheet').innerHTML = html;
   document.getElementById('printOverlay').classList.add('show');
   document.body.classList.add('printing-preview');
@@ -13028,10 +13071,31 @@ async function renderCorpCardMain(){
     renderCorpCardMain();
   });
   const printDocBtn = document.getElementById('corpCardPrintDocBtn');
-  if(printDocBtn) printDocBtn.addEventListener('click', ()=>{
+  if(printDocBtn) printDocBtn.addEventListener('click', async ()=>{
     const selectedRows = rows.filter(r=>corpCardSelectedIds.has(r.id));
     if(!selectedRows.length) return;
-    openCorpCardUsageDocPrint(selectedRows, activeCard);
+    // 카드사 승인내역이 아직 없는 달을 출력하면 나중에 대사할 근거가 없다 —
+    // 그냥 막지는 않고, 왜 지금 출력하는지 사유를 남기게 한 뒤 서류에 찍어준다.
+    // 경고는 "승인내역으로 확인할 수 없는 행"이 섞여 있을 때만 띄운다. 승인내역이
+    // 올라와 있고 그 건까지 확인된 행은 그냥 출력한다.
+    let reason = '';
+    const coverage = approvalCoverageMap(approvalEntriesForCard(activeCard.id));
+    const mmMap = corpCardState.mismatchByCard[activeCard.id] || new Map();
+    const unverified = selectedRows.filter(r=>{
+      const iso = String(r.date||'');
+      const cov = coverage.get(iso.slice(0,7));
+      if(!cov || iso < cov.min || iso > cov.max) return true;          // 그 날짜까지 승인내역이 안 올라옴
+      const mm = mmMap.get(r.id);
+      return !!(mm && mm.reason === 'no_match');                        // 승인내역에서 짝을 못 찾은 건
+    });
+    if(unverified.length){
+      if(!confirm(`카드사 승인내역이 아직 업로드되지 않았습니다. 출력하시겠습니까?\n(선택한 ${selectedRows.length}건 중 ${unverified.length}건이 승인내역으로 확인되지 않았습니다)`)) return;
+      const sample = unverified.slice(0,5).map(r=>`${r.date} ${r.place||''}`.trim()).join('\n · ');
+      const answer = await askPrintReason(`승인내역으로 확인되지 않은 ${unverified.length}건이 있습니다.\n · ${sample}${unverified.length>5?`\n · …외 ${unverified.length-5}건`:''}\n\n승인내역 없이 출력하는 사유를 적어주세요. (사유는 출력물 아래에 함께 인쇄됩니다)`);
+      if(!answer) return;   // 취소하거나 사유를 안 적으면 출력하지 않는다
+      reason = answer;
+    }
+    openCorpCardUsageDocPrint(selectedRows, activeCard, reason);
   });
   const monthPdfBtn = document.getElementById('corpCardMonthPdfBtn');
   if(monthPdfBtn) monthPdfBtn.addEventListener('click', ()=> openCorpCardMonthPrintPreview(activeCard, s.activeMonth, rows));
