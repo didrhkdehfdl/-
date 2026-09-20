@@ -7692,17 +7692,24 @@ async function renderAdminApprovalList(){
     snap.docs.forEach(doc => { adminUserDataById[doc.id] = doc.data(); });
     listEl.innerHTML = snap.docs.map(doc => {
       const d = doc.data();
-      const isAdmin = isAdminEmail(d.email);
+      const isFixedAdmin = isAdminEmail(d.email);      // 코드에 고정된 관리자 — 해제 불가
+      const isAdmin = isAdminUserDoc(d);
       const statusLabel = d.approved ? '승인됨' : (d.rejected ? '거절됨' : '승인 대기');
       const statusColor = d.approved ? 'var(--pos)' : (d.rejected ? 'var(--neg)' : 'var(--muted)');
       let actionsHtml = '';
+      // 승인된 사람은 관리자로 올리거나 다시 내릴 수 있다(고정 관리자는 제외).
+      if(!isFixedAdmin && d.approved){
+        actionsHtml += d.isAdmin === true
+          ? `<button class="admin2-unadmin-btn" data-id="${doc.id}" data-email="${escapeHtml(d.email||'')}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; margin-right:6px;">관리자 해제</button>`
+          : `<button class="admin2-makeadmin-btn" data-id="${doc.id}" data-email="${escapeHtml(d.email||'')}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; margin-right:6px;">관리자로 지정</button>`;
+      }
       if(!isAdmin){
         if(d.approved){
-          actionsHtml = `<button class="admin2-revoke-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">승인 취소</button>`;
+          actionsHtml += `<button class="admin2-revoke-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">승인 취소</button>`;
         } else if(d.rejected){
-          actionsHtml = `<button class="admin2-unreject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">대기로 되돌리기</button>`;
+          actionsHtml += `<button class="admin2-unreject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">대기로 되돌리기</button>`;
         } else {
-          actionsHtml = `
+          actionsHtml += `
             <button class="admin2-approve-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">승인하기</button>
             <button class="admin2-reject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--neg); background:transparent; color:var(--neg); cursor:pointer; margin-left:6px;">거절하기</button>`;
         }
@@ -7768,6 +7775,25 @@ async function renderAdminApprovalList(){
     listEl.querySelectorAll('.admin2-approve-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         await fbDb.collection('users').doc(btn.dataset.id).update({ approved:true, rejected:false });
+        renderAdminApprovalList();
+      });
+    });
+    // 관리자 지정/해제 — 관리자는 모든 탭을 볼 수 있어야 하므로 탭 제한도 함께 푼다.
+    listEl.querySelectorAll('.admin2-makeadmin-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        if(!confirm(`${btn.dataset.email} 계정을 관리자로 지정할까요?\n관리자는 모든 탭과 승인관리 화면을 사용할 수 있습니다.\n(본인이 다시 로그인하거나 새로고침하면 적용됩니다)`)) return;
+        try{
+          await fbDb.collection('users').doc(btn.dataset.id).update({ isAdmin:true, approved:true, rejected:false, allowedTabs: firebase.firestore.FieldValue.delete() });
+        }catch(e){ alert('관리자로 지정하지 못했습니다: '+e.message); }
+        renderAdminApprovalList();
+      });
+    });
+    listEl.querySelectorAll('.admin2-unadmin-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        if(!confirm(`${btn.dataset.email} 계정의 관리자 권한을 해제할까요?`)) return;
+        try{
+          await fbDb.collection('users').doc(btn.dataset.id).update({ isAdmin:false });
+        }catch(e){ alert('관리자 권한을 해제하지 못했습니다: '+e.message); }
         renderAdminApprovalList();
       });
     });
@@ -17031,8 +17057,15 @@ function startApp(allowedTabs){
 let myNotifyTimer = null;
 
 // ---------- Firebase 로그인 / 가입 승인 ----------
+// 처음부터 관리자인 계정(코드에 고정). 여기에 없는 사람도 "승인관리" 화면에서
+// 관리자로 지정할 수 있다 — 그 경우 users 문서의 isAdmin 값으로 관리한다.
 const ADMIN_EMAILS = ['pract@naver.com', 'chanho@admin.com'];
 function isAdminEmail(email){ return ADMIN_EMAILS.includes(email); }
+// 사용자 문서까지 본 관리자 판정. 고정 관리자는 화면에서 해제할 수 없다.
+function isAdminUserDoc(data){
+  if(!data) return false;
+  return isAdminEmail(data.email) || data.isAdmin === true;
+}
 const firebaseConfig = {
   apiKey: "AIzaSyCRUnr99J5LPYOS-BmeG_peLJ6mLw-w1WM",
   authDomain: "chanho-3f3b7.firebaseapp.com",
@@ -17230,17 +17263,23 @@ async function renderAdminList(){
     if(snap.empty){ listEl.innerHTML = '<div style="color:var(--muted); font-size:13px;">가입된 사용자가 없습니다.</div>'; return; }
     listEl.innerHTML = snap.docs.map(doc => {
       const d = doc.data();
-      const isAdmin = isAdminEmail(d.email);
+      const isFixedAdmin = isAdminEmail(d.email);
+      const isAdmin = isAdminUserDoc(d);
       const statusLabel = d.approved ? '승인됨' : (d.rejected ? '거절됨' : '승인 대기');
       const statusColor = d.approved ? 'var(--pos)' : (d.rejected ? 'var(--neg)' : 'var(--muted)');
       let actionsHtml = '';
+      if(!isFixedAdmin && d.approved){
+        actionsHtml += d.isAdmin === true
+          ? `<button class="admin-unadmin-btn" data-id="${doc.id}" data-email="${escapeHtml(d.email||'')}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer; margin-right:6px;">관리자 해제</button>`
+          : `<button class="admin-makeadmin-btn" data-id="${doc.id}" data-email="${escapeHtml(d.email||'')}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; margin-right:6px;">관리자로 지정</button>`;
+      }
       if(!isAdmin){
         if(d.approved){
-          actionsHtml = `<button class="admin-revoke-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">승인 취소</button>`;
+          actionsHtml += `<button class="admin-revoke-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer;">승인 취소</button>`;
         } else if(d.rejected){
-          actionsHtml = `<button class="admin-unreject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">대기로 되돌리기</button>`;
+          actionsHtml += `<button class="admin-unreject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">대기로 되돌리기</button>`;
         } else {
-          actionsHtml = `
+          actionsHtml += `
             <button class="admin-approve-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--pos); background:transparent; color:var(--pos); cursor:pointer;">승인하기</button>
             <button class="admin-reject-btn" data-id="${doc.id}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--neg); background:transparent; color:var(--neg); cursor:pointer; margin-left:6px;">거절하기</button>`;
         }
@@ -17257,6 +17296,24 @@ async function renderAdminList(){
     listEl.querySelectorAll('.admin-approve-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         await fbDb.collection('users').doc(btn.dataset.id).update({ approved:true, rejected:false });
+        renderAdminList();
+      });
+    });
+    listEl.querySelectorAll('.admin-makeadmin-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        if(!confirm(`${btn.dataset.email} 계정을 관리자로 지정할까요?`)) return;
+        try{
+          await fbDb.collection('users').doc(btn.dataset.id).update({ isAdmin:true, approved:true, rejected:false, allowedTabs: firebase.firestore.FieldValue.delete() });
+        }catch(e){ alert('관리자로 지정하지 못했습니다: '+e.message); }
+        renderAdminList();
+      });
+    });
+    listEl.querySelectorAll('.admin-unadmin-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        if(!confirm(`${btn.dataset.email} 계정의 관리자 권한을 해제할까요?`)) return;
+        try{
+          await fbDb.collection('users').doc(btn.dataset.id).update({ isAdmin:false });
+        }catch(e){ alert('관리자 권한을 해제하지 못했습니다: '+e.message); }
         renderAdminList();
       });
     });
@@ -17453,7 +17510,12 @@ fbAuth.onAuthStateChanged(async (user) => {
     const rejected = data.rejected === true;
     if(approved){
       currentUserName = FORCED_DISPLAY_NAMES[data.name || user.email || ''] || data.name || user.email || '';
-      startApp(Array.isArray(data.allowedTabs) ? data.allowedTabs : null);
+      // 승인관리 화면에서 관리자로 지정된 계정도 관리자 기능을 쓸 수 있게 한다.
+      if(data.isAdmin === true){
+        isAdminUser = true;
+        document.getElementById('adminApprovalTabBtn').style.display = 'flex';
+      }
+      startApp(data.isAdmin === true ? null : (Array.isArray(data.allowedTabs) ? data.allowedTabs : null));
       setupUserPushNotifications(user);
     } else {
       document.getElementById('authOverlay').style.display = 'flex';
