@@ -1,0 +1,49 @@
+rules_version = '2';
+
+// 경기지사 업무프로그램 Firestore 보안 규칙
+//
+// 관리자 판정을 두 가지로 본다.
+//  1) 코드에 고정된 관리자 이메일(ADMIN_EMAILS와 같은 목록)
+//  2) users/{uid} 문서의 isAdmin == true  ← 승인관리 화면에서 지정한 관리자
+// 지금까지는 1번만 보고 있어서, 화면에서 관리자로 지정해도 사용자 목록을
+// 읽거나 고치지 못했다(빨간 "목록을 불러오지 못했습니다" 안내).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function myDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    // index.html의 ADMIN_EMAILS와 같은 값을 유지해야 한다.
+    function isFixedAdmin() {
+      return signedIn() && request.auth.token.email in ['pract@naver.com', 'chanho@admin.com'];
+    }
+    function isAdmin() {
+      return isFixedAdmin() || (signedIn() && myDoc().isAdmin == true);
+    }
+    function isApproved() {
+      return isAdmin() || (signedIn() && myDoc().approved == true);
+    }
+
+    // 사용자 계정 — 본인 문서는 본인이 읽을 수 있고, 목록 조회와 수정은 관리자만.
+    match /users/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if signedIn() && request.auth.uid == uid;   // 가입 신청
+      allow update, delete: if isAdmin();
+    }
+
+    // 업무 데이터(법인카드·차량관리·정산 등) — 승인된 사용자면 읽고 쓸 수 있다.
+    match /app_data/{docId} {
+      allow read, write: if isApproved();
+    }
+
+    // 접속 현황 — 승인된 사용자끼리 서로 보이고, 자기 세션 기록은 본인이 남긴다.
+    match /presence/{sessionId} {
+      allow read: if isApproved();
+      allow write: if signedIn();
+    }
+  }
+}
