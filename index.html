@@ -5428,14 +5428,21 @@ function resolveProfitLedgerValues(profitCase, rec, salesCase){
   const moduleBuyFormula = masterRow ? `${Number(masterRow.materialBuyPerWatt)||0}*${Number(masterRow.watt)||0}` : null;
   const moduleSellFormula = masterRow ? `${Number(masterRow.materialSellPerWatt)||0}*${Number(masterRow.watt)||0}` : null;
   // 연결된 영업비 정산 건(rec)이나 업로드해둔 실적리스트 원본(perfRow)에
-  // 회사입금가가 있으면 그 값을 최우선으로 쓰지만(둘 다 없거나 값이 비어있는
-  // 경우), 이윤정산 건 자체에 직접 입력해둔 입금가(profitCase.depositPrice —
-  // 가로 목록·상세 화면에서 바로 고칠 수 있는 값)를 대신 쓴다. 이게 없으면
-  // 화면에는 입금가가 보이는데 정산데이터에는 기록이 안 되는 상황이 생긴다.
-  const companyPriceSource = rec ? rec.companyPrice : (perfRow ? perfRow.companyPrice : null);
-  const companyPrice = (companyPriceSource !== null && companyPriceSource !== undefined && companyPriceSource !== '')
-    ? Math.abs(Number(companyPriceSource)||0)
-    : (Number(profitCase.depositPrice) || '');
+  // 회사입금가가 "실제로 적혀 있으면"(0이 아닌 금액) 그 값을 최우선으로 쓰고,
+  // 없거나 0이면 이윤정산 건 자체에 직접 입력해둔 입금가(profitCase.depositPrice
+  // — 가로 목록·상세 화면에서 바로 고칠 수 있는 값)를 대신 쓴다. 예전에는 값이
+  // 0이어도 "적혀 있는 것"으로 쳐서, 영업비 정산 건은 만들었지만 회사입금가를
+  // 아직 안 넣은 고객이면 화면에는 입금가가 보이는데 정산데이터 AP열에는 0이
+  // 찍혀(서식상 공란으로 보임) 비어버렸다.
+  const companyPriceCandidates = [
+    rec ? rec.companyPrice : null,
+    perfRow ? perfRow.companyPrice : null,
+    profitCase.depositPrice,
+  ];
+  const companyPriceHit = companyPriceCandidates
+    .map(v => (v === null || v === undefined || v === '') ? 0 : Math.abs(Number(v)||0))
+    .find(v => v > 0);
+  const companyPrice = companyPriceHit || '';
   const salesDeduction = Number(profitCase.salesDeduction) || Math.abs(Number((rec && rec.extra) || (perfRow && perfRow.extra) || 0)) || 0;
   // 기안지에서 가져올 땐 비고 전체가 아니라 "추가비 : …" 줄만 쓴다 — 예전에는
   // 여러 줄짜리 비고 전체가 정산데이터의 비고 한 칸에 통째로 들어갔다.
