@@ -12805,24 +12805,90 @@ function xlsxIdxToCol(idx){
 }
 // 엑셀 서식(styles.xml)에서 인쇄 모양에 실제로 영향을 주는 것만 골라 읽는다 —
 // 굵기·글자크기·글자색·배경색·정렬·줄바꿈·테두리·표시형식.
-function parseXlsxStyles(stylesDoc){
+// 엑셀의 옛 색 번호표(indexed) — 색을 rgb가 아니라 번호로 적어둔 파일이 많다.
+const XLSX_INDEXED_COLORS = [
+  '000000','FFFFFF','FF0000','00FF00','0000FF','FFFF00','FF00FF','00FFFF',
+  '000000','FFFFFF','FF0000','00FF00','0000FF','FFFF00','FF00FF','00FFFF',
+  '800000','008000','000080','808000','800080','008080','C0C0C0','808080',
+  '9999FF','993366','FFFFCC','CCFFFF','660066','FF8080','0066CC','CCCCFF',
+  '000080','FF00FF','FFFF00','00FFFF','800080','800000','008080','0000FF',
+  '00CCFF','CCFFFF','CCFFCC','FFFF99','99CCFF','FF99CC','CC99FF','FFCC99',
+  '3366FF','33CCCC','99CC00','FFCC00','FF9900','FF6600','666699','969696',
+  '003366','339966','003300','333300','993300','993366','333399','333333',
+];
+// 테마 색은 theme1.xml의 색 구성표에서 가져오고, tint(밝기 조정)를 반영한다 —
+// 표 머리글 회색, 사용건수 연두, 금액 노랑 같은 칠이 대부분 이 방식으로 적혀 있다.
+function parseXlsxTheme(themeDoc){
+  if(!themeDoc) return [];
+  // theme1.xml은 태그에 a: 접두사가 붙어 있어서(a:clrScheme, a:srgbClr) 접두사를
+  // 무시하고 찾아야 한다 — 시트·서식 파일과 달리 여기서만 다르다.
+  const scheme = themeDoc.getElementsByTagNameNS('*','clrScheme')[0];
+  if(!scheme) return [];
+  const out = [];
+  Array.from(scheme.childNodes).forEach(node=>{
+    if(!node.getElementsByTagNameNS) return;
+    const srgb = node.getElementsByTagNameNS('*','srgbClr')[0];
+    const sys = node.getElementsByTagNameNS('*','sysClr')[0];
+    if(srgb) out.push(String(srgb.getAttribute('val')||'').toUpperCase());
+    else if(sys) out.push(String(sys.getAttribute('lastClr')||'').toUpperCase());
+    else out.push('');
+  });
+  return out;
+}
+function applyColorTint(hex, tint){
+  if(!tint) return hex;
+  const n = parseInt(hex, 16);
+  let r = (n>>16)&255, g = (n>>8)&255, b = n&255;
+  const adj = v => {
+    v = v/255;
+    v = tint < 0 ? v*(1+tint) : v*(1-tint)+tint;
+    return Math.max(0, Math.min(255, Math.round(v*255)));
+  };
+  r = adj(r); g = adj(g); b = adj(b);
+  return [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('').toUpperCase();
+}
+function parseXlsxStyles(stylesDoc, themeDoc){
   if(!stylesDoc) return { xf: ()=>({}), numFmtCode: ()=>'' };
+  // 색 구성표의 순서는 dk1, lt1, dk2, lt2, accent1..6 인데 theme 번호는
+  // 0=lt1, 1=dk1, 2=lt2, 3=dk2, 4~9=accent1~6 이라 앞의 두 쌍만 자리를 바꾼다.
+  const themeColors = parseXlsxTheme(themeDoc);
+  const themeHex = idx => {
+    const order = [1,0,3,2];
+    const i = idx < 4 ? order[idx] : idx;
+    return themeColors[i] || '';
+  };
   const rgb = el => {
     if(!el) return '';
+    if(el.getAttribute('auto') === '1') return '';
+    const tint = Number(el.getAttribute('tint')) || 0;
+    let hex = '';
     const v = el.getAttribute('rgb') || '';
-    if(!/^[0-9A-Fa-f]{8}$/.test(v)) return '';
-    if(v.slice(0,2) === '00') return '';
-    return '#' + v.slice(2);
+    if(/^[0-9A-Fa-f]{8}$/.test(v)){
+      if(v.slice(0,2) === '00') return '';
+      hex = v.slice(2).toUpperCase();
+    } else if(el.getAttribute('theme') !== null && el.getAttribute('theme') !== undefined && el.getAttribute('theme') !== ''){
+      hex = themeHex(Number(el.getAttribute('theme')));
+    } else if(el.getAttribute('indexed') !== null && el.getAttribute('indexed') !== undefined && el.getAttribute('indexed') !== ''){
+      hex = XLSX_INDEXED_COLORS[Number(el.getAttribute('indexed'))] || '';
+    }
+    if(!/^[0-9A-Fa-f]{6}$/.test(hex)) return '';
+    return '#' + applyColorTint(hex, tint);
   };
   const childrenOf = (tag, child) => {
     const parent = stylesDoc.getElementsByTagName(tag)[0];
     return parent ? Array.from(parent.getElementsByTagName(child)) : [];
   };
+  const onFlag = el => !!el && el.getAttribute('val') !== '0' && el.getAttribute('val') !== 'false';
   const fonts = childrenOf('fonts','font').map(f=>{
     const sz = f.getElementsByTagName('sz')[0];
+    const u = f.getElementsByTagName('u')[0];
+    const nameEl = f.getElementsByTagName('name')[0] || f.getElementsByTagName('rFont')[0];
     return {
-      bold: !!f.getElementsByTagName('b')[0],
+      bold: onFlag(f.getElementsByTagName('b')[0]),
+      italic: onFlag(f.getElementsByTagName('i')[0]),
+      underline: !!u && u.getAttribute('val') !== 'none',
       size: sz ? (Number(sz.getAttribute('val'))||0) : 0,
+      name: nameEl ? (nameEl.getAttribute('val')||'') : '',
       color: rgb(f.getElementsByTagName('color')[0]),
     };
   });
@@ -12855,7 +12921,10 @@ function parseXlsxStyles(stylesDoc){
       const align = el.getElementsByTagName('alignment')[0];
       return {
         bold: !!font.bold,
+        italic: !!font.italic,
+        underline: !!font.underline,
         size: font.size,
+        name: font.name || '',
         color: font.color,
         bg: fills[Number(el.getAttribute('fillId'))||0] || '',
         border: borders[Number(el.getAttribute('borderId'))||0] || { l:0,r:0,t:0,b:0 },
@@ -12964,10 +13033,13 @@ async function readCorpCardSheetLayout(buffer, monthName){
     sharedStrings = Array.from(ssDoc.getElementsByTagName('si')).map(si =>
       Array.from(si.getElementsByTagName('t')).map(t=>t.textContent).join(''));
   }
+  let themeDoc = null;
+  const themeFile = zip.file('xl/theme/theme1.xml') || zip.file('xl/theme/theme.xml');
+  if(themeFile) themeDoc = parser.parseFromString(await themeFile.async('string'), 'application/xml');
   let styles = null;
   const stFile = zip.file('xl/styles.xml');
-  if(stFile) styles = parseXlsxStyles(parser.parseFromString(await stFile.async('string'), 'application/xml'));
-  else styles = parseXlsxStyles(null);
+  if(stFile) styles = parseXlsxStyles(parser.parseFromString(await stFile.async('string'), 'application/xml'), themeDoc);
+  else styles = parseXlsxStyles(null, null);
 
   // 칸 너비는 구간(<col min max width>)으로 적혀 있고, 엑셀은 "1열부터 16384열까지"
   // 같은 구간을 흔히 남긴다 — 구간을 그대로 펼치면 칸이 1만 6천 개짜리 표가 되므로
@@ -13192,13 +13264,18 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     css.push(`border-bottom:${b.b?`${bw(b.b)} solid #000`:'0'}`);
     if(st.bg) css.push(`background:${st.bg}`);
     if(st.bold) css.push('font-weight:700');
+    if(st.italic) css.push('font-style:italic');
+    if(st.underline) css.push('text-decoration:underline');
     if(st.color) css.push(`color:${st.color}`);
-    if(st.size) css.push(`font-size:${(st.size*0.92).toFixed(1)}pt`);
+    if(st.size) css.push(`font-size:${st.size}pt`);
+    // 글꼴 이름도 양식 그대로 — 없으면 표 전체 기본 글꼴을 쓴다.
+    if(st.name) css.push(`font-family:'${String(st.name).replace(/'/g,'')}','Malgun Gothic','Noto Sans KR',sans-serif`);
     const ha = st.halign || (isData && (c===COL_L||c===COL_M||c===COL_N||fieldByCol[c]==='amount') ? 'right' : '');
     if(ha === 'center') css.push('text-align:center');
     else if(ha === 'right') css.push('text-align:right');
     else if(ha === 'left') css.push('text-align:left');
-    css.push(`vertical-align:${st.valign === 'top' ? 'top' : (st.valign === 'bottom' ? 'bottom' : 'middle')}`);
+    // 엑셀에서 세로 정렬을 따로 지정하지 않으면 아래쪽 정렬이다.
+    css.push(`vertical-align:${st.valign === 'top' ? 'top' : (st.valign === 'center' ? 'middle' : 'bottom')}`);
     css.push(st.wrap ? 'white-space:pre-wrap; word-break:break-all' : 'white-space:nowrap; overflow:hidden');
     const sp = spanAt.get(`${r},${c}`);
     const attrs = sp ? `${sp.cs>1?` colspan="${sp.cs}"`:''}${sp.rs>1?` rowspan="${sp.rs}"`:''}` : '';
