@@ -12995,9 +12995,20 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   const { rows, merges, colWidths, styles } = layout;
   const rowNums = Object.keys(rows).map(Number).sort((a,b)=>a-b);
   // "총 사용금액 합계" 행을 찾아 데이터 칸의 범위를 정한다(엑셀 내보내기와 같은 기준).
-  const totalRowNum = rowNums.find(r => String(((rows[r].cells[1]||{}).text)||'').trim() === '총 사용금액 합계')
+  const totalRowNum = rowNums.find(r => Object.values(rows[r].cells).some(c => String(c.text||'').trim() === '총 사용금액 합계'))
                    || rowNums[rowNums.length-1];
   const lastDataRow = totalRowNum - 1;
+  // 표 머리글("날짜 … 사용처" 행) 바로 아래부터가 데이터 칸이다. 지금 쓰는
+  // 양식들은 14행부터지만 카드마다 머리글 높이가 다를 수 있으므로 찾아서 쓰고,
+  // 못 찾으면 14행으로 둔다(엑셀 내보내기와 같은 기준).
+  const headerRowNum = rowNums.find(r =>
+    Object.values(rows[r].cells).some(c => String(c.text||'').trim() === '날짜') &&
+    Object.values(rows[r].cells).some(c => String(c.text||'').trim() === '사용처'));
+  let dataStart = 14;
+  if(headerRowNum){
+    const hm = merges.find(m => m.r1 === headerRowNum && m.r2 > m.r1);
+    dataStart = (hm ? hm.r2 : headerRowNum) + 1;
+  }
   const lastRowNum = totalRowNum;
   const maxCol = layout.maxCol;
 
@@ -13017,7 +13028,19 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   const total = dataRows.reduce((sum,r)=>sum+(Number(r.amount)||0),0);
   const supplyTotal = dataRows.reduce((sum,r)=>sum+corpCardSupplyVat(r.amount).supply,0);
   const vatTotal = dataRows.reduce((sum,r)=>sum+corpCardSupplyVat(r.amount).vat,0);
-  const COL_L = xlsxColToIdx('L'), COL_M = xlsxColToIdx('M'), COL_N = xlsxColToIdx('N');
+  // 공급가액·부가세 칸은 양식마다 열이 다를 수 있어 머리글 글자로 찾는다(못 찾으면
+  // 지금 양식들의 기본값 L·M). 금액 칸은 앱이 이미 알고 있는 매핑을 그대로 쓴다.
+  const findHeaderCol = names => {
+    if(!headerRowNum) return -1;
+    const cells = rows[headerRowNum].cells;
+    const hit = Object.keys(cells).find(c => names.includes(String(cells[c].text||'').replace(/\s/g,'')));
+    return hit === undefined ? -1 : Number(hit);
+  };
+  const supplyCol = findHeaderCol(['공급가','공급가액']);
+  const vatCol = findHeaderCol(['부가세','부가가치세']);
+  const COL_L = supplyCol >= 0 ? supplyCol : xlsxColToIdx('L');
+  const COL_M = vatCol >= 0 ? vatCol : xlsxColToIdx('M');
+  const COL_N = Number(Object.keys(fieldByCol).find(c => fieldByCol[c] === 'amount'));
   // 이 달 시트가 없어서 다른 달 시트 모양을 빌려 쓴 경우, 머리글에 적힌 달 이름은
   // 지금 인쇄하는 달로 바꿔준다(예: 8월 시트를 빌려 10월을 인쇄).
   const srcMonthNum = monthNumFromLabel(layout.sheetName);
@@ -13034,10 +13057,10 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     const st = styles.xf(cell.s);
     const code = styles.numFmtCode(st.numFmtId);
     let text = cell.text;
-    const isData = (r >= 14 && r <= lastDataRow) || !!opts;
+    const isData = (r >= dataStart && r <= lastDataRow) || !!opts;
     if(isData){
       // 데이터 칸은 양식에 남아있던 값 대신 지금 입력한 내역으로 채운다.
-      const d = opts ? opts.data : (dataRows[r-14] || null);
+      const d = opts ? opts.data : (dataRows[r-dataStart] || null);
       const field = fieldByCol[c];
       if(field){
         const raw = d ? d[field] : '';
@@ -13056,8 +13079,14 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     } else if(cell.formula){
       // 머리글의 사용건수/합계 수식은 지금 내역으로 직접 계산해서 보여준다
       // (엑셀이 계산해둔 옛날 값이 그대로 찍히면 안 되니까).
-      if(/^COUNT\(N14:N\d+\)$/i.test(cell.formula)) text = String(dataRows.length);
-      else if(/^SUM\(N14:N\d+\)$/i.test(cell.formula)) text = fmtNum(total);
+      // 사용건수(COUNT)·합계사용금액(SUM) 수식은 양식마다 참조 범위가 달라서
+      // 열·행을 고정하지 않고, 어느 열을 더하는지만 보고 지금 내역으로 계산한다.
+      const agg = cell.formula.match(/^(COUNT|SUM)\(([A-Z]+)\d+:[A-Z]+\d+\)$/i);
+      if(agg && agg[1].toUpperCase() === 'COUNT') text = String(dataRows.length);
+      else if(agg){
+        const aggCol = xlsxColToIdx(agg[2]);
+        text = fmtNum(aggCol === COL_L ? supplyTotal : (aggCol === COL_M ? vatTotal : total));
+      }
       else if(cell.num !== null && !isNaN(cell.num)) text = /#,##0/.test(code) ? fmtNum(cell.num) : cell.text;
     } else if(cell.num !== null && cell.num !== undefined && !isNaN(cell.num) && cell.text !== ''){
       if(/[ymd]/.test(code) && /[y]/i.test(code)) text = formatXlsxDate(xlsxSerialToIso(cell.num), code);
@@ -13104,14 +13133,14 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     return `<tr${htAttr(r)}>${tds}</tr>`;
   };
   let body = '';
-  // 머리글(1~13행)
-  for(let r=1; r<14; r++) body += rowHtml(r);
+  // 머리글(데이터 시작 행 앞까지)
+  for(let r=1; r<dataStart; r++) body += rowHtml(r);
   // 데이터는 "적은 만큼만" 그린다 — 엑셀 양식에는 빈 칸이 44줄씩 미리 깔려
   // 있지만, 인쇄물은 마지막으로 적은 줄 다음에 바로 합계가 오는 모양이다.
   // 양식에 갖춰진 칸보다 입력이 많으면 마지막 행 모양을 본떠 줄을 더 붙인다.
-  const capacity = lastDataRow - 14 + 1;
+  const capacity = lastDataRow - dataStart + 1;
   for(let i=0; i<dataRows.length; i++){
-    if(i < capacity) body += rowHtml(14+i);
+    if(i < capacity) body += rowHtml(dataStart+i);
     else body += rowHtml(lastDataRow, { data: dataRows[i], seq: i+1 });
   }
   body += rowHtml(totalRowNum);
