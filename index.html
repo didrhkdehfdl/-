@@ -13047,6 +13047,49 @@ async function readCorpCardSheetLayout(buffer, monthName){
   }
   return { rows, merges, colWidths, styles, minCol, maxCol, printArea, sheetName: sheetEl.getAttribute('name')||'' };
 }
+// 칸보다 긴 글자를 그 칸에 맞게 줄인다(엑셀 "셀에 맞춤"). 실제 인쇄와 같은 폭
+// (.doc-page.landscape = 1527px)으로 화면 밖에 한 번 그려서 재고, 줄인 크기를
+// 글자마다 적어 넣은 HTML을 돌려준다 — 미리보기와 인쇄창이 같은 결과를 쓰게.
+// 너무 작아지면(원래의 45% 미만) 읽기 어려우므로, 그때만 띄어쓰기 자리에서
+// 줄을 바꾸고(낱말·숫자 중간은 절대 안 끊음) 그래도 넘치는 낱말만 더 줄인다.
+function fitCorpCardSheetHtml(html){
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:absolute; left:-100000px; top:0; width:1527px; visibility:hidden; pointer-events:none;';
+  holder.innerHTML = html;
+  document.body.appendChild(holder);
+  try{
+    holder.querySelectorAll('span.xfit').forEach(span=>{
+      const td = span.parentElement;
+      const cs = getComputedStyle(td);
+      const avail = td.clientWidth - (parseFloat(cs.paddingLeft)||0) - (parseFloat(cs.paddingRight)||0) - 1;
+      if(avail <= 0) return;
+      const base = parseFloat(getComputedStyle(span).fontSize) || 11;
+      if(span.classList.contains('xwrap')){
+        // 띄어쓰기로 줄을 바꿔도 넘치는 긴 낱말이 있을 때만 그만큼 줄인다
+        // (블록이라 폭은 칸과 같으니, 넘침은 안쪽 내용 폭으로 판단한다).
+        if(span.scrollWidth <= span.clientWidth) return;
+        span.style.fontSize = Math.max(base * 0.35, base * span.clientWidth / span.scrollWidth).toFixed(2) + 'px';
+        return;
+      }
+      const need = span.scrollWidth;
+      if(need <= avail) return;
+      const size = base * avail / need;
+      if(size >= base * 0.45){ span.style.fontSize = size.toFixed(2) + 'px'; return; }
+      span.style.whiteSpace = 'pre-wrap';
+      span.style.wordBreak = 'keep-all';
+      span.style.overflowWrap = 'normal';
+      span.style.display = 'block';
+      span.style.fontSize = (base * 0.75).toFixed(2) + 'px';
+      if(span.scrollWidth > avail){
+        const cur = base * 0.75;
+        span.style.fontSize = Math.max(base * 0.35, cur * avail / span.scrollWidth).toFixed(2) + 'px';
+      }
+    });
+    return holder.innerHTML;
+  } finally {
+    holder.remove();
+  }
+}
 // 시트 모양 + 지금 입력한 내역 → 인쇄용 HTML 한 장.
 function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   const { rows, merges, colWidths, styles } = layout;
@@ -13244,13 +13287,21 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     else if(ha === 'left') css.push('text-align:left');
     // 엑셀에서 세로 정렬을 따로 지정하지 않으면 아래쪽 정렬이다.
     css.push(`vertical-align:${st.valign === 'top' ? 'top' : (st.valign === 'center' ? 'middle' : 'bottom')}`);
-    // 엑셀은 칸이 좁으면 글자를 잘라 버리지만, 출력물에서 글자가 안 보이면 안 되므로
-    // 줄바꿈을 허용해서 칸 안에 다 들어가게 한다(줄이 늘면 행 높이도 같이 늘어난다).
-    css.push(st.wrap ? 'white-space:pre-wrap' : 'white-space:normal');
-    css.push('overflow-wrap:anywhere; word-break:keep-all');
+    // 글자는 줄을 바꾸지 않고(직접 줄을 바꿔 적은 곳만 그대로 둔다) 칸에 한 줄로
+    // 둔 뒤, 칸보다 길면 fitCorpCardSheetHtml이 글자 크기를 줄여 칸에 맞춘다 —
+    // 엑셀의 "셀에 맞춤"과 같은 방식. 예전에는 아무 데서나 줄을 바꿔서
+    // "848,93 / 2", "경기지 / 사"처럼 숫자·낱말이 두 줄로 쪼개졌다.
+    css.push('white-space:nowrap; overflow:hidden');
     const sp = spanAt.get(`${r},${c}`);
     const attrs = sp ? `${sp.cs>1?` colspan="${sp.cs}"`:''}${sp.rs>1?` rowspan="${sp.rs}"`:''}` : '';
-    return `<td${attrs} style="${css.join('; ')}">${escapeHtml(text).replace(/\n/g,'<br>')}</td>`;
+    const inner = escapeHtml(text).replace(/\n/g,'<br>');
+    // 양식 자체에 "자동 줄 바꿈"으로 적힌 긴 안내문(예: 지출 내역 참조)은 원본도
+    // 여러 줄이므로 띄어쓰기 자리에서만 줄을 바꾼다. 입력 내역 칸은 항상 한 줄.
+    const wrapPara = st.wrap && !isData;
+    const spanCss = wrapPara
+      ? 'display:block; white-space:pre-wrap; word-break:keep-all; overflow-wrap:normal; line-height:1.2;'
+      : 'display:inline-block; white-space:pre; line-height:1.2;';
+    return `<td${attrs} style="${css.join('; ')}">${inner ? `<span class="xfit${wrapPara?' xwrap':''}" style="${spanCss}">${inner}</span>` : ''}</td>`;
   };
 
   // 엑셀 문자폭 → 픽셀(대략 7px/문자 + 5px 여백), 전체를 용지 폭에 맞춰 비율로 쓴다.
@@ -13354,7 +13405,8 @@ async function openCorpCardMonthPrintPreview(card, month, rows){
       if(layout) html = buildCorpCardSheetPrintHtml(layout, card, month, rows);
     }catch(e){ console.error('양식 시트 모양을 읽지 못해 기본 표로 인쇄합니다', e); }
   }
-  if(!html) html = buildCorpCardMonthPrintHtml(card, month, rows);
+  if(html) html = fitCorpCardSheetHtml(html);
+  else html = buildCorpCardMonthPrintHtml(card, month, rows);
   document.getElementById('printSheet').innerHTML = html;
   document.getElementById('printOverlay').classList.add('show');
   document.body.classList.add('printing-preview');
