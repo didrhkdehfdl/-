@@ -13098,26 +13098,23 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   // 하나도 없는 행이 아예 기록되지 않는 경우가 있는데, 그 행을 건너뛰면 제목처럼
   // 여러 행에 걸친 병합(rowspan)이 갈 곳을 잃어 표가 어긋난다.
   const htAttr = r => (rows[r] && rows[r].ht) ? ` style="height:${(rows[r].ht*1.05).toFixed(1)}pt;"` : '';
+  const rowHtml = (r, opts) => {
+    let tds = '';
+    for(let c=0; c<=maxCol; c++) tds += cellHtml(r, c, opts);
+    return `<tr${htAttr(r)}>${tds}</tr>`;
+  };
   let body = '';
-  for(let r=1; r<=lastDataRow; r++){
-    let tds = '';
-    for(let c=0; c<=maxCol; c++) tds += cellHtml(r, c);
-    body += `<tr${htAttr(r)}>${tds}</tr>`;
-  }
-  // 양식에 서식이 갖춰진 칸(14행~합계행 바로 위)보다 입력이 많으면, 마지막
-  // 데이터 행의 모양을 그대로 본떠 줄을 더 붙인다 — 엑셀 내보내기는 이 경우를
-  // 막지만, 인쇄물에서는 적어둔 내역이 조용히 빠지는 편이 더 위험하다.
+  // 머리글(1~13행)
+  for(let r=1; r<14; r++) body += rowHtml(r);
+  // 데이터는 "적은 만큼만" 그린다 — 엑셀 양식에는 빈 칸이 44줄씩 미리 깔려
+  // 있지만, 인쇄물은 마지막으로 적은 줄 다음에 바로 합계가 오는 모양이다.
+  // 양식에 갖춰진 칸보다 입력이 많으면 마지막 행 모양을 본떠 줄을 더 붙인다.
   const capacity = lastDataRow - 14 + 1;
-  for(let i=capacity; i<dataRows.length; i++){
-    let tds = '';
-    for(let c=0; c<=maxCol; c++) tds += cellHtml(lastDataRow, c, { data: dataRows[i], seq: i+1 });
-    body += `<tr${htAttr(lastDataRow)}>${tds}</tr>`;
+  for(let i=0; i<dataRows.length; i++){
+    if(i < capacity) body += rowHtml(14+i);
+    else body += rowHtml(lastDataRow, { data: dataRows[i], seq: i+1 });
   }
-  {
-    let tds = '';
-    for(let c=0; c<=maxCol; c++) tds += cellHtml(totalRowNum, c);
-    body += `<tr${htAttr(totalRowNum)}>${tds}</tr>`;
-  }
+  body += rowHtml(totalRowNum);
 
   return `
   <div class="print-page doc-page landscape corpcard-sheet-doc" style="color:#000;">
