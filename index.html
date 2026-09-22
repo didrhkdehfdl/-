@@ -12948,13 +12948,15 @@ async function readCorpCardSheetLayout(buffer, monthName){
   if(stFile) styles = parseXlsxStyles(parser.parseFromString(await stFile.async('string'), 'application/xml'));
   else styles = parseXlsxStyles(null);
 
-  const colWidths = {}; // colIdx -> 엑셀 문자폭
-  Array.from(sheetDoc.getElementsByTagName('col')).forEach(el=>{
-    const min = Number(el.getAttribute('min'))||1, max = Number(el.getAttribute('max'))||min;
-    const w = Number(el.getAttribute('width'))||0;
-    if(el.getAttribute('hidden') === '1'){ for(let c=min;c<=max;c++) colWidths[c-1] = 0; return; }
-    for(let c=min;c<=max;c++) colWidths[c-1] = w;
-  });
+  // 칸 너비는 구간(<col min max width>)으로 적혀 있고, 엑셀은 "1열부터 16384열까지"
+  // 같은 구간을 흔히 남긴다 — 구간을 그대로 펼치면 칸이 1만 6천 개짜리 표가 되므로
+  // 구간 목록만 들고 있다가 필요한 열만 찾아 쓴다.
+  const colRanges = Array.from(sheetDoc.getElementsByTagName('col')).map(el=>({
+    min: Number(el.getAttribute('min'))||1,
+    max: Number(el.getAttribute('max'))||Number(el.getAttribute('min'))||1,
+    w: el.getAttribute('hidden') === '1' ? 0 : (Number(el.getAttribute('width'))||0),
+  }));
+  const colWidths = {}; // colIdx -> 엑셀 문자폭 (실제로 쓰는 열만 채운다)
   const merges = Array.from(sheetDoc.getElementsByTagName('mergeCell')).map(el=>{
     const m = String(el.getAttribute('ref')||'').match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
     if(!m) return null;
@@ -12987,7 +12989,14 @@ async function readCorpCardSheetLayout(buffer, monthName){
     });
     rows[rNum] = { ht, cells };
   });
-  Object.keys(colWidths).forEach(k=>{ if(Number(k) > maxCol && colWidths[k]) maxCol = Number(k); });
+  // 표의 오른쪽 끝은 "값이 있는 칸"과 "병합 범위"로만 정한다(칸 너비 구간은
+  // 빈 열까지 덮고 있어 기준이 될 수 없다). 혹시 모를 이상값에 대비해 상한을 둔다.
+  merges.forEach(m=>{ if(m.c2 > maxCol) maxCol = m.c2; });
+  if(maxCol > 200) maxCol = 200;
+  for(let c=0; c<=maxCol; c++){
+    const hit = colRanges.find(r => (c+1) >= r.min && (c+1) <= r.max);
+    colWidths[c] = hit ? hit.w : 8.43;
+  }
   return { rows, merges, colWidths, styles, maxCol, sheetName: sheetEl.getAttribute('name')||'' };
 }
 // 시트 모양 + 지금 입력한 내역 → 인쇄용 HTML 한 장.
