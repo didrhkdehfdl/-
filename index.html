@@ -12787,6 +12787,346 @@ function openCorpCardUsageDocPrint(rows, card){
   document.getElementById('printLandscapeBtn').style.display = 'none';
   pdfFilenameOverride = `법인카드_사용내역서_${card.label||card.cardNumber}_${isoDate(new Date())}`;
 }
+// ---------- 법인카드 월 시트를 "원본 엑셀 그대로" 인쇄/PDF로 ----------
+// 지금까지 PDF는 앱에서 새로 만든 단순한 표였다. 하지만 실제로 쓰는 문서는 카드마다
+// 올려둔 양식 파일("(0905) 법인카드내역.xlsx" 등)의 월 시트이고, 그 시트에는 제목·
+// 카드번호·사용건수/합계 같은 머리글(1~13행)과 고유한 칸 너비·병합·테두리가 있다.
+// 그래서 PDF도 그 시트를 그대로 읽어서 같은 모양으로 그린다 — 양식 파일이 없을
+// 때만 예전의 단순 표로 되돌아간다.
+function xlsxColToIdx(letter){
+  let n = 0;
+  for(const ch of String(letter||'').toUpperCase()) n = n*26 + (ch.charCodeAt(0)-64);
+  return n-1;
+}
+function xlsxIdxToCol(idx){
+  let s = '', n = idx+1;
+  while(n>0){ const r=(n-1)%26; s=String.fromCharCode(65+r)+s; n=Math.floor((n-1)/26); }
+  return s;
+}
+// 엑셀 서식(styles.xml)에서 인쇄 모양에 실제로 영향을 주는 것만 골라 읽는다 —
+// 굵기·글자크기·글자색·배경색·정렬·줄바꿈·테두리·표시형식.
+function parseXlsxStyles(stylesDoc){
+  if(!stylesDoc) return { xf: ()=>({}), numFmtCode: ()=>'' };
+  const rgb = el => {
+    if(!el) return '';
+    const v = el.getAttribute('rgb') || '';
+    if(!/^[0-9A-Fa-f]{8}$/.test(v)) return '';
+    if(v.slice(0,2) === '00') return '';
+    return '#' + v.slice(2);
+  };
+  const childrenOf = (tag, child) => {
+    const parent = stylesDoc.getElementsByTagName(tag)[0];
+    return parent ? Array.from(parent.getElementsByTagName(child)) : [];
+  };
+  const fonts = childrenOf('fonts','font').map(f=>{
+    const sz = f.getElementsByTagName('sz')[0];
+    return {
+      bold: !!f.getElementsByTagName('b')[0],
+      size: sz ? (Number(sz.getAttribute('val'))||0) : 0,
+      color: rgb(f.getElementsByTagName('color')[0]),
+    };
+  });
+  const fills = childrenOf('fills','fill').map(f=>{
+    const pf = f.getElementsByTagName('patternFill')[0];
+    if(!pf || pf.getAttribute('patternType') !== 'solid') return '';
+    return rgb(pf.getElementsByTagName('fgColor')[0]);
+  });
+  const borders = childrenOf('borders','border').map(b=>{
+    const side = name => {
+      const el = b.getElementsByTagName(name)[0];
+      const st = el ? (el.getAttribute('style')||'') : '';
+      if(!st || st === 'none') return 0;
+      return /thick|double|medium/.test(st) ? 2 : 1;
+    };
+    return { l:side('left'), r:side('right'), t:side('top'), b:side('bottom') };
+  });
+  const numFmts = {};
+  Array.from(stylesDoc.getElementsByTagName('numFmt')).forEach(el=>{
+    numFmts[el.getAttribute('numFmtId')] = el.getAttribute('formatCode')||'';
+  });
+  const cellXfsEl = stylesDoc.getElementsByTagName('cellXfs')[0];
+  const xfs = cellXfsEl ? Array.from(cellXfsEl.getElementsByTagName('xf')) : [];
+  const BUILTIN_DATE = new Set(['14','15','16','17','22']);
+  return {
+    xf(sIdx){
+      const el = xfs[Number(sIdx)||0];
+      if(!el) return {};
+      const font = fonts[Number(el.getAttribute('fontId'))||0] || {};
+      const align = el.getElementsByTagName('alignment')[0];
+      return {
+        bold: !!font.bold,
+        size: font.size,
+        color: font.color,
+        bg: fills[Number(el.getAttribute('fillId'))||0] || '',
+        border: borders[Number(el.getAttribute('borderId'))||0] || { l:0,r:0,t:0,b:0 },
+        halign: align ? (align.getAttribute('horizontal')||'') : '',
+        valign: align ? (align.getAttribute('vertical')||'') : '',
+        wrap: align ? align.getAttribute('wrapText') === '1' : false,
+        numFmtId: el.getAttribute('numFmtId') || '0',
+      };
+    },
+    numFmtCode(id){
+      if(numFmts[id] !== undefined) return numFmts[id];
+      if(BUILTIN_DATE.has(String(id))) return 'yyyy-mm-dd';
+      if(['3','4','37','38','39','40','41','42','43','44'].includes(String(id))) return '#,##0';
+      return '';
+    },
+  };
+}
+// 엑셀 날짜 일련번호 → 'YYYY-MM-DD'
+function xlsxSerialToIso(n){
+  const d = new Date(Date.UTC(1899,11,30) + Math.round(Number(n)||0)*86400000);
+  if(isNaN(d.getTime())) return '';
+  const pad = x=>String(x).padStart(2,'0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
+}
+// 양식에 적힌 표시형식(예: m"월" d"일", yyyy-mm-dd)대로 날짜 글자를 만든다.
+function formatXlsxDate(iso, code){
+  const m = String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return iso||'';
+  const [_, y, mo, d] = m;
+  if(!code || !/[ymd]/.test(code)) return iso;
+  let out = '', i = 0;
+  const body = code.split(';')[0];
+  while(i < body.length){
+    const ch = body[i];
+    if(ch === '"'){ const end = body.indexOf('"', i+1); out += body.slice(i+1, end<0?body.length:end); i = (end<0?body.length:end+1); continue; }
+    if(ch === '\\'){ out += body[i+1]||''; i += 2; continue; }
+    if(/[ymd]/i.test(ch)){
+      let j = i; while(j < body.length && body[j].toLowerCase() === ch.toLowerCase()) j++;
+      const run = body.slice(i, j).toLowerCase();
+      if(run[0] === 'y') out += (run.length <= 2 ? y.slice(2) : y);
+      else if(run[0] === 'm') out += (run.length >= 2 ? mo : String(Number(mo)));
+      else out += (run.length >= 2 ? d : String(Number(d)));
+      i = j; continue;
+    }
+    if(/[\[\]*]/.test(ch)){ i++; continue; }
+    out += ch; i++;
+  }
+  return out.trim();
+}
+// 시트 XML 하나를 "행 → 칸" 형태로 풀어서 돌려준다.
+async function readCorpCardSheetLayout(buffer, monthName){
+  await loadJSZipLib();
+  const zip = await window.JSZip.loadAsync(buffer);
+  const parser = new DOMParser();
+  const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const wbFile = zip.file('xl/workbook.xml');
+  if(!wbFile) return null;
+  const wbDoc = parser.parseFromString(await wbFile.async('string'), 'application/xml');
+  const sheets = Array.from(wbDoc.getElementsByTagName('sheet'));
+  // 이 달 시트가 양식에 없으면(앱에서 새로 추가한 달) 가장 가까운 이전 달 시트를
+  // 대신 읽는다 — 어차피 모양은 같으므로 머리글의 달 이름만 우리가 바꿔 쓴다.
+  let sheetEl = sheets.find(el => el.getAttribute('name') === monthName);
+  if(!sheetEl){
+    const targetNum = monthNumFromLabel(monthName);
+    const monthSheets = sheets.map(el=>({ el, num: monthNumFromLabel(el.getAttribute('name')) })).filter(x=>x.num!=null);
+    sheetEl = (monthSheets.filter(x=>x.num<targetNum).sort((a,b)=>b.num-a.num)[0]
+            || monthSheets.sort((a,b)=>a.num-b.num)[0] || {}).el;
+  }
+  if(!sheetEl) return null;
+  const relsFile = zip.file('xl/_rels/workbook.xml.rels');
+  if(!relsFile) return null;
+  const relsDoc = parser.parseFromString(await relsFile.async('string'), 'application/xml');
+  const rId = sheetEl.getAttributeNS(REL_NS, 'id');
+  const relEl = Array.from(relsDoc.getElementsByTagName('Relationship')).find(el=>el.getAttribute('Id')===rId);
+  if(!relEl) return null;
+  let target = (relEl.getAttribute('Target')||'').replace(/^\.?\//,'');
+  const sheetFile = zip.file(target.startsWith('xl/') ? target : ('xl/'+target));
+  if(!sheetFile) return null;
+  const sheetDoc = parser.parseFromString(await sheetFile.async('string'), 'application/xml');
+
+  let sharedStrings = [];
+  const ssFile = zip.file('xl/sharedStrings.xml');
+  if(ssFile){
+    const ssDoc = parser.parseFromString(await ssFile.async('string'), 'application/xml');
+    sharedStrings = Array.from(ssDoc.getElementsByTagName('si')).map(si =>
+      Array.from(si.getElementsByTagName('t')).map(t=>t.textContent).join(''));
+  }
+  let styles = null;
+  const stFile = zip.file('xl/styles.xml');
+  if(stFile) styles = parseXlsxStyles(parser.parseFromString(await stFile.async('string'), 'application/xml'));
+  else styles = parseXlsxStyles(null);
+
+  const colWidths = {}; // colIdx -> 엑셀 문자폭
+  Array.from(sheetDoc.getElementsByTagName('col')).forEach(el=>{
+    const min = Number(el.getAttribute('min'))||1, max = Number(el.getAttribute('max'))||min;
+    const w = Number(el.getAttribute('width'))||0;
+    if(el.getAttribute('hidden') === '1'){ for(let c=min;c<=max;c++) colWidths[c-1] = 0; return; }
+    for(let c=min;c<=max;c++) colWidths[c-1] = w;
+  });
+  const merges = Array.from(sheetDoc.getElementsByTagName('mergeCell')).map(el=>{
+    const m = String(el.getAttribute('ref')||'').match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
+    if(!m) return null;
+    return { c1: xlsxColToIdx(m[1]), r1: Number(m[2]), c2: xlsxColToIdx(m[3]), r2: Number(m[4]) };
+  }).filter(Boolean);
+
+  const rows = {};
+  let maxCol = 0;
+  Array.from(sheetDoc.getElementsByTagName('row')).forEach(rowEl=>{
+    const rNum = Number(rowEl.getAttribute('r'));
+    const ht = Number(rowEl.getAttribute('ht'))||0;
+    const cells = {};
+    Array.from(rowEl.getElementsByTagName('c')).forEach(c=>{
+      const ref = String(c.getAttribute('r')||'').match(/^([A-Z]+)(\d+)$/);
+      if(!ref) return;
+      const colIdx = xlsxColToIdx(ref[1]);
+      if(colIdx > maxCol) maxCol = colIdx;
+      const t = c.getAttribute('t');
+      const vEl = c.getElementsByTagName('v')[0];
+      const fEl = c.getElementsByTagName('f')[0];
+      let text = '', num = null;
+      if(t === 's'){ text = sharedStrings[Number(vEl ? vEl.textContent : -1)] || ''; }
+      else if(t === 'inlineStr'){
+        const isEl = c.getElementsByTagName('is')[0];
+        text = isEl ? Array.from(isEl.getElementsByTagName('t')).map(x=>x.textContent).join('') : '';
+      }
+      else if(t === 'str'){ text = vEl ? vEl.textContent : ''; }
+      else if(vEl){ num = Number(vEl.textContent); text = vEl.textContent; }
+      cells[colIdx] = { text, num, formula: fEl ? fEl.textContent : '', s: c.getAttribute('s')||'0' };
+    });
+    rows[rNum] = { ht, cells };
+  });
+  Object.keys(colWidths).forEach(k=>{ if(Number(k) > maxCol && colWidths[k]) maxCol = Number(k); });
+  return { rows, merges, colWidths, styles, maxCol, sheetName: sheetEl.getAttribute('name')||'' };
+}
+// 시트 모양 + 지금 입력한 내역 → 인쇄용 HTML 한 장.
+function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
+  const { rows, merges, colWidths, styles } = layout;
+  const rowNums = Object.keys(rows).map(Number).sort((a,b)=>a-b);
+  // "총 사용금액 합계" 행을 찾아 데이터 칸의 범위를 정한다(엑셀 내보내기와 같은 기준).
+  const totalRowNum = rowNums.find(r => String(((rows[r].cells[1]||{}).text)||'').trim() === '총 사용금액 합계')
+                   || rowNums[rowNums.length-1];
+  const lastDataRow = totalRowNum - 1;
+  const lastRowNum = totalRowNum;
+  const maxCol = layout.maxCol;
+
+  // 병합 정보: 시작칸에는 colspan/rowspan, 나머지 칸은 건너뛴다.
+  const spanAt = new Map();   // "r,c" -> {cs, rs}
+  const covered = new Set();  // "r,c"
+  merges.forEach(m=>{
+    if(m.r1 > lastRowNum) return;
+    spanAt.set(`${m.r1},${m.c1}`, { cs: m.c2-m.c1+1, rs: Math.min(m.r2, lastRowNum)-m.r1+1 });
+    for(let r=m.r1; r<=Math.min(m.r2,lastRowNum); r++)
+      for(let c=m.c1; c<=m.c2; c++)
+        if(!(r===m.r1 && c===m.c1)) covered.add(`${r},${c}`);
+  });
+
+  const fieldByCol = {};
+  CORP_CARD_COLUMNS.forEach(([f], i)=>{ fieldByCol[xlsxColToIdx(CORP_CARD_COL_LETTERS[i])] = f; });
+  const total = dataRows.reduce((sum,r)=>sum+(Number(r.amount)||0),0);
+  const supplyTotal = dataRows.reduce((sum,r)=>sum+corpCardSupplyVat(r.amount).supply,0);
+  const vatTotal = dataRows.reduce((sum,r)=>sum+corpCardSupplyVat(r.amount).vat,0);
+  const COL_L = xlsxColToIdx('L'), COL_M = xlsxColToIdx('M'), COL_N = xlsxColToIdx('N');
+  // 이 달 시트가 없어서 다른 달 시트 모양을 빌려 쓴 경우, 머리글에 적힌 달 이름은
+  // 지금 인쇄하는 달로 바꿔준다(예: 8월 시트를 빌려 10월을 인쇄).
+  const srcMonthNum = monthNumFromLabel(layout.sheetName);
+  const tgtMonthNum = monthNumFromLabel(month);
+  const swapMonth = (srcMonthNum && tgtMonthNum && srcMonthNum !== tgtMonthNum)
+    ? (txt => String(txt).replace(new RegExp(srcMonthNum + '\\s*월', 'g'), tgtMonthNum + '월'))
+    : null;
+
+  // opts를 주면 그 행의 서식만 빌려 쓰고 값은 opts.data로 채운다 — 양식에 있는
+  // 칸보다 입력이 많을 때 줄을 더 붙이는 데 쓴다.
+  const cellHtml = (r, c, opts) => {
+    if(covered.has(`${r},${c}`)) return '';
+    const cell = (rows[r] && rows[r].cells[c]) || { text:'', num:null, formula:'', s:'0' };
+    const st = styles.xf(cell.s);
+    const code = styles.numFmtCode(st.numFmtId);
+    let text = cell.text;
+    const isData = (r >= 14 && r <= lastDataRow) || !!opts;
+    if(isData){
+      // 데이터 칸은 양식에 남아있던 값 대신 지금 입력한 내역으로 채운다.
+      const d = opts ? opts.data : (dataRows[r-14] || null);
+      const field = fieldByCol[c];
+      if(field){
+        const raw = d ? d[field] : '';
+        if(field === 'date') text = d ? formatXlsxDate(raw, code) : '';
+        else if(field === 'amount') text = (d && Number(raw)) ? fmtNum(Number(raw)) : '';
+        else text = d ? String(raw||'') : '';
+      } else if(c === COL_L){ text = d ? (corpCardSupplyVat(d.amount).supply ? fmtNum(corpCardSupplyVat(d.amount).supply) : '') : ''; }
+      else if(c === COL_M){ text = d ? (corpCardSupplyVat(d.amount).vat ? fmtNum(corpCardSupplyVat(d.amount).vat) : '') : ''; }
+      else if(cell.formula) text = '';
+      else if(cell.num !== null && cell.num !== undefined && !isNaN(cell.num)) text = opts ? String(opts.seq) : cell.text; // 순번 등 미리 인쇄된 값은 그대로
+    } else if(r === totalRowNum){
+      if(c === COL_L) text = fmtNum(supplyTotal);
+      else if(c === COL_M) text = fmtNum(vatTotal);
+      else if(c === COL_N) text = fmtNum(total);
+      else if(cell.formula) text = cell.num !== null && !isNaN(cell.num) ? fmtNum(cell.num) : '';
+    } else if(cell.formula){
+      // 머리글의 사용건수/합계 수식은 지금 내역으로 직접 계산해서 보여준다
+      // (엑셀이 계산해둔 옛날 값이 그대로 찍히면 안 되니까).
+      if(/^COUNT\(N14:N\d+\)$/i.test(cell.formula)) text = String(dataRows.length);
+      else if(/^SUM\(N14:N\d+\)$/i.test(cell.formula)) text = fmtNum(total);
+      else if(cell.num !== null && !isNaN(cell.num)) text = /#,##0/.test(code) ? fmtNum(cell.num) : cell.text;
+    } else if(cell.num !== null && cell.num !== undefined && !isNaN(cell.num) && cell.text !== ''){
+      if(/[ymd]/.test(code) && /[y]/i.test(code)) text = formatXlsxDate(xlsxSerialToIso(cell.num), code);
+      else if(/#,##0/.test(code)) text = fmtNum(cell.num);
+    }
+
+    if(swapMonth && !isData && r !== totalRowNum && text) text = swapMonth(text);
+
+    const b = st.border || { l:0,r:0,t:0,b:0 };
+    const bw = n => n===2 ? '1.6px' : '0.8px';
+    const css = ['padding:1px 3px', 'line-height:1.2'];
+    css.push(`border-left:${b.l?`${bw(b.l)} solid #000`:'0'}`);
+    css.push(`border-right:${b.r?`${bw(b.r)} solid #000`:'0'}`);
+    css.push(`border-top:${b.t?`${bw(b.t)} solid #000`:'0'}`);
+    css.push(`border-bottom:${b.b?`${bw(b.b)} solid #000`:'0'}`);
+    if(st.bg) css.push(`background:${st.bg}`);
+    if(st.bold) css.push('font-weight:700');
+    if(st.color) css.push(`color:${st.color}`);
+    if(st.size) css.push(`font-size:${(st.size*0.92).toFixed(1)}pt`);
+    const ha = st.halign || (isData && (c===COL_L||c===COL_M||c===COL_N||fieldByCol[c]==='amount') ? 'right' : '');
+    if(ha === 'center') css.push('text-align:center');
+    else if(ha === 'right') css.push('text-align:right');
+    else if(ha === 'left') css.push('text-align:left');
+    css.push(`vertical-align:${st.valign === 'top' ? 'top' : (st.valign === 'bottom' ? 'bottom' : 'middle')}`);
+    css.push(st.wrap ? 'white-space:pre-wrap; word-break:break-all' : 'white-space:nowrap; overflow:hidden');
+    const sp = spanAt.get(`${r},${c}`);
+    const attrs = sp ? `${sp.cs>1?` colspan="${sp.cs}"`:''}${sp.rs>1?` rowspan="${sp.rs}"`:''}` : '';
+    return `<td${attrs} style="${css.join('; ')}">${escapeHtml(text).replace(/\n/g,'<br>')}</td>`;
+  };
+
+  // 엑셀 문자폭 → 픽셀(대략 7px/문자 + 5px 여백), 전체를 용지 폭에 맞춰 비율로 쓴다.
+  const widths = [];
+  for(let c=0; c<=maxCol; c++) widths.push(Math.round((colWidths[c] !== undefined ? colWidths[c] : 8.43) * 7 + 5));
+  const widthSum = widths.reduce((a,b)=>a+b,0) || 1;
+  const colgroup = widths.map(w=>`<col style="width:${(w/widthSum*100).toFixed(3)}%;">`).join('');
+
+  // 빈 행이라도 1행부터 합계행까지 빠짐없이 <tr>을 만든다 — 엑셀 파일에는 값이
+  // 하나도 없는 행이 아예 기록되지 않는 경우가 있는데, 그 행을 건너뛰면 제목처럼
+  // 여러 행에 걸친 병합(rowspan)이 갈 곳을 잃어 표가 어긋난다.
+  const htAttr = r => (rows[r] && rows[r].ht) ? ` style="height:${(rows[r].ht*1.05).toFixed(1)}pt;"` : '';
+  let body = '';
+  for(let r=1; r<=lastDataRow; r++){
+    let tds = '';
+    for(let c=0; c<=maxCol; c++) tds += cellHtml(r, c);
+    body += `<tr${htAttr(r)}>${tds}</tr>`;
+  }
+  // 양식에 서식이 갖춰진 칸(14행~합계행 바로 위)보다 입력이 많으면, 마지막
+  // 데이터 행의 모양을 그대로 본떠 줄을 더 붙인다 — 엑셀 내보내기는 이 경우를
+  // 막지만, 인쇄물에서는 적어둔 내역이 조용히 빠지는 편이 더 위험하다.
+  const capacity = lastDataRow - 14 + 1;
+  for(let i=capacity; i<dataRows.length; i++){
+    let tds = '';
+    for(let c=0; c<=maxCol; c++) tds += cellHtml(lastDataRow, c, { data: dataRows[i], seq: i+1 });
+    body += `<tr${htAttr(lastDataRow)}>${tds}</tr>`;
+  }
+  {
+    let tds = '';
+    for(let c=0; c<=maxCol; c++) tds += cellHtml(totalRowNum, c);
+    body += `<tr${htAttr(totalRowNum)}>${tds}</tr>`;
+  }
+
+  return `
+  <div class="print-page doc-page landscape corpcard-sheet-doc" style="color:#000;">
+    <table style="width:100%; border-collapse:collapse; table-layout:fixed; font-family:'Malgun Gothic','Noto Sans KR',sans-serif; font-size:8.5pt;">
+      <colgroup>${colgroup}</colgroup>
+      <tbody>${body}</tbody>
+    </table>
+  </div>`;
+}
 // 법인카드 탭에 실제로 입력된 표(원본 "법인카드 사용 관리대장" 엑셀의 월 시트와
 // 같은 열 구성)를 그대로 PDF/인쇄용으로 만든다 — 원본 엑셀은 이미 exportCorpCardToExcel로
 // 그 모양 그대로 나가므로, 여기서는 같은 열·같은 값을 화면에 표로 그려서
@@ -12841,8 +13181,18 @@ function buildCorpCardMonthPrintHtml(card, month, rows){
     </table>
   </div>`;
 }
-function openCorpCardMonthPrintPreview(card, month, rows){
-  const html = buildCorpCardMonthPrintHtml(card, month, rows);
+async function openCorpCardMonthPrintPreview(card, month, rows){
+  // 이 카드의 양식 파일이 있으면 그 월 시트 모양 그대로 그린다 — 없거나 읽지
+  // 못하면 예전처럼 앱이 만든 단순 표로 대신한다.
+  let html = '';
+  const tmpl = corpCardTemplates[card.id];
+  if(tmpl && tmpl.buffer){
+    try{
+      const layout = await readCorpCardSheetLayout(tmpl.buffer, month);
+      if(layout) html = buildCorpCardSheetPrintHtml(layout, card, month, rows);
+    }catch(e){ console.error('양식 시트 모양을 읽지 못해 기본 표로 인쇄합니다', e); }
+  }
+  if(!html) html = buildCorpCardMonthPrintHtml(card, month, rows);
   document.getElementById('printSheet').innerHTML = html;
   document.getElementById('printOverlay').classList.add('show');
   document.body.classList.add('printing-preview');
