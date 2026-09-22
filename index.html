@@ -1845,11 +1845,16 @@ function closeCaseHistoryOverlay(){
 // (Cloud Functions)가 새로 추가된 항목을 감지해서 대상자의 기기로 보낸다
 // (새 문의 접수 알림과 완전히 같은 방식 — onNewInquiry 참고).
 let notifySendTargetCase = null;
+// 건(영업비·이윤정산)이 아니라 "카드사 승인내역 업로드 요청"처럼 특정 건과
+// 상관없는 알림을 보낼 때 쓰는 화면 설정 — { label, contextText, title }.
+let notifySendOptions = null;
 const NOTIFICATION_QUEUE_KEY = 'notification-queue';
-async function openNotifySendOverlay(caseObj, defaultMessage){
+async function openNotifySendOverlay(caseObj, defaultMessage, opts){
   notifySendTargetCase = caseObj;
-  const caseLabel = (caseObj && (caseObj.title || caseObj.docNo)) || '이 건';
-  document.getElementById('notifySendCaseLabel').textContent = `건: ${caseLabel}`;
+  notifySendOptions = opts || null;
+  const caseLabel = (opts && opts.label) || (caseObj && (caseObj.title || caseObj.docNo)) || '이 건';
+  document.getElementById('notifySendCaseLabel').textContent =
+    (opts && opts.contextText) ? opts.contextText : `건: ${caseLabel}`;
   document.getElementById('notifySendMessage').value = defaultMessage || '';
   document.getElementById('notifySendStatus').textContent = '사용자 목록 불러오는 중…';
   document.getElementById('notifySendOverlay').style.display = 'flex';
@@ -1873,6 +1878,7 @@ async function openNotifySendOverlay(caseObj, defaultMessage){
 function closeNotifySendOverlay(){
   document.getElementById('notifySendOverlay').style.display = 'none';
   notifySendTargetCase = null;
+  notifySendOptions = null;
 }
 document.getElementById('notifySendCloseBtn').addEventListener('click', closeNotifySendOverlay);
 document.getElementById('notifySendSubmitBtn').addEventListener('click', async ()=>{
@@ -1884,7 +1890,10 @@ document.getElementById('notifySendSubmitBtn').addEventListener('click', async (
   btn.disabled = true; btn.textContent = '보내는 중…';
   try{
     const c = notifySendTargetCase;
-    const caseLabel = (c && (c.title || c.docNo)) || '건';
+    const o = notifySendOptions;
+    const caseLabel = (o && o.label) || (c && (c.title || c.docNo)) || '건';
+    const pushTitle = (o && o.title) || ('알림: ' + caseLabel);
+    const pushBody = msg || (o && o.defaultBody) || `${caseLabel} 건을 확인해주세요.`;
     const listText = await loadFileFromStorage(NOTIFICATION_QUEUE_KEY);
     const queue = listText ? JSON.parse(listText) : [];
     const fromEmail = (fbAuth.currentUser && fbAuth.currentUser.email) || '';
@@ -1893,8 +1902,8 @@ document.getElementById('notifySendSubmitBtn').addEventListener('click', async (
         id: rid(),
         toUid,
         fromEmail,
-        title: '알림: ' + caseLabel,
-        body: msg || `${caseLabel} 건을 확인해주세요.`,
+        title: pushTitle,
+        body: pushBody,
         caseId: c ? c.id : null,
         createdAt: Date.now(),
       });
@@ -10264,7 +10273,10 @@ async function renderCardReconMain(){
     <div class="table-wrap" style="padding:14px; margin-bottom:16px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
         <div style="font-size:12.5px; font-weight:600;">카드사 승인내역 업로드(대사)</div>
-        ${isAdminUser ? `<button id="approvalAlertConfigBtn" style="background:transparent; border:1px solid var(--line); color:var(--gold); border-radius:6px; padding:6px 10px; font-size:11.5px; cursor:pointer;">🔔 업로드 알림 설정</button>` : ''}
+        ${isAdminUser ? `<div style="display:flex; gap:6px;">
+          <button id="approvalNotifySendBtn" style="background:transparent; border:1px solid var(--line); color:var(--gold); border-radius:6px; padding:6px 10px; font-size:11.5px; cursor:pointer;" title="고른 사람에게 지금 바로 알림을 보냅니다">📨 알림 보내기</button>
+          <button id="approvalAlertConfigBtn" style="background:transparent; border:1px solid var(--line); color:var(--gold); border-radius:6px; padding:6px 10px; font-size:11.5px; cursor:pointer;">🔔 업로드 알림 설정</button>
+        </div>` : ''}
       </div>
       <div style="font-size:11.5px; color:var(--muted); line-height:1.6; margin-bottom:10px;">
         올리면 카드번호로 <b>법인카드</b> 탭의 카드를 찾아, 이미 입력된 내역과 날짜·금액을 대조합니다.
@@ -10334,6 +10346,18 @@ async function renderCardReconMain(){
 
   const approvalAlertConfigBtn = document.getElementById('approvalAlertConfigBtn');
   if(approvalAlertConfigBtn) approvalAlertConfigBtn.addEventListener('click', openApprovalAlertConfigOverlay);
+  // "업로드 알림 설정"이 업로드가 일어났을 때 자동으로 보내는 알림이라면, 이
+  // 버튼은 지금 바로 사람을 골라 보내는 수동 알림이다 — 예: 승인내역을 아직
+  // 안 올렸을 때 담당자에게 올려달라고 재촉할 때.
+  const approvalNotifySendBtn = document.getElementById('approvalNotifySendBtn');
+  if(approvalNotifySendBtn) approvalNotifySendBtn.addEventListener('click', ()=>{
+    openNotifySendOverlay(null, '', {
+      label: '카드사 승인내역',
+      title: '🧾 카드사 승인내역 업로드 요청',
+      contextText: '카드관리 — 카드사 승인내역 관련 알림',
+      defaultBody: '카드사 승인내역을 업로드해주세요.',
+    });
+  });
   document.getElementById('cardApprovalBtn2').addEventListener('click', ()=> document.getElementById('cardApprovalFile2').click());
   document.getElementById('cardApprovalFile2').addEventListener('change', async (e)=>{
     const file = e.target.files[0];
