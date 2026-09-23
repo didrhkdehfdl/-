@@ -13072,6 +13072,13 @@ function fitCorpCardSheetHtml(html){
   holder.innerHTML = html;
   document.body.appendChild(holder);
   try{
+    const doc = holder.querySelector('.corpcard-sheet-doc');
+    // 양식 기반 문서는 크기를 문서 폭 기준 단위(cqw)로 적으므로, 줄인 글자 크기도
+    // 같은 단위로 적어야 인쇄할 때 함께 줄어든다.
+    const docW = doc && doc.dataset.cq ? Number(doc.dataset.docw) || 0 : 0;
+    const setSize = (span, px) => {
+      span.style.fontSize = docW ? `${(px / docW * 100).toFixed(4)}cqw` : `${px.toFixed(2)}px`;
+    };
     holder.querySelectorAll('span.xfit').forEach(span=>{
       const td = span.parentElement;
       const cs = getComputedStyle(td);
@@ -13082,42 +13089,63 @@ function fitCorpCardSheetHtml(html){
         // 띄어쓰기로 줄을 바꿔도 넘치는 긴 낱말이 있을 때만 그만큼 줄인다
         // (블록이라 폭은 칸과 같으니, 넘침은 안쪽 내용 폭으로 판단한다).
         if(span.scrollWidth <= span.clientWidth) return;
-        span.style.fontSize = Math.max(base * 0.35, base * span.clientWidth / span.scrollWidth).toFixed(2) + 'px';
+        setSize(span, Math.max(base * 0.35, base * span.clientWidth / span.scrollWidth));
         return;
       }
       const need = span.scrollWidth;
       if(need <= avail) return;
       const size = base * avail / need;
-      if(size >= base * 0.7){ span.style.fontSize = size.toFixed(2) + 'px'; return; }
+      if(size >= base * 0.7){ setSize(span, size); return; }
       span.style.whiteSpace = 'pre-wrap';
       span.style.wordBreak = 'keep-all';
       span.style.overflowWrap = 'normal';
       span.style.display = 'block';
-      span.style.fontSize = base.toFixed(2) + 'px';
+      setSize(span, base);
       if(span.scrollWidth > avail){
-        const cur = base;
-        span.style.fontSize = Math.max(base * 0.35, cur * avail / span.scrollWidth).toFixed(2) + 'px';
+        setSize(span, Math.max(base * 0.35, base * avail / span.scrollWidth));
       }
     });
-    // 한 장에 들어가게: 가로·세로 중 더 빠듯한 쪽 기준으로 줄이고, 브라우저마다
-    // 조금씩 다른 반올림 때문에 두 번째 장으로 한 줄 넘어가지 않도록 3% 여유를 둔다.
-    // 인쇄할 때만 적용해서 미리보기 화면은 읽기 좋은 크기 그대로 둔다.
-    // 줄인 뒤의 크기는 단순 비례보다 조금 크게 나온다(테두리는 최소 1px로 남고
-    // 줄 높이는 반올림되므로 행이 많을수록 차이가 쌓인다). 그래서 어림하지 않고
-    // 실제로 zoom을 걸어 잰 뒤 넘치면 다시 줄이는 걸 몇 번 반복한다.
-    const doc = holder.querySelector('.corpcard-sheet-doc');
     if(doc){
-      const maxW = A4_PORTRAIT_CONTENT_PX.w * 0.98, maxH = A4_PORTRAIT_CONTENT_PX.h * 0.96;
+      const maxH = A4_PORTRAIT_CONTENT_PX.h * 0.96;
       // 인쇄할 때는 문서 안쪽 여백(padding)도 없애므로, 잴 때도 뺀 상태로 잰다.
       const savedPadding = doc.style.padding;
+      const savedWidth = doc.style.width;
       doc.style.padding = '0';
-      const rect0 = doc.getBoundingClientRect();
-      if(rect0.width > 0 && rect0.height > 0){
-        let z = Math.min(1, maxW / rect0.width, maxH / rect0.height);
+      // 문서 상자뿐 아니라 안의 표가 상자 밖으로 삐져나온 부분까지 잰다.
+      const measure = () => {
+        const r = doc.getBoundingClientRect();
+        const tbl = doc.querySelector('table');
+        const t = tbl ? tbl.getBoundingClientRect() : r;
+        return { w: Math.max(r.width, t.right - r.left), h: Math.max(r.height, t.bottom - r.top) };
+      };
+      const m0 = measure();
+      if(docW && m0.w > 0 && m0.h > 0){
+        // 인쇄할 때는 문서 폭을 "종이의 실제 인쇄 가능 폭의 몇 %"로만 정한다. 안의
+        // 크기가 전부 문서 폭 기준이라 비율대로 따라 줄어들고, 프린터마다 인쇄 가능
+        // 폭이 달라도 폭은 절대 넘치지 않는다. 기본은 거의 100%(좌우 꽉 채움)이고, 건수가
+        // 많아 세로가 넘칠 때만 그만큼 폭을 줄인다. 세로는 A4(위아래 10mm) 기준으로,
+        // 실제로 그 폭에 맞춰 짜 본 뒤 넘치면 다시 줄이기를 반복해 확인한다.
+        // 99.5%: 바깥 테두리 선 두께 절반이 인쇄 가능 영역 밖으로 걸치지 않게.
+        let f = 0.995;
+        for(let i=0; i<8; i++){
+          doc.style.width = (A4_PORTRAIT_CONTENT_PX.w * f) + 'px';
+          const h = measure().h;
+          if(h <= maxH) break;
+          f = f * maxH / h * 0.995;
+        }
+        doc.style.width = savedWidth;
+        doc.insertAdjacentHTML('afterbegin',
+          `<style>@media print{ .corpcard-sheet-doc{ width:${(f*100).toFixed(3)}% !important; max-width:100% !important; padding:0 !important; margin:0 auto !important; break-after:auto; page-break-after:auto; } }</style>`);
+      } else if(m0.w > 0 && m0.h > 0){
+        // 양식이 없는 카드의 기본 표는 px로 짜여 있어 예전처럼 zoom으로 통째로 줄인다.
+        // 줄인 뒤의 크기는 단순 비례보다 조금 크게 나오므로(테두리는 최소 1px로 남고
+        // 줄 높이는 반올림된다) 실제로 zoom을 걸어 재고 넘치면 다시 줄인다.
+        const maxW = A4_PORTRAIT_CONTENT_PX.w * 0.95;
+        let z = Math.min(1, maxW / m0.w, maxH / m0.h);
         for(let i=0; i<8; i++){
           doc.style.zoom = String(z);
-          const r = doc.getBoundingClientRect();
-          const over = Math.max(r.width / maxW, r.height / maxH);
+          const m = measure();
+          const over = Math.max(m.w / maxW, m.h / maxH);
           if(over <= 1) break;
           z = z / over * 0.995;
         }
@@ -13323,8 +13351,18 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
 
   // opts를 주면 그 행의 서식만 빌려 쓰고 값은 opts.data로 채운다 — 양식에 있는
   // 칸보다 입력이 많을 때 줄을 더 붙이는 데 쓴다.
+  // 숨긴 열(엑셀에서 폭 0)은 칸 안쪽 여백·테두리까지 없애서 폭을 정말 0으로 만든다.
+  // 여백이 남아 있으면 숨긴 열 하나마다 몇 px씩 표가 넓어져 종이 오른쪽 밖으로
+  // 밀려나갔다(표 상자는 그대로라 한 장 맞춤 계산에도 안 잡혔다).
+  const hiddenCol = c => colWidths[c] === 0;
+  // 글자 크기·칸 여백·행 높이를 모두 "문서 폭의 몇 %"(cqw)로 적는다. 화면에서는
+  // 문서 폭이 docWidth px라 px로 적은 것과 똑같이 보이고, 인쇄할 때는 문서 폭을
+  // 종이의 실제 인쇄 가능 폭에 맞추기만 하면 전부 같은 비율로 따라 줄어든다.
+  // 프린터마다 인쇄 가능 폭이 달라도(최소 여백·인쇄 설정) 넘치지 않는다.
+  const cq = px => `${(px / docWidth * 100).toFixed(4)}cqw`;
   const cellHtml = (r, c, opts) => {
     if(covered.has(`${r},${c}`)) return '';
+    if(hiddenCol(c) && !spanAt.has(`${r},${c}`)) return '<td style="padding:0; border:0; font-size:0; line-height:0; overflow:hidden;"></td>';
     const cell = (rows[r] && rows[r].cells[c]) || { text:'', num:null, formula:'', s:'0' };
     const st = styles.xf(cell.s);
     const code = styles.numFmtCode(st.numFmtId);
@@ -13375,7 +13413,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
 
     const b = st.border || { l:0,r:0,t:0,b:0 };
     const bw = n => n===2 ? '1.6px' : '0.8px';
-    const css = ['padding:1px 3px', 'line-height:1.2'];
+    const css = [`padding:${cq(1)} ${cq(3)}`, 'line-height:1.2'];
     css.push(`border-left:${b.l?`${bw(b.l)} solid #000`:'0'}`);
     css.push(`border-right:${b.r?`${bw(b.r)} solid #000`:'0'}`);
     css.push(`border-top:${b.t?`${bw(b.t)} solid #000`:'0'}`);
@@ -13385,7 +13423,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     if(st.italic) css.push('font-style:italic');
     if(st.underline) css.push('text-decoration:underline');
     if(st.color) css.push(`color:${st.color}`);
-    if(st.size) css.push(`font-size:${st.size}pt`);
+    if(st.size) css.push(`font-size:${cq(st.size * 96 / 72)}`);
     // 글꼴 이름도 양식 그대로 — 없으면 표 전체 기본 글꼴을 쓴다.
     if(st.name) css.push(`font-family:'${String(st.name).replace(/'/g,'')}','Malgun Gothic','Noto Sans KR',sans-serif`);
     // 정렬을 따로 지정하지 않은 칸(일반)은 엑셀처럼 숫자는 오른쪽, 글자는 왼쪽.
@@ -13440,7 +13478,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   // 빈 행이라도 1행부터 합계행까지 빠짐없이 <tr>을 만든다 — 엑셀 파일에는 값이
   // 하나도 없는 행이 아예 기록되지 않는 경우가 있는데, 그 행을 건너뛰면 제목처럼
   // 여러 행에 걸친 병합(rowspan)이 갈 곳을 잃어 표가 어긋난다.
-  const htAttr = r => (rows[r] && rows[r].ht) ? ` style="height:${(rows[r].ht*1.05).toFixed(1)}pt;"` : '';
+  const htAttr = r => (rows[r] && rows[r].ht) ? ` style="height:${cq(rows[r].ht * 1.05 * 96 / 72)};"` : '';
   const rowHtml = (r, opts) => {
     let tds = '';
     for(let c=minCol; c<=maxCol; c++) tds += cellHtml(r, c, opts);
@@ -13460,8 +13498,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   body += rowHtml(totalRowNum);
 
   return `
-  <div class="print-page doc-page corpcard-sheet-doc" style="color:#000; width:${docWidth}px; padding:12px; box-sizing:content-box;">
-    <table style="width:100%; border-collapse:collapse; table-layout:fixed; font-family:'Malgun Gothic','Noto Sans KR',sans-serif; font-size:8.5pt;">
+  <div class="print-page doc-page corpcard-sheet-doc" data-cq="1" data-docw="${docWidth}" style="color:#000; width:${docWidth}px; padding:12px; box-sizing:content-box; container-type:inline-size;">
+    <table style="width:100%; border-collapse:collapse; table-layout:fixed; font-family:'Malgun Gothic','Noto Sans KR',sans-serif; font-size:${cq(8.5 * 96 / 72)};">
       <colgroup>${colgroup}</colgroup>
       <tbody>${body}</tbody>
     </table>
