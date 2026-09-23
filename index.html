@@ -13198,7 +13198,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   }
   const lastRowNum = totalRowNum;
   let maxCol = layout.maxCol;
-  const minCol = layout.minCol || 0;
+  let minCol = layout.minCol || 0;
   // 인쇄 영역이 지정돼 있지 않은 양식이면, 표 머리글("날짜 … 비고") 행의 마지막
   // 칸까지만 그린다 — 시트 오른쪽에는 지출내역 목록처럼 입력 도우미로 쓰는 칸이
   // 붙어 있는 경우가 많고, 그건 인쇄물에 나오면 안 된다. 결재란처럼 표 위쪽
@@ -13274,6 +13274,26 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     if(hasText) break;
     maxCol--;
   }
+  // 왼쪽 끝·맨 위도 마찬가지로, 글자 없이 테두리(바깥 틀)만 있는 여백용 칸·행은
+  // 빼고 그 폭만큼 나머지 칸을 넓게 쓴다. 틀 안쪽의 표 선은 옆 칸(위 행)에 그어진
+  // 선도 가져오므로(아래 cellHtml) 그대로 남는다.
+  const hasTextAt = (r, c) => {
+    const cell = rows[r] && rows[r].cells[c];
+    return !!(cell && String(cell.text||'').trim());
+  };
+  while(minCol < maxCol){
+    let hasText = false;
+    for(let r=1; r<=lastRowNum && !hasText; r++) if(hasTextAt(r, minCol)) hasText = true;
+    if(hasText) break;
+    minCol++;
+  }
+  let firstRow = 1;
+  while(firstRow < dataStart - 1){
+    let hasText = false;
+    for(let c=minCol; c<=maxCol && !hasText; c++) if(hasTextAt(firstRow, c)) hasText = true;
+    if(hasText) break;
+    firstRow++;
+  }
 
   // 병합 정보: 시작칸에는 colspan/rowspan, 나머지 칸은 건너뛴다. 인쇄 영역
   // 밖으로 뻗은 병합은 잘라서 표가 넘치지 않게 한다.
@@ -13302,12 +13322,13 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     }
   }
   spanMerges.forEach(m=>{
-    if(m.r1 > lastRowNum || m.c1 > maxCol || m.c2 < minCol) return;
+    if(m.r1 > lastRowNum || m.r2 < firstRow || m.c1 > maxCol || m.c2 < minCol) return;
     const c1 = Math.max(m.c1, minCol), c2 = Math.min(m.c2, maxCol);
-    spanAt.set(`${m.r1},${c1}`, { cs: c2-c1+1, rs: Math.min(m.r2, lastRowNum)-m.r1+1 });
-    for(let r=m.r1; r<=Math.min(m.r2,lastRowNum); r++)
+    const r1 = Math.max(m.r1, firstRow);
+    spanAt.set(`${r1},${c1}`, { cs: c2-c1+1, rs: Math.min(m.r2, lastRowNum)-r1+1 });
+    for(let r=r1; r<=Math.min(m.r2,lastRowNum); r++)
       for(let c=c1; c<=c2; c++)
-        if(!(r===m.r1 && c===c1)) covered.add(`${r},${c}`);
+        if(!(r===r1 && c===c1)) covered.add(`${r},${c}`);
   });
 
   // 병합된 칸까지 고려해 (행, 열)의 글자를 얻는다.
@@ -13454,6 +13475,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     const lastC = c + (spEdge ? spEdge.cs - 1 : 0);
     if(lastC === maxCol && !b.r) b.r = neighborBorder(r, maxCol+1, 'l');
     if(c === minCol && !b.l) b.l = neighborBorder(r, minCol-1, 'r');
+    if(r === firstRow && !b.t) b.t = neighborBorder(r-1, c, 'b');
     const bw = n => n===2 ? '1.6px' : '0.8px';
     const css = [`padding:${cq(1)} ${cq(3)}`, 'line-height:1.2'];
     css.push(`border-left:${b.l?`${bw(b.l)} solid #000`:'0'}`);
@@ -13528,7 +13550,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   };
   let body = '';
   // 머리글(데이터 시작 행 앞까지)
-  for(let r=1; r<dataStart; r++) body += rowHtml(r);
+  for(let r=firstRow; r<dataStart; r++) body += rowHtml(r);
   // 데이터는 "적은 만큼만" 그린다 — 엑셀 양식에는 빈 칸이 44줄씩 미리 깔려
   // 있지만, 인쇄물은 마지막으로 적은 줄 다음에 바로 합계가 오는 모양이다.
   // 양식에 갖춰진 칸보다 입력이 많으면 마지막 행 모양을 본떠 줄을 더 붙인다.
