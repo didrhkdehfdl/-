@@ -12801,7 +12801,7 @@ function applyColorTint(hex, tint){
   return [r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('').toUpperCase();
 }
 function parseXlsxStyles(stylesDoc, themeDoc){
-  if(!stylesDoc) return { xf: ()=>({}), numFmtCode: ()=>'' };
+  if(!stylesDoc) return { xf: ()=>({}), numFmtCode: ()=>'', defaultFont: ()=>({ name:'', size:11 }) };
   // 색 구성표의 순서는 dk1, lt1, dk2, lt2, accent1..6 인데 theme 번호는
   // 0=lt1, 1=dk1, 2=lt2, 3=dk2, 4~9=accent1~6 이라 앞의 두 쌍만 자리를 바꾼다.
   const themeColors = parseXlsxTheme(themeDoc);
@@ -12887,6 +12887,9 @@ function parseXlsxStyles(stylesDoc, themeDoc){
         numFmtId: el.getAttribute('numFmtId') || '0',
       };
     },
+    // 통합 문서의 기본 글꼴(0번) — 엑셀은 칸 너비(문자 수)를 이 글꼴의 숫자 폭으로
+    // 픽셀로 바꾼다.
+    defaultFont(){ const f = fonts[0] || {}; return { name: f.name || '', size: f.size || 11 }; },
     numFmtCode(id){
       if(numFmts[id] !== undefined) return numFmts[id];
       if(BUILTIN_DATE.has(String(id))) return 'yyyy-mm-dd';
@@ -13052,7 +13055,8 @@ async function readCorpCardSheetLayout(buffer, monthName){
 // 글자마다 적어 넣은 HTML을 돌려준다 — 미리보기와 인쇄창이 같은 결과를 쓰게.
 // 너무 작아지면(원래의 70% 미만) 읽기 어려우므로, 그때만 띄어쓰기 자리에서
 // 줄을 바꾸고(낱말·숫자 중간은 절대 안 끊음) 그래도 넘치는 낱말만 더 줄인다.
-// 관리대장은 A4 세로 한 장으로 인쇄한다. 이 폭으로 한 번 짜고(글자 맞춤도 이 폭
+// 관리대장은 A4 세로 한 장으로 인쇄한다. 양식이 있는 카드는 양식의 실제 칸 너비
+// 합으로, 양식이 없는 카드의 기본 표는 이 폭으로 한 번 짜고(글자 맞춤도 그 폭
 // 기준), 인쇄할 때는 내용 전체가 종이 한 장(A4 세로, 여백 좌우 5mm·위아래 10mm → 200×277mm)에
 // 가로·세로 모두 들어가도록 zoom으로 통째로 줄인다. 폭을 종이보다 넓게 잡는 건
 // 16칸짜리 표를 종이 폭(718px)에 바로 짜면 칸마다 글자가 너무 줄어서다.
@@ -13063,7 +13067,8 @@ const CORP_CARD_SHEET_PAGE_CSS = 'size:A4 portrait; margin:10mm 5mm;';
 const A4_PORTRAIT_CONTENT_PX = { w: 200 * 96 / 25.4, h: 277 * 96 / 25.4 };
 function fitCorpCardSheetHtml(html){
   const holder = document.createElement('div');
-  holder.style.cssText = `position:absolute; left:-100000px; top:0; width:${CORP_CARD_SHEET_DOC_WIDTH + 40}px; visibility:hidden; pointer-events:none;`;
+  // 문서마다 폭이 달라서(양식의 실제 칸 너비 합) 상자 폭은 넉넉히 두고 문서 자신의 폭을 쓴다.
+  holder.style.cssText = 'position:absolute; left:-100000px; top:0; width:6000px; visibility:hidden; pointer-events:none;';
   holder.innerHTML = html;
   document.body.appendChild(holder);
   try{
@@ -13127,6 +13132,21 @@ function fitCorpCardSheetHtml(html){
     holder.remove();
   }
 }
+// 엑셀이 칸 너비를 픽셀로 바꿀 때 쓰는 "숫자 0의 폭"을 이 PC의 같은 글꼴로 잰다.
+// (브라우저 밖이거나 재지 못하면 엑셀 기본값인 7px)
+function measureXlsxDigitWidth(font){
+  try{
+    if(typeof document === 'undefined' || !document.body) return 7;
+    const span = document.createElement('span');
+    const name = font && font.name ? `'${String(font.name).replace(/'/g,'')}',` : '';
+    span.style.cssText = `position:absolute; left:-10000px; top:0; white-space:pre; font-family:${name}'Malgun Gothic','Noto Sans KR',sans-serif; font-size:${(font && font.size) || 11}pt;`;
+    span.textContent = '0000000000';
+    document.body.appendChild(span);
+    const w = span.getBoundingClientRect().width / 10;
+    span.remove();
+    return w > 0 ? Math.round(w) : 7;
+  }catch(e){ return 7; }
+}
 // 시트 모양 + 지금 입력한 내역 → 인쇄용 HTML 한 장.
 function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   const { rows, merges, colWidths, styles } = layout;
@@ -13179,7 +13199,35 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         if(end > tableLast) tableLast = end;
       });
     }
-    if(tableLast >= 0) maxCol = Math.min(maxCol, tableLast);
+    if(tableLast >= 0){
+      // (4) 결재란처럼 표 "위쪽에만" 있는 칸은 표 오른쪽 끝보다 한두 칸 더 나와
+      //     있기도 하다(원본에서도 부서장 칸이 표보다 넓다). 그런 칸은 포함하고,
+      //     표 줄(데이터 행)에도 글자가 있는 칸(지출내역 목록 같은 입력 도우미)에서
+      //     멈춘다 — 예전엔 표 끝에서 잘라서 부서장 칸이 반쯤 잘렸다.
+      const firstTableRow = headerRowNum || dataStart;
+      let ext = tableLast;
+      while(ext + 1 <= layout.maxCol){
+        const c = ext + 1;
+        let above = false, below = false;
+        for(let r=1; r<=lastRowNum; r++){
+          const cell = rows[r] && rows[r].cells[c];
+          const txt = cell ? String(cell.text||'').trim() : '';
+          if(r < firstTableRow){
+            if(txt) above = true;
+            else if(cell){
+              const st = styles.xf(cell.s); const b = st.border || {};
+              if(b.l || b.r || b.t || b.b || st.bg) above = true;
+            }
+            if(!above && merges.some(m => r>=m.r1 && r<=m.r2 && c>m.c1 && c<=m.c2)) above = true;
+          } else if(txt){
+            below = true;
+          }
+        }
+        if(!above || below) break;
+        ext = c;
+      }
+      maxCol = Math.min(layout.maxCol, ext);
+    }
   }
   // 표 오른쪽 끝에 글자가 하나도 없는 칸이 남아 있으면(양식의 여백용 칸) 잘라낸다.
   // 가로 전체를 덮는 띠 병합(예: "사용내역")은 표보다 한 칸 넓게 잡혀 있는 경우가
@@ -13375,9 +13423,18 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   };
 
   // 엑셀 문자폭 → 픽셀(대략 7px/문자 + 5px 여백), 전체를 용지 폭에 맞춰 비율로 쓴다.
+  // 칸 너비는 엑셀과 같은 방식으로 픽셀로 바꾼다: 저장된 너비(문자 수) × 기본 글꼴의
+  // 숫자 "0" 폭. 이 폭을 그대로 문서 폭으로 써야 글자 크기와 칸 폭의 비율이 엑셀과
+  // 같아진다 — 예전엔 폭을 1100px로 고정해서 실제 시트보다 칸이 좁았고, 그만큼
+  // 글자를 줄여 넣느라 엑셀 출력물보다 글자가 빽빽해 보였다.
+  const mdw = measureXlsxDigitWidth(styles.defaultFont ? styles.defaultFont() : null);
   const widths = [];
-  for(let c=minCol; c<=maxCol; c++) widths.push(Math.round((colWidths[c] !== undefined ? colWidths[c] : 8.43) * 7 + 5));
+  for(let c=minCol; c<=maxCol; c++){
+    const w = colWidths[c] !== undefined ? colWidths[c] : 8.43;
+    widths.push(w > 0 ? Math.max(1, Math.trunc(((256*w + Math.trunc(128/mdw)) / 256) * mdw)) : 0);
+  }
   const widthSum = widths.reduce((a,b)=>a+b,0) || 1;
+  const docWidth = Math.round(widthSum);
   const colgroup = widths.map(w=>`<col style="width:${(w/widthSum*100).toFixed(3)}%;">`).join('');
 
   // 빈 행이라도 1행부터 합계행까지 빠짐없이 <tr>을 만든다 — 엑셀 파일에는 값이
@@ -13403,7 +13460,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   body += rowHtml(totalRowNum);
 
   return `
-  <div class="print-page doc-page corpcard-sheet-doc" style="color:#000; width:${CORP_CARD_SHEET_DOC_WIDTH}px; padding:12px;">
+  <div class="print-page doc-page corpcard-sheet-doc" style="color:#000; width:${docWidth}px; padding:12px; box-sizing:content-box;">
     <table style="width:100%; border-collapse:collapse; table-layout:fixed; font-family:'Malgun Gothic','Noto Sans KR',sans-serif; font-size:8.5pt;">
       <colgroup>${colgroup}</colgroup>
       <tbody>${body}</tbody>
