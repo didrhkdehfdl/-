@@ -375,7 +375,7 @@
   .pdf-preview-page{ background:#fff; box-shadow:0 0 0 1px #ccc, 0 4px 18px rgba(0,0,0,.15); }
   .pdf-preview-page canvas{ display:block; max-width:100%; height:auto; }
   .pdf-preview-loading{ color:#eee; font-size:14px; padding:60px; text-align:center; width:1500px; max-width:100%; }
-  .print-toolbar{ display:flex; justify-content:flex-end; gap:8px; margin-bottom:12px; width:1500px; max-width:100%; }
+  .print-toolbar{ display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-bottom:12px; width:1500px; max-width:min(100%, calc(100vw - 40px)); }
   .print-toolbar button{
     padding:9px 16px; border-radius:6px; border:1px solid #ccc; background:#fff; color:#111;
     cursor:pointer; font-size:13px; font-family:'Noto Sans KR', sans-serif;
@@ -13134,8 +13134,10 @@ function fitCorpCardSheetHtml(html){
           f = f * maxH / h * 0.995;
         }
         doc.style.width = savedWidth;
+        // 앱 화면에서 바로 인쇄(Ctrl+P)해도 같은 종이·여백으로 나오게 이름 붙은 페이지를 쓰고,
+        // 문서를 감싼 상자들이 내용 폭으로 줄어들지 않게 종이 폭을 꽉 채우게 한다.
         doc.insertAdjacentHTML('afterbegin',
-          `<style>@media print{ .corpcard-sheet-doc{ width:${(f*100).toFixed(3)}% !important; max-width:100% !important; padding:0 !important; margin:0 auto !important; break-after:auto; page-break-after:auto; } }</style>`);
+          `<style>@page corpSheet{ ${CORP_CARD_SHEET_PAGE_CSS} } @media print{ .corpcard-sheet-doc{ page:corpSheet; width:${(f*100).toFixed(3)}% !important; max-width:100% !important; padding:0 !important; margin:0 auto !important; break-after:auto; page-break-after:auto; } #printOverlay > div:has(.corpcard-sheet-doc), .print-sheet:has(.corpcard-sheet-doc){ display:block !important; width:100% !important; } }</style>`);
       } else if(m0.w > 0 && m0.h > 0){
         // 양식이 없는 카드의 기본 표는 px로 짜여 있어 예전처럼 zoom으로 통째로 줄인다.
         // 줄인 뒤의 크기는 단순 비례보다 조금 크게 나오므로(테두리는 최소 1px로 남고
@@ -13498,7 +13500,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   body += rowHtml(totalRowNum);
 
   return `
-  <div class="print-page doc-page corpcard-sheet-doc" data-cq="1" data-docw="${docWidth}" style="color:#000; width:${docWidth}px; padding:12px; box-sizing:content-box; container-type:inline-size;">
+  <!-- 화면(미리보기·인쇄 창)에서는 창보다 넓으면 창 폭에 맞춰 통째로 줄인다(안의 크기가 전부 문서 폭 기준이라 비율 그대로). 넓은 채로 두면 가운데 정렬 때문에 좌우 끝이 잘려 보였다. -->
+  <div class="print-page doc-page corpcard-sheet-doc" data-cq="1" data-docw="${docWidth}" style="color:#000; width:min(${docWidth}px, calc(100vw - 80px)); padding:12px; box-sizing:content-box; container-type:inline-size;">
     <table style="width:100%; border-collapse:collapse; table-layout:fixed; font-family:'Malgun Gothic','Noto Sans KR',sans-serif; font-size:${cq(8.5 * 96 / 72)};">
       <colgroup>${colgroup}</colgroup>
       <tbody>${body}</tbody>
