@@ -13395,6 +13395,25 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     return bd[side] || 0;
   };
   const dataColStyleCache = new Map();
+  const modeOf = arr => {
+    const cnt = new Map(); let best = null, bestN = 0;
+    arr.forEach(v => { const n = (cnt.get(v)||0) + 1; cnt.set(v, n); if(n > bestN){ best = v; bestN = n; } });
+    return best;
+  };
+  let dataRegionSizeCache;
+  const dataRegionSize = () => {
+    if(dataRegionSizeCache !== undefined) return dataRegionSizeCache;
+    const sizes = [];
+    for(let r=dataStart; r<=lastDataRow; r++)
+      for(let c=minCol; c<=maxCol; c++){
+        const cell = rows[r] && rows[r].cells[c];
+        if(!cell || hiddenCol(c)) continue;
+        const sz = styles.xf(cell.s).size;
+        if(sz) sizes.push(sz);
+      }
+    return (dataRegionSizeCache = modeOf(sizes));
+  };
+  const isNumCol = c => c === COL_L || c === COL_M || c === COL_N || fieldByCol[c] === 'amount';
   const dataColStyle = c => {
     if(dataColStyleCache.has(c)) return dataColStyleCache.get(c);
     const out = { l:0, r:0, t:0, b:0, bg:null };
@@ -13411,6 +13430,18 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       bgs.add(st.bg || '');
     }
     if(bgs.size === 1) out.bg = [...bgs][0] || null;
+    // 글자 크기도 행마다 제각각이면(어떤 행만 작게 적힌 양식) 한 크기로 맞춘다 — 그 열에서
+    // 가장 많이 쓴 크기, 그게 표 입력 칸 전체에서 흔히 쓰는 크기보다 작으면 그 크기로.
+    // 금액 같은 숫자 열은 그 열에서 가장 큰 크기로 또렷하게.
+    const sizes = [];
+    for(let r=dataStart; r<=lastDataRow; r++){
+      const cell = rows[r] && rows[r].cells[c];
+      const sz = styles.xf(cell ? cell.s : '0').size;
+      if(sz) sizes.push(sz);
+    }
+    const colMode = modeOf(sizes);
+    out.size = isNumCol(c) ? Math.max(colMode || 0, ...sizes, dataRegionSize() || 0) || null
+                           : Math.max(colMode || 0, dataRegionSize() || 0) || null;
     dataColStyleCache.set(c, out);
     return out;
   };
@@ -13467,6 +13498,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
 
     let b = { ...(st.border || { l:0,r:0,t:0,b:0 }) };
     let bg = st.bg;
+    let fontSize = st.size;
     if(isData){
       // 입력 행은 양식의 행마다 테두리·색이 조금씩 달라도(어떤 행만 오른쪽 선이 없거나
       // 몇 칸만 회색으로 칠해져 있거나) 모든 행을 같은 모양으로 맞춘다 — 테두리는 양식
@@ -13474,6 +13506,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       const cs = dataColStyle(c);
       b = { l: Math.max(b.l||0, cs.l), r: Math.max(b.r||0, cs.r), t: Math.max(b.t||0, cs.t), b: Math.max(b.b||0, cs.b) };
       bg = cs.bg;
+      if(cs.size) fontSize = cs.size;
     }
     // 표 맨 오른쪽·왼쪽 칸의 바깥 선은 엑셀에서 옆 칸(인쇄 범위 밖)의 선으로 그어져
     // 있는 경우가 많다. 그 칸은 그리지 않으므로 선만 가져온다.
@@ -13493,11 +13526,12 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     if(st.italic) css.push('font-style:italic');
     if(st.underline) css.push('text-decoration:underline');
     if(st.color) css.push(`color:${st.color}`);
-    if(st.size) css.push(`font-size:${cq(st.size * 96 / 72)}`);
+    if(fontSize) css.push(`font-size:${cq(fontSize * 96 / 72)}`);
     // 글꼴 이름도 양식 그대로 — 없으면 표 전체 기본 글꼴을 쓴다.
     if(st.name) css.push(`font-family:'${String(st.name).replace(/'/g,'')}','Malgun Gothic','Noto Sans KR',sans-serif`);
     // 정렬을 따로 지정하지 않은 칸(일반)은 엑셀처럼 숫자는 오른쪽, 글자는 왼쪽.
-    let ha = st.halign || (isData && (c===COL_L||c===COL_M||c===COL_N||fieldByCol[c]==='amount') ? 'right' : '');
+    // 입력 행의 금액·공급가·부가세 칸은 양식 정렬과 상관없이 늘 오른쪽 정렬.
+    let ha = (isData && isNumCol(c)) ? 'right' : st.halign;
     if(!ha || ha === 'general') ha = /^-?[\d,]+(\.\d+)?$/.test(String(text).trim()) ? 'right' : 'left';
     if(ha === 'center' || ha === 'centerContinuous') css.push('text-align:center');
     else if(ha === 'right') css.push('text-align:right');
