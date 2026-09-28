@@ -382,6 +382,8 @@
   }
   .print-toolbar button.primary{ background:#111; color:#fff; border-color:#111; }
   .print-sheet{ display:flex; flex-direction:column; align-items:center; gap:26px; }
+  /* 법인카드 표: PDF로 마지막으로 내보낸 행 아래 초록 선("여기까지 출력함") */
+  tr.corpcard-pdf-last > td{ border-bottom:3px solid #2e9e5b !important; }
   .doc-page{
     background:#ffffff; color:#000000; font-family:'Noto Sans KR', sans-serif;
     box-shadow:0 0 0 1px #ccc, 0 4px 18px rgba(0,0,0,.15);
@@ -4079,6 +4081,13 @@ function closePrintPreview(){
   if(portraitBtn){ portraitBtn.onclick = null; portraitBtn.style.display = ''; }
   if(landscapeBtn){ landscapeBtn.onclick = null; landscapeBtn.style.display = ''; landscapeBtn.textContent = '건별내역 인쇄 (가로)'; }
   pdfFilenameOverride = null;
+  printExportHook = null;
+}
+// 인쇄 미리보기에서 실제로 "인쇄"나 "PDF로 저장"을 눌렀을 때 한 번 불러줄 함수
+// (법인카드 관리대장: 내보낸 행에 표시를 남기는 데 쓴다). 미리보기를 닫으면 지운다.
+let printExportHook = null;
+function runPrintExportHook(){
+  try{ if(printExportHook) printExportHook(); }catch(e){ console.error(e); }
 }
 
 function computeTotals(c){
@@ -11555,6 +11564,12 @@ function updateCorpCardComputedCells(row){
   if(vat) vat.textContent = sv.vat ? fmtNum(sv.vat) : '';
   refreshCorpCardRowIssues(row);
 }
+function fmtPdfExportedAt(iso){
+  const d = new Date(iso);
+  if(isNaN(d)) return String(iso||'');
+  const p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 // 이 달 PDF 내보내기는 체크한 행이 있으면 그 행만, 없으면 이 달 전체를 내보낸다.
 function corpCardMonthPdfLabel(){
   return corpCardSelectedIds.size ? `🖨 선택 ${corpCardSelectedIds.size}건 PDF로 내보내기` : '🖨 이 달 PDF로 내보내기';
@@ -13703,7 +13718,7 @@ function buildCorpCardMonthPrintHtml(card, month, rows){
     </table>
   </div>`;
 }
-async function openCorpCardMonthPrintPreview(card, month, rows){
+async function openCorpCardMonthPrintPreview(card, month, rows, onExported){
   // 이 카드의 양식 파일이 있으면 그 월 시트 모양 그대로 그린다 — 없거나 읽지
   // 못하면 예전처럼 앱이 만든 단순 표로 대신한다.
   let html = '';
@@ -13724,8 +13739,9 @@ async function openCorpCardMonthPrintPreview(card, month, rows){
   landscapeBtn.style.display = 'none';
   portraitBtn.style.display = '';
   portraitBtn.textContent = '법인카드 관리대장 인쇄 (세로 1장)';
-  portraitBtn.onclick = () => openPrintWindow(html, CORP_CARD_SHEET_PAGE_CSS);
+  portraitBtn.onclick = () => { openPrintWindow(html, CORP_CARD_SHEET_PAGE_CSS); runPrintExportHook(); };
   pdfFilenameOverride = `법인카드_${card.label||card.cardNumber}_${month}_${isoDate(new Date())}`;
+  printExportHook = onExported || null;
 }
 async function renderCorpCardMain(){
   const main = document.getElementById('main');
@@ -13778,6 +13794,12 @@ async function renderCorpCardMain(){
   const noApprovalOnly = noApprovalIds.size > 0 && corpCardNoApprovalOnlyKey === colFilterTabKey;
   const visibleRows = (activeCard ? rows.filter(r=>rowPassesColumnFilters(colFilterTabKey, r)) : rows)
     .filter(r=> !noApprovalOnly || noApprovalIds.has(r.id));
+  // PDF로 내보낸 행(인쇄·PDF 저장을 실제로 누른 행) — 마지막으로 내보낸 행 아래에 초록 선을 긋는다.
+  let lastPdfIdx = -1;
+  visibleRows.forEach((r,i)=>{ if(r.pdfExportedAt) lastPdfIdx = i; });
+  const pdfExportedCount = rows.filter(r=>r.pdfExportedAt).length;
+  let lastPdfRowIdx = -1;
+  rows.forEach((r,i)=>{ if(r.pdfExportedAt) lastPdfRowIdx = i; });
 
   main.innerHTML = `
     <h2 class="section-title">법인카드</h2>
@@ -13855,6 +13877,7 @@ async function renderCorpCardMain(){
       ${rows.length > 1 ? ` · <button id="corpCardSortTimeBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">🕘 승인시각 순으로 정렬</button>` : ''}
       ${fillableThisMonth ? ` · <button id="corpCardFillApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.12); color:var(--gold); font-weight:700; cursor:pointer;">⬇ 승인내역 ${fillableThisMonth}건 리스트에 채우기</button>` : ''}
       ${noApprovalIds.size ? ` · <button id="corpCardNoApprovalBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--neg); background:${noApprovalOnly?'rgba(178,59,46,.28)':'rgba(178,59,46,.12)'}; color:var(--neg); font-weight:700; cursor:pointer;">🔴 여기 적었는데 승인내역에 없는 건 ${noApprovalIds.size}건${noApprovalOnly?' (보는 중)':' 보기'}</button>` : ''}
+      ${pdfExportedCount ? ` · <span style="color:#2e9e5b; font-weight:600;" title="인쇄·PDF 저장을 누른 행에 PDF✓ 표시가 붙고, 마지막으로 내보낸 행 아래에 초록 선이 그어집니다.">📄 PDF 내보냄 ${pdfExportedCount}건 (순번 ${lastPdfRowIdx+1}${rows[lastPdfRowIdx].date?` · ${escapeHtml(rows[lastPdfRowIdx].date.slice(5).replace('-','/'))}`:''}까지)</span>` : ''}
       ${issueCountInMonth ? ` · <span style="color:var(--neg); font-weight:600;">🔴 확인 필요 ${issueCountInMonth}건(빈칸·승인내역 불일치 등)</span>` : ' · ✅ 이번 달 전부 문제 없음'}
     </div>
     <datalist id="corpCardCarNoOptions"><option value="자차"></option></datalist>
@@ -13900,9 +13923,9 @@ async function renderCorpCardMain(){
             const noteLocked = !noteAllowedTypes.includes(String(row.expenseType||'').trim()) && !noteHasStrayContent;
             const lockedStyle = 'background:var(--panel-2); color:var(--muted); cursor:not-allowed;';
             return `
-            <tr data-id="${row.id}" ${isMismatch?`title="${escapeHtml(rowTitle)}"`:''} style="${isMismatch?'background:rgba(220,53,69,.18);':''}">
+            <tr data-id="${row.id}" ${i===lastPdfIdx?'class="corpcard-pdf-last" ':''}${isMismatch?`title="${escapeHtml(rowTitle)}"`:''} style="${isMismatch?'background:rgba(220,53,69,.18);':''}">
               <td style="padding:5px 2px; text-align:center; position:sticky; left:0; background:${isMismatch?'rgba(220,53,69,.18)':'var(--panel-2)'};"><input type="checkbox" class="corpcard-select-box" data-id="${row.id}" ${checked?'checked':''}></td>
-              <td class="corpcard-seq-cell" draggable="true" data-id="${row.id}" title="눌러서 드래그하면 순서를 바꿀 수 있습니다" style="padding:5px 4px; text-align:center; position:sticky; left:26px; background:${isMismatch?'rgba(220,53,69,.18)':'var(--panel-2)'}; cursor:grab; user-select:none;">${i+1}</td>
+              <td class="corpcard-seq-cell" draggable="true" data-id="${row.id}" title="눌러서 드래그하면 순서를 바꿀 수 있습니다" style="padding:5px 4px; text-align:center; position:sticky; left:26px; background:${isMismatch?'rgba(220,53,69,.18)':'var(--panel-2)'}; cursor:grab; user-select:none;">${i+1}${row.pdfExportedAt?`<div class="corpcard-pdf-tag" data-id="${row.id}" title="PDF로 내보냄: ${escapeHtml(fmtPdfExportedAt(row.pdfExportedAt))}\n(누르면 표시를 지웁니다)" style="margin-top:2px; font-size:10px; line-height:1.2; padding:1px 3px; border-radius:4px; background:rgba(46,158,91,.15); color:#2e9e5b; font-weight:700; cursor:pointer; white-space:nowrap;">PDF✓</div>`:''}</td>
               <td style="padding:3px 4px;">
                 <input type="date" class="corpcard-f" data-id="${row.id}" data-field="date" value="${escapeHtml(row.date)}" style="width:100%; ${issues.date?errBorder:''}">
                 ${note('date')}
@@ -14167,11 +14190,31 @@ async function renderCorpCardMain(){
     }
     openCorpCardUsageDocPrint(selectedRows, activeCard);
   });
+  main.querySelectorAll('.corpcard-pdf-tag').forEach(tag=>{
+    tag.addEventListener('click', e=>{
+      e.stopPropagation();
+      const row = rows.find(r=>r.id===tag.dataset.id);
+      if(!row || !confirm('이 행의 "PDF 내보냄" 표시를 지울까요?')) return;
+      delete row.pdfExportedAt;
+      markCorpCardDirty(activeCard.id);
+      flushCorpCardSave();
+      renderCorpCardMain();
+    });
+  });
   const monthPdfBtn = document.getElementById('corpCardMonthPdfBtn');
   if(monthPdfBtn) monthPdfBtn.addEventListener('click', ()=>{
     // 체크한 행이 있으면 그 행만(순서는 표 순서 그대로), 없으면 이 달 전체.
     const picked = rows.filter(r=>corpCardSelectedIds.has(r.id));
-    openCorpCardMonthPrintPreview(activeCard, s.activeMonth, picked.length ? picked : rows);
+    const exportRows = picked.length ? picked : rows;
+    const cardId = activeCard.id;
+    // 인쇄·PDF 저장을 실제로 누르면 내보낸 행에 날짜를 남겨서 "어디까지 출력했는지" 보이게 한다.
+    openCorpCardMonthPrintPreview(activeCard, s.activeMonth, exportRows, ()=>{
+      const at = new Date().toISOString();
+      exportRows.forEach(r=>{ r.pdfExportedAt = at; });
+      markCorpCardDirty(cardId);
+      flushCorpCardSave();
+      if(state.activeTab === 'corpCard' && corpCardState.activeCardId === cardId) renderCorpCardMain();
+    });
   });
   const selectAllBox = document.getElementById('corpCardSelectAllBox');
   if(selectAllBox){
@@ -17845,6 +17888,7 @@ async function savePdf(){
     const c = activeCase;
     const fname = pdfFilenameOverride || (c ? (c.caseType==='profit' ? `사업정산내역서_${c.customer||'무제'}` : `영업비정산_${(c.title||'무제').replace(/[\\/:*?"<>|]/g,'')}`) : '정산문서');
     pdf.save(`${fname}.pdf`);
+    runPrintExportHook();
   }catch(err){
     console.error(err);
     alert('PDF 생성 중 오류가 발생했습니다. 인터넷 연결을 확인하시거나, 인쇄 버튼으로 인쇄 대화상자에서 "PDF로 저장"을 이용해주세요.');
