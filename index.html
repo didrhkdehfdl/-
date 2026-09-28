@@ -13211,12 +13211,38 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   // 오른편에 있는 칸은 이 범위 안이라 그대로 남는다.
   if(!layout.printArea){
     let tableLast = -1;
-    // (1) 표 너비만큼 통째로 병합된 "사용내역" 띠가 있으면 그게 가장 확실하다.
     const bandMerge = merges.find(m => {
       const anchor = rows[m.r1] && rows[m.r1].cells[m.c1];
       return anchor && String(anchor.text||'').replace(/\s/g,'') === '사용내역';
     });
-    if(bandMerge) tableLast = bandMerge.c2;
+    // (1) 머리글 행에서 "날짜"부터 글자가 끊기지 않고 이어지는 마지막 칸(비고)까지.
+    //     "사용내역" 띠는 양식에 따라 표보다 한 칸 넓게 병합돼 있기도 해서, 띠 끝을
+    //     기준으로 삼으면 표 오른쪽에 회색 빈 칸이 한 줄 더 붙어 잘린 것처럼 보였다.
+    if(headerRowNum && rows[headerRowNum]){
+      const hcells = rows[headerRowNum].cells;
+      const startKey = Object.keys(hcells).map(Number).sort((a,b)=>a-b)
+        .find(c => String(hcells[c].text||'').replace(/\s/g,'') === '날짜');
+      if(startKey !== undefined){
+        let c = startKey;
+        while(true){
+          const m = merges.find(mm => mm.r1 <= headerRowNum && mm.r2 >= headerRowNum && mm.c1 === c);
+          const end = m ? m.c2 : c;
+          const anchorTxt = m ? String((rows[m.r1] && rows[m.r1].cells[m.c1] || {}).text||'').trim()
+                              : String((hcells[c] || {}).text||'').trim();
+          if(anchorTxt) tableLast = end;
+          else if(!m){
+            // 글자는 없어도 테두리가 있는 칸(사용처 옆 좁은 칸 등)은 표 안이라 넘어가고,
+            // 테두리도 없는 빈 칸이 나오면 표가 끝난 것이다(그 너머는 입력 도우미 목록).
+            const bd = hcells[c] ? (styles.xf(hcells[c].s).border || {}) : {};
+            if(!(bd.l || bd.r || bd.t || bd.b)) break;
+          }
+          c = end + 1;
+          if(c > layout.maxCol) break;
+          if(bandMerge && c > bandMerge.c2) break;
+        }
+      }
+    }
+    if(tableLast < 0 && bandMerge) tableLast = bandMerge.c2;
     // (2) 없으면 합계행에서 테두리가 그어진 마지막 칸까지.
     if(tableLast < 0 && rows[totalRowNum]){
       Object.keys(rows[totalRowNum].cells).forEach(key=>{
@@ -13240,7 +13266,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       //     있기도 하다(원본에서도 부서장 칸이 표보다 넓다). 그런 칸은 포함하고,
       //     표 줄(데이터 행)에도 글자가 있는 칸(지출내역 목록 같은 입력 도우미)에서
       //     멈춘다 — 예전엔 표 끝에서 잘라서 부서장 칸이 반쯤 잘렸다.
-      const firstTableRow = headerRowNum || dataStart;
+      // "사용내역" 띠 행부터는 표 몸통이라, 결재란처럼 표 위에만 있는 칸을 찾을 때 빼고 본다.
+      const firstTableRow = bandMerge ? bandMerge.r1 : (headerRowNum || dataStart);
       let ext = tableLast;
       while(ext + 1 <= layout.maxCol){
         const c = ext + 1;
@@ -13268,13 +13295,25 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   // 표 오른쪽 끝에 글자가 하나도 없는 칸이 남아 있으면(양식의 여백용 칸) 잘라낸다.
   // 가로 전체를 덮는 띠 병합(예: "사용내역")은 표보다 한 칸 넓게 잡혀 있는 경우가
   // 있어서 내용으로 치지 않는다 — 병합 너비는 아래에서 표 끝에 맞춰 줄인다.
+  // 띠 병합인지는 "표의 첫 글자 칸(보통 날짜 열)이나 그보다 왼쪽에서 시작하는지"로 본다 —
+  // 양식 왼쪽에 글자 없는 틀 칸(A열)이 있으면 띠가 minCol이 아니라 그 다음 칸에서
+  // 시작해서, 예전엔 띠로 못 알아보고 표보다 한 칸 넓은 빈 칸(회색 머리글·합계 칸만
+  // 삐져나온 모양)이 오른쪽 끝에 남아 잘린 것처럼 보였다.
+  let firstTextCol = maxCol;
+  for(let r=1; r<=lastRowNum; r++){
+    if(!rows[r]) continue;
+    Object.keys(rows[r].cells).forEach(key=>{
+      const c = Number(key);
+      if(c >= minCol && c < firstTextCol && String(rows[r].cells[c].text||'').trim()) firstTextCol = c;
+    });
+  }
   while(maxCol > minCol){
     let hasText = false;
     for(let r=1; r<=lastRowNum && !hasText; r++){
       const cell = rows[r] && rows[r].cells[maxCol];
       if(cell && String(cell.text||'').trim()){ hasText = true; break; }
       const mc = maxCol;
-      if(merges.some(m => m.c1 > minCol && m.c1 <= mc && m.c2 >= mc && m.r1 <= r && m.r2 >= r
+      if(merges.some(m => m.c1 > firstTextCol && m.c1 <= mc && m.c2 >= mc && m.r1 <= r && m.r2 >= r
           && rows[m.r1] && rows[m.r1].cells[m.c1] && String(rows[m.r1].cells[m.c1].text||'').trim())) hasText = true;
     }
     if(hasText) break;
