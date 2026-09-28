@@ -11555,6 +11555,10 @@ function updateCorpCardComputedCells(row){
   if(vat) vat.textContent = sv.vat ? fmtNum(sv.vat) : '';
   refreshCorpCardRowIssues(row);
 }
+// 이 달 PDF 내보내기는 체크한 행이 있으면 그 행만, 없으면 이 달 전체를 내보낸다.
+function corpCardMonthPdfLabel(){
+  return corpCardSelectedIds.size ? `🖨 선택 ${corpCardSelectedIds.size}건 PDF로 내보내기` : '🖨 이 달 PDF로 내보내기';
+}
 // 선택 상태가 바뀌었을 때 화면에서 실제로 달라지는 부분만 갱신한다.
 function updateCorpCardSelectionUi(){
   const btn = document.getElementById('corpCardPrintDocBtn');
@@ -11562,6 +11566,8 @@ function updateCorpCardSelectionUi(){
     btn.textContent = `🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력`;
     btn.disabled = corpCardSelectedIds.size === 0;
   }
+  const pdfBtn = document.getElementById('corpCardMonthPdfBtn');
+  if(pdfBtn) pdfBtn.textContent = corpCardMonthPdfLabel();
   const all = document.getElementById('corpCardSelectAllBox');
   if(all){
     const boxes = [...document.querySelectorAll('.corpcard-select-box')];
@@ -13765,7 +13771,7 @@ async function renderCorpCardMain(){
       <button id="corpCardSaveBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:700;">✅ 저장됨</button>
       ${s.approvalEntries.length ? `<button id="corpCardApprovalViewBtn" style=" font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--sky); background:rgba(90,155,213,.1); color:var(--sky); cursor:pointer; font-weight:600;">💳 이 카드 승인내역 보기</button>` : ''}
       <button id="corpCardPrintDocBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>
-      <button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">🖨 이 달 PDF로 내보내기</button>
+      <button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">${corpCardMonthPdfLabel()}</button>
       <button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
     </div>
     <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">
@@ -14089,7 +14095,11 @@ async function renderCorpCardMain(){
     openCorpCardUsageDocPrint(selectedRows, activeCard);
   });
   const monthPdfBtn = document.getElementById('corpCardMonthPdfBtn');
-  if(monthPdfBtn) monthPdfBtn.addEventListener('click', ()=> openCorpCardMonthPrintPreview(activeCard, s.activeMonth, rows));
+  if(monthPdfBtn) monthPdfBtn.addEventListener('click', ()=>{
+    // 체크한 행이 있으면 그 행만(순서는 표 순서 그대로), 없으면 이 달 전체.
+    const picked = rows.filter(r=>corpCardSelectedIds.has(r.id));
+    openCorpCardMonthPrintPreview(activeCard, s.activeMonth, picked.length ? picked : rows);
+  });
   const selectAllBox = document.getElementById('corpCardSelectAllBox');
   if(selectAllBox){
     selectAllBox.checked = rows.length>0 && rows.every(r=>corpCardSelectedIds.has(r.id));
