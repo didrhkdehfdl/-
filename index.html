@@ -10166,6 +10166,10 @@ function cardMasterLinkHtml(t){
   if(!link) return btn('cardmaster-link-pick', '🔗 PC 엑셀 파일 연결', 'var(--sky)', '내 PC(W: 같은 네트워크 드라이브 포함)의 이 통합본 파일을 연결하면, 다운로드 없이 그 파일에 바로 최신 데이터를 채워 저장합니다. PC에서 엑셀 도우미가 실행돼 있어야 합니다.');
   return `<span style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; padding:3px 6px; border-radius:8px; border:1px dashed var(--sky); max-width:100%;">
       <span style="font-size:11px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:320px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}</span>
+      <select class="cardmaster-link-month" data-id="${t.id}" title="어느 달 시트를 채울지" style="padding:7px 8px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px;">
+        ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===new Date().getMonth()+1?'selected':''}>${m}월${m===new Date().getMonth()+1?' (이번 달)':''}</option>`).join('')}
+        <option value="all">전체 달</option>
+      </select>
       ${btn('cardmaster-link-save', '💾 최신 데이터로 PC 파일 갱신', '#2e9e5b', '연결된 PC 파일의 지금 내용을 바탕으로 카드 블록만 법인카드 탭의 최신 내역으로 채워 그 파일에 저장합니다. 엑셀에 열려 있으면 잠깐 닫았다 다시 엽니다. 덮어쓰기 전 원본은 이 PC에 자동 백업됩니다.')}
       ${btn('cardmaster-link-pick', '바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
       ${btn('cardmaster-link-unlink', '✕', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
@@ -10188,6 +10192,9 @@ function bindCardMasterLinkButtons(rerender){
   document.querySelectorAll('.cardmaster-link-save').forEach(btn=>btn.addEventListener('click', async ()=>{
     const t = tOf(btn); if(!t) return;
     const key = cardMasterLinkKey(t.id);
+    const sel = document.querySelector(`.cardmaster-link-month[data-id="${t.id}"]`);
+    const onlyMonth = sel && sel.value !== 'all' ? Number(sel.value) : null;
+    if(!confirm(`법인카드 탭의 ${onlyMonth ? onlyMonth+'월' : '모든 달'} 내역을 "${getLinkedFile(key).name}" 파일의 ${onlyMonth ? onlyMonth+'월 시트' : '각 월 시트'}에 채워 넣고 저장할까요?\n(그 달 시트의 카드 블록만 바뀌고, 다른 달·다른 부분은 그대로입니다. 원본은 자동 백업됩니다)`)) return;
     const label = btn.textContent; btn.disabled = true; btn.textContent = 'PC 파일 읽는 중…';
     try{
       await flushCorpCardSave({ silent:true });
@@ -10197,6 +10204,7 @@ function bindCardMasterLinkButtons(rerender){
         btn.textContent = `처리중… (${total ? Math.round(done/total*100) : 0}%)`;
       }, {
         baseBuffer,
+        onlyMonth,
         deliver: async (buf) => {
           btn.textContent = 'PC 파일에 저장 중…';
           const r = await writeLinkedFileBytes(key, buf);
@@ -10239,6 +10247,9 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
       if(n && (rows||[]).some(r=>r.date)) monthsWithData.add(n);
     });
   });
+  // 한 달만 채우기로 했으면(PC 파일 갱신에서 달을 고른 경우) 그 달만 다룬다.
+  const onlyMonth = opts && opts.onlyMonth;
+  if(onlyMonth){ [...monthsWithData].forEach(n=>{ if(n !== onlyMonth) monthsWithData.delete(n); }); }
   const missingSheets = [...monthsWithData].filter(n=>!sheetMonthNums.has(n)).sort((a,b)=>a-b);
   // 없는 달은 이미 있는 달 시트를 복제해서 빈 달로 만들어 넣는다(가장 가까운
   // 이전 달을 본으로 삼고, 없으면 가장 마지막 달).
@@ -10260,9 +10271,14 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
     createdSheets.push(label);
   }
   const stillMissing = [...monthsWithData].filter(n=>!sheetMonthNums.has(n)).sort((a,b)=>a-b);
-  const totalSteps = monthSheets.length * corpCardState.cards.length;
+  const totalSteps = (onlyMonth ? monthSheets.filter(l=>monthNumFromLabel(l)===onlyMonth).length : monthSheets.length) * corpCardState.cards.length;
   let doneSteps = 0;
-  for(const sheetLabel of monthSheets){
+  const targetSheets = onlyMonth ? monthSheets.filter(l=>monthNumFromLabel(l)===onlyMonth) : monthSheets;
+  if(onlyMonth && !targetSheets.length){
+    alert(`${onlyMonth}월에 법인카드 탭 내역이 없거나, 통합본에 ${onlyMonth}월 시트가 없어 채울 곳이 없습니다.`);
+    return;
+  }
+  for(const sheetLabel of targetSheets){
     const mnum = monthNumFromLabel(sheetLabel);
     for(const card of corpCardState.cards){
       doneSteps++;
