@@ -10213,6 +10213,7 @@ function bindCardMasterLinkButtons(rerender){
       const r = await excelHelperCall('/cardmaster/write', { path: getLinkedFile(key).path, months }, 10*60*1000);
       const lines = [];
       if((r.created||[]).length) lines.push(`※ 통합본에 없던 ${r.created.join('·')} 시트를 바로 앞 달 시트를 복사해 새로 만들었습니다(카드 블록 입력칸은 비우고 채움).`);
+      if((r.newBlocks||[]).length) lines.push('※ 통합본에 블록이 없던 카드는 맨 마지막 카드 블록 바로 아래에 새 블록을 만들어 채웠습니다(머리글·소계 줄은 없으니 필요하면 엑셀에서 정리해주세요):\n  ' + r.newBlocks.join('\n  '));
       if((r.report||[]).length) lines.push('채운 곳:\n  ' + r.report.join('\n  '));
       if((r.skipped||[]).length) lines.push('블록 칸보다 입력이 많아 넣지 못한 곳:\n  ' + r.skipped.join('\n  '));
       if((r.noBlock||[]).length) lines.push(`통합본에 해당 카드 블록이 없어 건너뛴 곳 ${r.noBlock.length}건:\n  ` + r.noBlock.slice(0,10).join('\n  ') + (r.noBlock.length>10 ? `\n  …외 ${r.noBlock.length-10}건` : ''));
@@ -19205,7 +19206,7 @@ function Handle-CardMasterWrite($body){
   try {
     if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
     Invoke-Retry { $xl.ScreenUpdating = $false } | Out-Null
-    $report = @(); $created = @(); $skipped = @(); $noBlock = @(); $applied = 0
+    $report = @(); $created = @(); $skipped = @(); $noBlock = @(); $newBlocks = @(); $applied = 0
     foreach($m in @($body.months)){
       $num = [int]$m.num
       # 이 달 시트 찾기 — 이름이 딱 "N월"/"N 월"인 시트를 먼저, 없으면 "N월"이 들어간 시트
@@ -19240,6 +19241,24 @@ function Handle-CardMasterWrite($body){
       foreach($c in @($m.cards)){
         $last4 = [string]$c.last4
         $rows = @($c.rows)
+        if(-not $blocks.ContainsKey($last4) -and $blocks.Count -gt 0 -and $rows.Count -gt 0){
+          # 이 카드 블록이 없으면 새로 만든다 — 시트의 맨 마지막 카드 블록 바로 아래에, 그 블록 행의
+          # 서식을 복사해 필요한 행 수만큼 넣고 R열에 이 카드 끝 4자리를 적는다. 기존 블록의 소계
+          # 수식 범위 밖에 들어가므로 다른 카드 합계에는 섞이지 않는다.
+          $maxRow = 0
+          foreach($k in $blocks.Keys){ foreach($br in $blocks[$k]){ if([int]$br -gt $maxRow){ $maxRow = [int]$br } } }
+          $srcR = $ws.Range("R$maxRow").Value2
+          for($k=0; $k -lt $rows.Count; $k++){
+            $at = $maxRow + 1 + $k
+            Invoke-Retry { [void]$ws.Rows.Item($maxRow).Copy(); [void]$ws.Rows.Item($at).Insert() } | Out-Null
+            Invoke-Retry { [void]$ws.Range("B${at}:Q${at}").ClearContents() } | Out-Null
+            $rv = if($srcR -is [double]){ [double]$last4 } else { $last4 }
+            Invoke-Retry { $ws.Range("R$at").Value2 = $rv } | Out-Null
+          }
+          try { $xl.CutCopyMode = $false } catch {}
+          $blocks = Get-CardBlockRows $ws
+          $newBlocks += "$($ws.Name) · 카드 $last4 ($($maxRow + 1)~$($maxRow + $rows.Count)행)"
+        }
         if(-not $blocks.ContainsKey($last4)){
           # 왜 못 찾았는지 알 수 있게, 시트 어디에 그 4자리가 적혀 있는지 찾아 함께 알려준다.
           $hint = ''
@@ -19293,7 +19312,7 @@ function Handle-CardMasterWrite($body){
       }
     }
     if($applied -gt 0 -or $created.Count -gt 0){ Invoke-Retry { $wb.Save() } | Out-Null }
-    return @{ ok=$true; applied=$applied; report=$report; created=$created; skipped=$skipped; noBlock=$noBlock; wasOpen=(-not $openedHere) }
+    return @{ ok=$true; applied=$applied; report=$report; created=$created; skipped=$skipped; noBlock=$noBlock; newBlocks=$newBlocks; wasOpen=(-not $openedHere) }
   } finally {
     try { $xl.ScreenUpdating = $true } catch {}
     if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
