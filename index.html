@@ -12503,6 +12503,88 @@ function saveCorpCardRows(cardId){
   );
   return corpCardSaveQueue;
 }
+// ---- 내 PC의 엑셀 파일 연결 (크롬·엣지의 File System Access) ----
+// 파일을 한 번 골라두면 그 "파일 손잡이"를 이 브라우저(IndexedDB)에 보관해 두고, 이후엔
+// 다시 고르지 않고 버튼 하나로 읽거나(불러오기) 써넣는다(저장). W: 같은 네트워크 드라이브
+// 파일도 된다. 브라우저 보안상 창을 새로 열면 첫 사용 때 "허용" 확인이 한 번 뜬다.
+// 손잡이는 이 PC·이 브라우저에만 남는다(다른 PC에서는 그 PC에서 따로 연결).
+const LINKED_FILE_DB = 'linked-files-v1';
+const linkedFileCache = new Map(); // key -> FileSystemFileHandle
+function linkedFilesSupported(){
+  try{ return typeof window.showOpenFilePicker === 'function' && window.self === window.top; }catch(e){ return false; }
+}
+function openLinkedFileDb(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(LINKED_FILE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('handles');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function linkedFileDbOp(mode, fn){
+  const db = await openLinkedFileDb();
+  try{
+    return await new Promise((resolve, reject)=>{
+      const tx = db.transaction('handles', mode);
+      const req = fn(tx.objectStore('handles'));
+      tx.oncomplete = () => resolve(req && req.result);
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}
+// 화면을 그리기 전에 한 번 불러둔다 — 버튼을 누른 순간 바로 권한 요청을 해야
+// 브라우저가 "사용자가 누른 것"으로 인정해서 허용 창을 띄워준다.
+async function loadLinkedFileHandles(){
+  if(!linkedFilesSupported()) return;
+  try{
+    const keys = await linkedFileDbOp('readonly', st => st.getAllKeys());
+    for(const k of (keys||[])){
+      const h = await linkedFileDbOp('readonly', st => st.get(k));
+      if(h) linkedFileCache.set(k, h);
+    }
+  }catch(e){ console.warn('연결된 파일 정보를 읽지 못했습니다', e); }
+}
+function getLinkedFile(key){ return linkedFileCache.get(key) || null; }
+async function pickLinkedFile(key){
+  const [h] = await window.showOpenFilePicker({
+    multiple:false,
+    types:[{ description:'엑셀 파일', accept:{ 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx'], 'application/vnd.ms-excel':['.xls'] } }],
+  });
+  linkedFileCache.set(key, h);
+  try{ await linkedFileDbOp('readwrite', st => st.put(h, key)); }catch(e){ console.warn(e); }
+  return h;
+}
+async function unlinkFile(key){
+  linkedFileCache.delete(key);
+  try{ await linkedFileDbOp('readwrite', st => st.delete(key)); }catch(e){ console.warn(e); }
+}
+async function ensureLinkedFilePermission(h, write){
+  const opts = { mode: write ? 'readwrite' : 'read' };
+  if((await h.queryPermission(opts)) === 'granted') return true;
+  return (await h.requestPermission(opts)) === 'granted';
+}
+async function readLinkedFile(key){
+  const h = getLinkedFile(key);
+  if(!h) throw new Error('연결된 파일이 없습니다.');
+  if(!(await ensureLinkedFilePermission(h, false))) throw new Error('파일 읽기를 허용하지 않았습니다.');
+  try{ return await h.getFile(); }
+  catch(e){ throw new Error(`"${h.name}" 파일을 찾을 수 없습니다. 옮겨졌거나 이름이 바뀌었으면 다시 연결해주세요.`); }
+}
+async function writeLinkedFile(key, blob){
+  const h = getLinkedFile(key);
+  if(!h) throw new Error('연결된 파일이 없습니다.');
+  if(!(await ensureLinkedFilePermission(h, true))) throw new Error('파일 저장을 허용하지 않았습니다.');
+  let w;
+  try{ w = await h.createWritable(); }
+  catch(e){ throw new Error(`"${h.name}" 파일에 쓸 수 없습니다. 엑셀에서 이 파일이 열려 있으면 닫고 다시 시도해주세요.`); }
+  try{ await w.write(blob); await w.close(); }
+  catch(e){ try{ await w.abort(); }catch(e2){} throw new Error(`"${h.name}" 파일 저장 중 오류가 났습니다. 엑셀에서 열려 있으면 닫고 다시 시도해주세요.`); }
+}
+function linkedFileErrorMessage(e){
+  if(e && e.name === 'AbortError') return '';
+  return (e && e.message) || String(e);
+}
+
 async function saveCorpCardTemplate(cardId, buffer, fileName, months){
   const savedAt = new Date().toISOString();
   await saveFileToStorage('corp-card-template-b64:'+cardId, arrayBufferToBase64(buffer), 30000);
@@ -12575,12 +12657,26 @@ async function handleCorpCardAdd(){
   input.addEventListener('change', async (e)=>{
     const file = e.target.files[0];
     if(!file) return;
+    await importCorpCardFile(file);
+  });
+  input.click();
+}
+// 법인카드 관리대장 엑셀 파일(업로드했거나 PC에 연결해 둔 파일)을 읽어 카드·내역을 갱신한다.
+// expectCardId를 주면 그 카드의 파일이 맞는지(카드번호) 확인하고, 다르면 멈춘다.
+async function importCorpCardFile(file, expectCardId){
     try{
       await loadXlsxLib();
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type:'array', cellDates:true });
       const meta = parseCorpCardWorkbookMeta(wb);
-      if(meta.error){ alert(meta.error); return; }
+      if(meta.error){ alert(meta.error); return false; }
+      if(expectCardId){
+        const card = corpCardState.cards.find(c => c.id === expectCardId);
+        if(card && card.cardNumber !== meta.cardNumber){
+          alert(`연결된 파일의 카드번호(${meta.cardNumber})가 이 카드(${card.cardNumber})와 다릅니다. 다른 카드의 파일이면 "연결 해제" 후 맞는 파일로 다시 연결해주세요.`);
+          return false;
+        }
+      }
       // 같은 카드번호로 이미 등록되어 있으면(같은 카드 파일을 다시 올린 경우)
       // 새 카드로 중복 추가하지 않고 기존 카드를 그대로 갱신한다 — 안 그러면
       // 올릴 때마다 똑같은 카드가 여러 개 쌓이고, 예전에 잘못 파싱됐던
@@ -12602,12 +12698,12 @@ async function handleCorpCardAdd(){
       await fixCorpCard2025Dates();
       recomputeCorpCardMismatches();
       renderCorpCardMain();
+      return id;
     }catch(err){
       console.error(err);
       alert('파일을 읽지 못했습니다. "N 월" 형식의 월별 시트가 있는 법인카드 관리대장 파일인지 확인해주세요.');
+      return false;
     }
-  });
-  input.click();
 }
 // 체크된 행들을 "법인카드 사용내역서" 서식에 채운다. 원본은 한글(.hwp)
 // 이진 파일이라 브라우저에서 그 파일 자체를 안전하게 편집할 방법은 없어서,
@@ -13868,6 +13964,7 @@ async function renderCorpCardMain(){
       <button id="corpCardPrintDocBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>
       <button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">${corpCardMonthPdfLabel()}</button>
       <button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
+      ${corpCardLinkedFileHtml(activeCard)}
     </div>
     <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">
       ${escapeHtml(s.activeMonth)} · 총 ${rows.length}건${visibleRows.length!==rows.length?` (필터로 ${visibleRows.length}건 표시 중)`:''} · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다
@@ -14104,6 +14201,7 @@ async function renderCorpCardMain(){
       if(result && result.ok===false) notifyRowSaveFailure(result.reason);
     });
   });
+  bindCorpCardLinkedFileButtons(activeCard);
   const exportBtn = document.getElementById('corpCardExportBtn');
   if(exportBtn) exportBtn.addEventListener('click', async ()=>{ await exportCorpCardToExcel(activeCard.id); });
   // 지금 보고 있는 카드·달의 승인내역을 따로 펼쳐본다.
@@ -14424,6 +14522,85 @@ async function renderCorpCardMain(){
       await saveCorpCardRows(activeCard.id);
       renderCorpCardMain();
     });
+  });
+}
+// ---- 법인카드: PC의 관리대장 엑셀 파일과 연결 ----
+const corpCardLinkKey = cardId => 'corpcard:' + cardId;
+function linkedFileBtnHtml(id, label, color, title){
+  return `<button id="${id}" title="${escapeHtml(title)}" style="font-size:12.5px; padding:9px 14px; border-radius:8px; border:1px solid ${color}; background:transparent; color:${color}; cursor:pointer; font-weight:600;">${label}</button>`;
+}
+function corpCardLinkedFileHtml(card){
+  if(!card || !linkedFilesSupported()) return '';
+  const h = getLinkedFile(corpCardLinkKey(card.id));
+  if(!h) return linkedFileBtnHtml('corpCardLinkFileBtn', '🔗 PC 엑셀 파일 연결', 'var(--sky)', '내 PC(네트워크 드라이브 포함)에 있는 이 카드의 관리대장 엑셀 파일을 연결해 두면, 다운로드 없이 바로 그 파일에 저장하고 불러올 수 있습니다.');
+  return `<span style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; padding:3px 6px; border-radius:8px; border:1px dashed var(--sky);">
+      <span style="font-size:11.5px; color:var(--sky);" title="이 PC·이 브라우저에 연결된 파일">🔗 ${escapeHtml(h.name)}</span>
+      ${linkedFileBtnHtml('corpCardLinkedSaveBtn', '💾 PC 엑셀에 저장', '#2e9e5b', '앱에 적은 내역을 연결된 엑셀 파일에 바로 써 넣습니다. 파일의 다른 부분(다른 시트·서식)은 그대로 두고, 내역이 있는 달의 입력 칸만 앱 내용으로 바꿉니다.')}
+      ${linkedFileBtnHtml('corpCardLinkedLoadBtn', '🔄 PC 엑셀에서 불러오기', 'var(--gold)', '연결된 엑셀 파일의 최신 내용을 앱으로 가져옵니다. 이 카드의 앱 내역이 파일 내용으로 바뀝니다.')}
+      <button id="corpCardUnlinkFileBtn" title="연결 해제" style="font-size:11px; padding:4px 7px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">✕</button>
+    </span>`;
+}
+function bindCorpCardLinkedFileButtons(card){
+  if(!card) return;
+  const key = corpCardLinkKey(card.id);
+  const linkBtn = document.getElementById('corpCardLinkFileBtn');
+  if(linkBtn) linkBtn.addEventListener('click', async ()=>{
+    try{ await pickLinkedFile(key); renderCorpCardMain(); }
+    catch(e){ const m = linkedFileErrorMessage(e); if(m) alert(m); }
+  });
+  const unlinkBtn = document.getElementById('corpCardUnlinkFileBtn');
+  if(unlinkBtn) unlinkBtn.addEventListener('click', async ()=>{
+    if(!confirm('이 카드와 PC 엑셀 파일의 연결을 해제할까요? (파일 자체는 그대로 남습니다)')) return;
+    await unlinkFile(key); renderCorpCardMain();
+  });
+  const saveBtn = document.getElementById('corpCardLinkedSaveBtn');
+  if(saveBtn) saveBtn.addEventListener('click', async ()=>{
+    const label = saveBtn.textContent;
+    try{
+      // 저장할 땐 PC 파일의 지금 내용을 바탕으로 채운다 — 엑셀에서 직접 고친 다른 부분이
+      // 앱에 보관된 옛 양식으로 되돌아가지 않게. 허용 창은 버튼을 누른 직후에만 띄울 수
+      // 있어서, 읽기·쓰기 권한을 맨 먼저 한 번에 받는다.
+      const h = getLinkedFile(key);
+      if(!h || !(await ensureLinkedFilePermission(h, true))){ alert('파일 저장을 허용하지 않았습니다.'); return; }
+      const file = await readLinkedFile(key);
+      saveBtn.textContent = '저장 중…'; saveBtn.disabled = true;
+      await flushCorpCardSave({ silent:true });
+      const rowsByMonth = corpCardState.rowsByCard[card.id] || {};
+      const monthsWithData = Object.keys(rowsByMonth).filter(m => (rowsByMonth[m]||[]).length>0);
+      if(!monthsWithData.length){ alert('입력된 내역이 없습니다.'); return; }
+      const buf = await file.arrayBuffer();
+      await loadXlsxLib();
+      const meta = parseCorpCardWorkbookMeta(XLSX.read(buf, { type:'array' }));
+      if(meta.error){ alert('연결된 파일이 법인카드 관리대장 형식이 아닙니다: ' + meta.error); return; }
+      if(meta.cardNumber !== card.cardNumber){
+        alert(`연결된 파일의 카드번호(${meta.cardNumber})가 이 카드(${card.cardNumber})와 달라서 저장하지 않았습니다. 맞는 파일로 다시 연결해주세요.`);
+        return;
+      }
+      const result = await patchCorpCardTemplate(buf, monthsWithData, rowsByMonth);
+      if(result.error){ alert('엑셀을 만들지 못했습니다: ' + result.error); return; }
+      await writeLinkedFile(key, result.blob);
+      // 앱에 보관하는 양식도 방금 저장한 파일로 맞춰 둔다(인쇄 모양이 PC 파일과 같게).
+      try{
+        const newBuf = await result.blob.arrayBuffer();
+        const newMeta = parseCorpCardWorkbookMeta(XLSX.read(newBuf, { type:'array' }));
+        await saveCorpCardTemplate(card.id, newBuf, getLinkedFile(key).name, newMeta.months || meta.months);
+      }catch(e){ console.warn('앱 양식 갱신 실패', e); }
+      alert(`"${getLinkedFile(key).name}" 파일에 저장했습니다.`);
+    }catch(e){
+      const m = linkedFileErrorMessage(e); if(m) alert(m);
+    }finally{
+      saveBtn.textContent = label; saveBtn.disabled = false;
+    }
+  });
+  const loadBtn = document.getElementById('corpCardLinkedLoadBtn');
+  if(loadBtn) loadBtn.addEventListener('click', async ()=>{
+    try{
+      const file = await readLinkedFile(key);
+      if(!confirm(`"${file.name}" 파일 내용으로 이 카드의 앱 내역을 바꿀까요?\n앱에만 적고 아직 엑셀에 저장하지 않은 내역은 사라집니다.`)) return;
+      await importCorpCardFile(file, card.id);
+    }catch(e){
+      const m = linkedFileErrorMessage(e); if(m) alert(m);
+    }
   });
 }
 async function exportCorpCardToExcel(cardId){
@@ -15561,6 +15738,7 @@ function renderUploadMode(){
     ${(st.rows.length && !st.workbook) ? `<div style="font-size:12px; color:var(--gold); margin-bottom:10px;">📌 이전에 불러온 "${escapeHtml(st.fileName)}" (${escapeHtml(st.sheetName)} 시트) 결과가 저장되어 그대로 표시되고 있습니다. 새로 갱신하려면 파일을 다시 업로드해주세요.</div>` : ''}
     <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
       <input type="file" id="importXlsxFile" accept=".xlsx,.xls" style="font-size:13px; color:var(--muted);">
+      ${importLinkedFileHtml()}
       ${st.sheetNames.length ? `
         <label style="font-size:12.5px; color:var(--muted);">시트:</label>
         <select id="importSheetSelect" style="padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text);">${sheetOptions}</select>
@@ -15615,6 +15793,7 @@ function renderUploadMode(){
   `;
 
   document.getElementById('importXlsxFile').addEventListener('change', handleImportFile);
+  bindImportLinkedFileButtons();
   const sheetSel = document.getElementById('importSheetSelect');
   if(sheetSel) sheetSel.addEventListener('change', ()=>{
     if(!importState.workbook){
@@ -15967,9 +16146,43 @@ function renderImportRowsOnly(){
   renderImportMain();
 }
 
+// ---- 사급 실적리스트: PC의 실적리스트 엑셀 파일과 연결(불러오기 전용) ----
+const IMPORT_LINK_KEY = 'import:sagup';
+function importLinkedFileHtml(){
+  if(!linkedFilesSupported()) return '';
+  const h = getLinkedFile(IMPORT_LINK_KEY);
+  if(!h) return linkedFileBtnHtml('importLinkFileBtn', '🔗 PC 엑셀 파일 연결', 'var(--sky)', '내 PC(네트워크 드라이브 포함)의 사급 실적리스트 파일을 연결해 두면, 다음부터는 파일을 고르지 않고 버튼 하나로 최신 내용을 불러옵니다.');
+  return `<span style="display:inline-flex; align-items:center; gap:6px; padding:3px 6px; border-radius:8px; border:1px dashed var(--sky);">
+      <span style="font-size:11.5px; color:var(--sky);" title="이 PC·이 브라우저에 연결된 파일">🔗 ${escapeHtml(h.name)}</span>
+      ${linkedFileBtnHtml('importLinkedLoadBtn', '🔄 PC 엑셀에서 불러오기', 'var(--gold)', '연결된 실적리스트 파일의 지금 내용을 다시 읽어옵니다.')}
+      <button id="importUnlinkFileBtn" title="연결 해제" style="font-size:11px; padding:4px 7px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">✕</button>
+    </span>`;
+}
+function bindImportLinkedFileButtons(){
+  const loadFromLink = async () => {
+    try{ await loadImportWorkbookFile(await readLinkedFile(IMPORT_LINK_KEY)); }
+    catch(e){ const m = linkedFileErrorMessage(e); if(m) alert(m); }
+  };
+  const linkBtn = document.getElementById('importLinkFileBtn');
+  if(linkBtn) linkBtn.addEventListener('click', async ()=>{
+    try{ await pickLinkedFile(IMPORT_LINK_KEY); }
+    catch(e){ const m = linkedFileErrorMessage(e); if(m) alert(m); return; }
+    await loadFromLink();
+  });
+  const loadBtn = document.getElementById('importLinkedLoadBtn');
+  if(loadBtn) loadBtn.addEventListener('click', loadFromLink);
+  const unlinkBtn = document.getElementById('importUnlinkFileBtn');
+  if(unlinkBtn) unlinkBtn.addEventListener('click', async ()=>{
+    if(!confirm('실적리스트 파일 연결을 해제할까요? (파일 자체와 불러온 내용은 그대로 남습니다)')) return;
+    await unlinkFile(IMPORT_LINK_KEY); renderImportMain();
+  });
+}
 async function handleImportFile(e){
   const file = e.target.files[0];
   if(!file) return;
+  await loadImportWorkbookFile(file);
+}
+async function loadImportWorkbookFile(file){
   importState = { ...importState, fileName:file.name, sheetNames:[], sheetName:'', rows:[], search:'', loading:true, error:'', selected:new Set() };
   renderImportMain();
   try{
@@ -17969,6 +18182,7 @@ document.getElementById('pdfSaveBtn').addEventListener('click', savePdf);
 let manualRowsSub = null;
 let importRowsSub = null;
 async function init(){
+  await loadLinkedFileHandles();
   state.cases = await loadIndex();
   // 실적리스트(엑셀 업로드/직접 입력)는 여러 명이 같이 쓰는 핵심 표라 실시간
   // 구독으로 불러온다 — 다른 사람이 값을 고치면 이 화면도 자동으로 따라간다.
