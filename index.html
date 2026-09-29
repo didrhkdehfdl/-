@@ -9928,7 +9928,12 @@ async function addMasterMonthSheet(masterArrayBuffer, sourceLabel, newLabel){
   const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
   return { blob };
 }
+// 여러 카드를 한 번에 채울 수 있다: cardLast4 자리에 [{ last4, entryBlocks }] 배열을 주면 파일을 한 번만
+// 풀고 한 번만 다시 묶는다(카드마다 파일 전체를 풀고 묶으면 카드·달이 많을 때 몇 분씩 걸렸다).
+// 배열로 부르면 결과는 { blob, results:[{ last4, error?, blockSize?, needed? }] }.
 async function patchFile3CardBlock(masterArrayBuffer, sheetLabel, cardLast4, entryBlocks){
+  const batch = Array.isArray(cardLast4);
+  const items = batch ? cardLast4 : [{ last4: cardLast4, entryBlocks }];
   await loadJSZipLib();
   const zip = await window.JSZip.loadAsync(masterArrayBuffer);
   const parser = new DOMParser();
@@ -10005,13 +10010,29 @@ async function patchFile3CardBlock(masterArrayBuffer, sheetLabel, cardLast4, ent
     }
   }
 
-  const blockRows = rowEls.filter(r => cellText(r,'R').trim() === String(cardLast4).trim());
+  // R열(카드 끝 4자리)로 카드 블록 행들을 한 번에 모아 둔다.
+  const rowsByLast4 = new Map();
+  rowEls.forEach(r => {
+    const t = cellText(r,'R').trim();
+    if(!t) return;
+    if(!rowsByLast4.has(t)) rowsByLast4.set(t, []);
+    rowsByLast4.get(t).push(r);
+  });
+  const results = [];
+  let changed = false;
+  for(const item of items){
+  const cardLast4 = item.last4, entryBlocks = item.entryBlocks;
+  const blockRows = rowsByLast4.get(String(cardLast4).trim()) || [];
   if(blockRows.length === 0){
-    return { error: `"${sheetLabel}" 시트에서 카드 ${cardLast4} 블록을 찾지 못했습니다.` };
+    results.push({ last4: cardLast4, error: `"${sheetLabel}" 시트에서 카드 ${cardLast4} 블록을 찾지 못했습니다.` });
+    continue;
   }
   if(entryBlocks.length > blockRows.length){
-    return { error:'overflow', blockSize: blockRows.length, needed: entryBlocks.length };
+    results.push({ last4: cardLast4, error:'overflow', blockSize: blockRows.length, needed: entryBlocks.length });
+    continue;
   }
+  changed = true;
+  results.push({ last4: cardLast4 });
 
   for(let i=0;i<entryBlocks.length;i++){
     const rowEl = blockRows[i];
@@ -10058,6 +10079,11 @@ async function patchFile3CardBlock(masterArrayBuffer, sheetLabel, cardLast4, ent
       cEl.removeAttribute('t');
     });
   }
+  }
+
+  // 한 장만 부른 예전 방식은 결과를 예전 모양 그대로 돌려준다.
+  if(!batch && results[0] && results[0].error) return results[0];
+  if(batch && !changed) return { results };
 
   zip.file(sheetPath, serializer.serializeToString(sheetDoc));
 
@@ -10071,7 +10097,7 @@ async function patchFile3CardBlock(masterArrayBuffer, sheetLabel, cardLast4, ent
   zip.file('xl/workbook.xml', serializer.serializeToString(wbDoc));
 
   const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{level:6} });
-  return { blob };
+  return batch ? { blob, results } : { blob };
 }
 
 async function readWorkbookFromFile(file){
@@ -10160,16 +10186,23 @@ function corpCardRowToBlock(row){
 // 연결해 두면 "💾 최신 데이터로 PC 파일 갱신"이 PC 파일의 지금 내용을 읽어(엑셀에 열려 있으면 저장 안 한
 // 내용까지) 카드 블록만 최신 내역으로 채운 뒤 그 파일에 바로 저장한다. 다운로드·덮어쓰기가 필요 없다.
 const cardMasterLinkKey = id => 'cardmaster:' + id;
+// 채울 달 선택 — PC 파일 갱신·다운로드 두 버튼이 같이 쓴다(기본 이번 달만 처리해서 빠르다).
+function cardMasterMonthSelectHtml(t){
+  return `<select class="cardmaster-link-month" data-id="${t.id}" title="어느 달 시트를 채울지(다운로드·PC 파일 갱신 공통)" style="padding:7px 8px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px;">
+        ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===new Date().getMonth()+1?'selected':''}>${m}월${m===new Date().getMonth()+1?' (이번 달)':''}</option>`).join('')}
+        <option value="all">전체 달</option>
+      </select>`;
+}
+function cardMasterSelectedMonth(id){
+  const sel = document.querySelector(`.cardmaster-link-month[data-id="${id}"]`);
+  return sel && sel.value !== 'all' ? Number(sel.value) : null;
+}
 function cardMasterLinkHtml(t){
   const link = getLinkedFile(cardMasterLinkKey(t.id));
   const btn = (cls, label, color, title) => `<button class="${cls}" data-id="${t.id}" title="${escapeHtml(title)}" style="padding:8px 12px; border-radius:7px; border:1px solid ${color}; background:transparent; color:${color}; cursor:pointer; font-weight:600; font-size:12.5px; white-space:nowrap;">${label}</button>`;
   if(!link) return btn('cardmaster-link-pick', '🔗 PC 엑셀 파일 연결', 'var(--sky)', '내 PC(W: 같은 네트워크 드라이브 포함)의 이 통합본 파일을 연결하면, 다운로드 없이 그 파일에 바로 최신 데이터를 채워 저장합니다. PC에서 엑셀 도우미가 실행돼 있어야 합니다.');
   return `<span style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; padding:3px 6px; border-radius:8px; border:1px dashed var(--sky); max-width:100%;">
       <span style="font-size:11px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:320px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}</span>
-      <select class="cardmaster-link-month" data-id="${t.id}" title="어느 달 시트를 채울지" style="padding:7px 8px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px;">
-        ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===new Date().getMonth()+1?'selected':''}>${m}월${m===new Date().getMonth()+1?' (이번 달)':''}</option>`).join('')}
-        <option value="all">전체 달</option>
-      </select>
       ${btn('cardmaster-link-save', '💾 최신 데이터로 PC 파일 갱신', '#2e9e5b', '연결된 PC 파일의 지금 내용을 바탕으로 카드 블록만 법인카드 탭의 최신 내역으로 채워 그 파일에 저장합니다. 엑셀에 열려 있으면 잠깐 닫았다 다시 엽니다. 덮어쓰기 전 원본은 이 PC에 자동 백업됩니다.')}
       ${btn('cardmaster-link-pick', '바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
       ${btn('cardmaster-link-unlink', '✕', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
@@ -10313,6 +10346,8 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
   }
   for(const sheetLabel of targetSheets){
     const mnum = monthNumFromLabel(sheetLabel);
+    // 이 달 시트에 넣을 카드들을 먼저 모은 뒤 한 번에 채운다(파일을 한 번만 풀고 묶는다).
+    const items = [];
     for(const card of corpCardState.cards){
       doneSteps++;
       if(onProgress) onProgress(doneSteps, totalSteps);
@@ -10322,18 +10357,17 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
       if(!matchMonth) continue;
       const rows = (corpCardState.rowsByCard[card.id][matchMonth]||[]).filter(r=>r.date);
       if(!rows.length) continue;
-      const entryBlocks = rows.map(corpCardRowToBlock);
-      const result = await patchFile3CardBlock(buf, sheetLabel, parts.p4, entryBlocks);
-      if(result.error === 'overflow'){
-        skipped.push(`${sheetLabel} · 카드 ${parts.p4}: 블록 칸(${result.blockSize}행)보다 입력 건수(${result.needed}건)가 더 많음`);
-      } else if(result.error){
-        // 그 시트에 이 카드 블록이 없는 경우 — 어느 카드·어느 달인지 남겨둔다
-        noBlock.push(`${sheetLabel} · 카드 ${parts.p4}`);
-      } else {
-        buf = await result.blob.arrayBuffer();
-        applied.push(`${sheetLabel}·${parts.p4}`);
-      }
+      items.push({ last4: parts.p4, entryBlocks: rows.map(corpCardRowToBlock) });
     }
+    if(!items.length) continue;
+    const result = await patchFile3CardBlock(buf, sheetLabel, items);
+    if(result.error){ skipped.push(`${sheetLabel}: ${result.error}`); continue; }
+    (result.results||[]).forEach(r=>{
+      if(r.error === 'overflow') skipped.push(`${sheetLabel} · 카드 ${r.last4}: 블록 칸(${r.blockSize}행)보다 입력 건수(${r.needed}건)가 더 많음`);
+      else if(r.error) noBlock.push(`${sheetLabel} · 카드 ${r.last4}`);  // 그 시트에 이 카드 블록이 없는 경우
+      else applied.push(`${sheetLabel}·${r.last4}`);
+    });
+    if(result.blob) buf = await result.blob.arrayBuffer();
   }
   const createdMsg = createdSheets.length
     ? `\n\n※ 통합본에 없던 ${createdSheets.join('·')} 시트를 새로 만들어 넣었습니다(가장 가까운 이전 달 서식을 복제하고 내용은 비웠습니다).`
@@ -10413,6 +10447,7 @@ async function renderCardReconMain(){
             <div style="font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(t.fileName)}">${escapeHtml(t.fileName)}</div>
             <div style="font-size:11px; color:var(--muted); margin-top:2px;">${t.uploadedAt ? `업로드 ${fmtUploadedAt(t.uploadedAt)}` : '업로드 날짜 기록 없음(이 기능 추가 전에 올린 파일)'}</div>
           </div>
+          ${cardMasterMonthSelectHtml(t)}
           ${cardMasterLinkHtml(t)}
           <button class="cardmaster-refresh-btn" data-id="${t.id}" style="padding:8px 14px; border-radius:7px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600; font-size:12.5px;">최신 데이터로 갱신 후 다운로드</button>
           <button class="cardmaster-remove-btn" data-id="${t.id}" style="padding:8px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">제거</button>
@@ -10547,7 +10582,7 @@ async function renderCardReconMain(){
         await regenerateCardMasterAndDownload(btn.dataset.id, (done, total)=>{
           const pct = total ? Math.round(done/total*100) : 0;
           btn.textContent = `처리중… (${pct}%)`;
-        });
+        }, { onlyMonth: cardMasterSelectedMonth(btn.dataset.id) });
       }catch(err){
         alert('통합본 갱신 중 오류가 발생했습니다: '+err.message);
       }
