@@ -972,6 +972,18 @@ function rebuildModuleDerived(){
   });
 }
 rebuildModuleDerived();
+// 실적리스트 파일에 적힌 모듈 모델명을 모듈 목록의 모델명으로 맞춘다 — 띄어쓰기·대소문자·
+// 하이픈 차이(예: "his-t500nr esb")나 앞뒤에 붙은 글자(예: "한화 HiS-T500NR-ESB 500W")가
+// 있어도 같은 모델로 본다. 못 찾으면 파일에 적힌 글자를 그대로 둔다.
+function matchModuleModel(v){
+  const s = String(v==null ? '' : v).trim();
+  if(!s || PERF_MODULE_MODELS.includes(s)) return s;
+  const norm = x => String(x).toUpperCase().replace(/[\s\-_.()]/g, '');
+  const n = norm(s);
+  const hit = PERF_MODULE_MODELS.find(m=>norm(m)===n)
+    || PERF_MODULE_MODELS.filter(m=>norm(m).length>=6 && n.includes(norm(m))).sort((x,y)=>norm(y).length-norm(x).length)[0];
+  return hit || s;
+}
 async function loadModuleMaster(){
   try{
     const value = await loadFileFromStorage(MODULE_MASTER_KEY);
@@ -16262,9 +16274,15 @@ function perfNumericDisplayValue(row, field){
 function perfCellHtml(r, field, type){
   const v = r[field];
   if(type === 'module'){
-    return `<select data-perf="${field}" style="width:100%;">
+    // 목록 모델명과 표기만 다른 값은 목록 모델명으로 맞추고, 목록에 없는 모델명은 "선택 안 함"으로
+    // 가려지지 않게 파일에 적힌 그대로 보여준다(빨간 글씨 — 모듈단가 관리에 없는 모델).
+    const mv = matchModuleModel(v);
+    if(mv !== (v==null ? '' : String(v))) r[field] = mv;
+    const unknown = mv && !PERF_MODULE_MODELS.includes(mv);
+    return `<select data-perf="${field}" style="width:100%;${unknown ? ' color:var(--neg);' : ''}" ${unknown ? 'title="모듈단가 관리 목록에 없는 모델명입니다(파일에 적힌 그대로 표시)"' : ''}>
       <option value="">선택 안 함</option>
-      ${PERF_MODULE_MODELS.map(label=>`<option value="${escapeHtml(label)}" ${v===label?'selected':''}>${escapeHtml(label)}</option>`).join('')}
+      ${unknown ? `<option value="${escapeHtml(mv)}" selected>${escapeHtml(mv)} (목록에 없음)</option>` : ''}
+      ${PERF_MODULE_MODELS.map(label=>`<option value="${escapeHtml(label)}" ${mv===label?'selected':''}>${escapeHtml(label)}</option>`).join('')}
     </select>`;
   }
   if(type === 'team'){
@@ -16580,7 +16598,7 @@ function parseImportSheet(sheetName){
         address: String(get('address')||''),
         capacity: get('capacity') || '',
         totalAmount: parseExcelNumber(get('totalAmount')),
-        moduleModel: String(get('moduleModel')||''),
+        moduleModel: matchModuleModel(get('moduleModel')),
         moduleQty: parseExcelNumber(get('moduleQty')),
         inverterModel: String(get('inverterModel')||''),
         inverterQty: parseExcelNumber(get('inverterQty')),
