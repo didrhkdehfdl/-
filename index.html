@@ -12571,8 +12571,9 @@ function downloadExcelHelper(){
   const header = [
     '<# : excel-helper',
     '@echo off',
-    'title 엑셀 도우미',
-    'powershell -NoProfile -STA -ExecutionPolicy Bypass -Command "iex ([IO.File]::ReadAllText(\'%~f0\', [Text.Encoding]::UTF8))"',
+    'set "EXCEL_HELPER_PATH=%~f0"',
+    // 창 없이(숨김) 실행하고 이 cmd 창은 바로 닫는다 — 도우미는 알림 영역 아이콘으로만 보인다.
+    'start "" powershell -NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -Command "iex ([IO.File]::ReadAllText($env:EXCEL_HELPER_PATH, [Text.Encoding]::UTF8))"',
     'exit /b',
     '#>',
   ].join('\r\n');
@@ -12590,7 +12591,7 @@ function excelHelperStatusHtml(){
       <span style="font-weight:700; color:${running?'#2e9e5b':'var(--muted)'};">${running===null ? '⏳ 엑셀 도우미 확인 중…' : (running ? '🟢 엑셀 도우미 실행 중' : '⚪ 엑셀 도우미가 꺼져 있습니다')}</span>
       <button class="excel-helper-recheck" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">다시 확인</button>
       <button class="excel-helper-download" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">⬇ 엑셀 도우미 내려받기</button>
-      ${running ? '' : `<span style="font-size:11.5px; color:var(--muted);">받은 <b>excel-helper.cmd</b>를 더블클릭하면 검은 창이 뜨고 실행됩니다(창은 최소화해 두세요). 처음 실행 때 "Windows의 PC 보호" 창이 뜨면 "추가 정보 → 실행"을 눌러주세요.</span>`}
+      ${running ? '' : `<span style="font-size:11.5px; color:var(--muted);">받은 <b>excel-helper.cmd</b>를 더블클릭하면 창 없이 실행되고, 작업표시줄 오른쪽 아래 알림 영역에 엑셀 아이콘이 생깁니다(끌 때는 아이콘 오른쪽 클릭 → 종료). 처음 실행 때 "Windows의 PC 보호" 창이 뜨면 "추가 정보 → 실행"을 눌러주세요.</span>`}
     </div>`;
 }
 function bindExcelHelperStatus(rerender){
@@ -18806,15 +18807,15 @@ fbAuth.onAuthStateChanged(async (user) => {
 <!-- 엑셀 도우미(PowerShell) 원본 — 카드관리 탭 "엑셀 도우미 내려받기"가 이 내용으로 excel-helper.cmd를 만든다. -->
 <script type="text/plain" id="excelHelperScript">
 # 엑셀 도우미 — 업무프로그램(웹)이 이 PC의 엑셀 파일을 COM으로 읽고 쓰게 해 주는 작은 서버.
-# 이 창이 열려 있는 동안만 동작합니다. 닫으면 멈춥니다.
+# 창 없이 실행되고, 작업표시줄 오른쪽 아래 알림 영역 아이콘(오른쪽 클릭 → 종료)으로 끕니다.
 # 요청은 이 PC 안(localhost)에서, 업무프로그램 주소(__ALLOWED_ORIGIN__)에서 온 것만 받습니다.
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
 $Version = '1'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
-try { $Host.UI.RawUI.WindowTitle = '엑셀 도우미 (업무프로그램) — 창을 닫으면 멈춥니다' } catch {}
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 function Log($m){ Write-Host ("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $m) }
 
@@ -19000,25 +19001,12 @@ function Send-Json($ctx, $obj, [int]$status){
   $ctx.Response.OutputStream.Close()
 }
 
-$listener = New-Object System.Net.HttpListener
-$listener.Prefixes.Add("http://localhost:$Port/")
-try { $listener.Start() } catch {
-  Write-Host "도우미를 시작하지 못했습니다(이미 실행 중일 수 있습니다): $($_.Exception.Message)" -ForegroundColor Red
-  Read-Host '엔터를 누르면 창이 닫힙니다'; exit 1
-}
-Write-Host ''
-Write-Host '  엑셀 도우미가 실행 중입니다.' -ForegroundColor Green
-Write-Host "  업무프로그램($AllowedOrigin)에서 PC 엑셀 파일에 저장·불러오기를 할 수 있습니다."
-Write-Host '  이 창을 닫으면 멈춥니다. (최소화해 두세요)'
-Write-Host ''
-
-while($listener.IsListening){
-  $ctx = $listener.GetContext()
+function Handle-Context($ctx){
   $req = $ctx.Request
   $origin = $req.Headers['Origin']
   try {
     if($origin -ne $AllowedOrigin){
-      Send-Json $ctx @{ ok=$false; error='허용되지 않은 곳에서 온 요청입니다.' } 403; continue
+      Send-Json $ctx @{ ok=$false; error='허용되지 않은 곳에서 온 요청입니다.' } 403; return
     }
     $ctx.Response.Headers.Add('Access-Control-Allow-Origin', $AllowedOrigin)
     $ctx.Response.Headers.Add('Vary', 'Origin')
@@ -19026,7 +19014,7 @@ while($listener.IsListening){
       $ctx.Response.Headers.Add('Access-Control-Allow-Methods', 'POST, OPTIONS')
       $ctx.Response.Headers.Add('Access-Control-Allow-Headers', 'Content-Type')
       $ctx.Response.Headers.Add('Access-Control-Allow-Private-Network', 'true')
-      $ctx.Response.StatusCode = 204; $ctx.Response.Close(); continue
+      $ctx.Response.StatusCode = 204; $ctx.Response.Close(); return
     }
     $reader = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8)
     $text = $reader.ReadToEnd(); $reader.Close()
@@ -19046,6 +19034,48 @@ while($listener.IsListening){
     Log "오류: $msg"
     try { Send-Json $ctx @{ ok=$false; error=$msg } 200 } catch {}
   }
+}
+
+$listener = New-Object System.Net.HttpListener
+$listener.Prefixes.Add("http://localhost:$Port/")
+try { $listener.Start() } catch {
+  [void][System.Windows.Forms.MessageBox]::Show("엑셀 도우미가 이미 실행 중입니다.`n(작업표시줄 오른쪽 아래 알림 영역의 아이콘을 확인하세요. 예전 검은 창이 열려 있으면 그 창을 닫고 다시 실행해주세요.)`n`n$($_.Exception.Message)", '엑셀 도우미')
+  exit 1
+}
+
+# 창은 숨기고, 작업표시줄 오른쪽 아래(알림 영역)에 아이콘만 둔다. 끌 때는 아이콘 오른쪽 클릭 → 종료.
+$global:helperRunning = $true
+$tray = New-Object System.Windows.Forms.NotifyIcon
+try {
+  $excelExe = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\excel.exe' -ErrorAction Stop).'(default)'
+  $tray.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($excelExe)
+} catch { $tray.Icon = [System.Drawing.SystemIcons]::Application }
+$tray.Text = '엑셀 도우미 (업무프로그램) — 실행 중'
+$menu = New-Object System.Windows.Forms.ContextMenuStrip
+$title = $menu.Items.Add('엑셀 도우미 실행 중'); $title.Enabled = $false
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+$quit = New-Object System.Windows.Forms.ToolStripMenuItem('종료')
+$quit.add_Click({ $global:helperRunning = $false })
+[void]$menu.Items.Add($quit)
+$tray.ContextMenuStrip = $menu
+$tray.Visible = $true
+$tray.ShowBalloonTip(5000, '엑셀 도우미 실행 중', "업무프로그램에서 PC 엑셀 파일에 저장·불러오기를 할 수 있습니다.`n끌 때는 이 아이콘을 오른쪽 클릭 → 종료.", [System.Windows.Forms.ToolTipIcon]::Info)
+Log "엑셀 도우미 시작 ($AllowedOrigin)"
+
+try {
+  $pending = $listener.GetContextAsync()
+  while($global:helperRunning){
+    [System.Windows.Forms.Application]::DoEvents()
+    if($pending.Wait(50)){
+      $ctx = $pending.Result
+      $pending = $listener.GetContextAsync()
+      Handle-Context $ctx
+    }
+  }
+} finally {
+  $tray.Visible = $false
+  $tray.Dispose()
+  try { $listener.Stop() } catch {}
 }
 </script>
 </body>
