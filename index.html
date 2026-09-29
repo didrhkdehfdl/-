@@ -10255,7 +10255,9 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
   // 이전 달을 본으로 삼고, 없으면 가장 마지막 달).
   const createdSheets = [];
   for(const mnum of missingSheets){
-    const sorted = monthSheets.slice().sort((a,b)=>monthNumFromLabel(a)-monthNumFromLabel(b));
+    // 본으로 삼을 시트는 이름이 딱 "N월"/"N 월"인 시트를 먼저 쓴다("8월 보고용" 같은 시트를 복제하지 않게).
+    const plain = monthSheets.filter(l=>/^\s*\d{1,2}\s*월\s*$/.test(l));
+    const sorted = (plain.length ? plain : monthSheets).slice().sort((a,b)=>monthNumFromLabel(a)-monthNumFromLabel(b));
     const before = sorted.filter(l=>monthNumFromLabel(l) < mnum).pop();
     const sourceLabel = before || sorted[sorted.length-1];
     if(!sourceLabel) break;
@@ -10275,7 +10277,16 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
   let doneSteps = 0;
   const targetSheets = onlyMonth ? monthSheets.filter(l=>monthNumFromLabel(l)===onlyMonth) : monthSheets;
   if(onlyMonth && !targetSheets.length){
-    alert(`${onlyMonth}월에 법인카드 탭 내역이 없거나, 통합본에 ${onlyMonth}월 시트가 없어 채울 곳이 없습니다.`);
+    // 왜 채울 곳이 없는지 정확히 알려준다 — 앱에 그 달 내역이 없는 건지, 시트를 못 만든 건지.
+    const cardsWithMonth = corpCardState.cards.filter(card => Object.entries(corpCardState.rowsByCard[card.id]||{})
+      .some(([label, rows]) => monthNumFromLabel(label) === onlyMonth && (rows||[]).some(r=>r.date)));
+    if(!cardsWithMonth.length){
+      const labels = [...new Set(corpCardState.cards.flatMap(card => Object.entries(corpCardState.rowsByCard[card.id]||{})
+        .filter(([, rows]) => (rows||[]).some(r=>r.date)).map(([label]) => label)))];
+      alert(`법인카드 탭에서 ${onlyMonth}월 내역(날짜가 적힌 행)을 찾지 못했습니다.\n(내역이 있는 달: ${labels.join(', ') || '없음'})`);
+    } else {
+      alert(`통합본에 ${onlyMonth}월 시트가 없어 새로 만들려 했지만 만들지 못했습니다.\n${skipped.join('\n') || '(원인 불명)'}\n\n통합본의 시트: ${wb.SheetNames.join(', ')}`);
+    }
     return;
   }
   for(const sheetLabel of targetSheets){
