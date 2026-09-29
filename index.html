@@ -10244,13 +10244,7 @@ function bindCardMasterLinkButtons(rerender){
         return;
       }
       const r = await excelHelperCall('/cardmaster/write', { path: getLinkedFile(key).path, months }, 10*60*1000);
-      const lines = [];
-      if((r.created||[]).length) lines.push(`※ 통합본에 없던 ${r.created.join('·')} 시트를 바로 앞 달 시트를 복사해 새로 만들었습니다(카드 블록 입력칸은 비우고 채움).`);
-      if((r.newBlocks||[]).length) lines.push('※ 통합본에 블록이 없던 카드는 맨 마지막 카드 블록 바로 아래에 새 블록을 만들어 채웠습니다(머리글·소계 줄은 없으니 필요하면 엑셀에서 정리해주세요):\n  ' + r.newBlocks.join('\n  '));
-      if((r.report||[]).length) lines.push('채운 곳:\n  ' + r.report.join('\n  '));
-      if((r.skipped||[]).length) lines.push('블록 칸보다 입력이 많아 넣지 못한 곳:\n  ' + r.skipped.join('\n  '));
-      if((r.noBlock||[]).length) lines.push(`통합본에 해당 카드 블록이 없어 건너뛴 곳 ${r.noBlock.length}건:\n  ` + r.noBlock.slice(0,10).join('\n  ') + (r.noBlock.length>10 ? `\n  …외 ${r.noBlock.length-10}건` : ''));
-      alert(`${r.applied ? `${r.applied}개 카드 블록을 채워 "${getLinkedFile(key).name}" 파일에 저장했습니다.` : '채운 카드 블록이 없습니다.'}${r.wasOpen ? '\n(엑셀에 열려 있던 파일에 바로 넣고 저장했습니다)' : ''}\n\n${lines.join('\n\n')}`);
+      alert(`${r.applied ? `${r.applied}개 카드 블록을 채워 "${getLinkedFile(key).name}" 파일에 저장했습니다.` : '채운 카드 블록이 없습니다.'}${r.wasOpen ? '\n(엑셀에 열려 있던 파일에 바로 넣고 저장했습니다)' : ''}\n\n${cardMasterWriteResultLines(r).join('\n\n')}`);
     }catch(e){
       alert(linkedFileErrorMessage(e));
     }finally{
@@ -10258,6 +10252,52 @@ function bindCardMasterLinkButtons(rerender){
       rerender();
     }
   }));
+}
+function cardMasterWriteResultLines(r){
+  const lines = [];
+  if((r.created||[]).length) lines.push(`※ 통합본에 없던 ${r.created.join('·')} 시트를 바로 앞 달 시트를 복사해 새로 만들었습니다(카드 블록 입력칸은 비우고 채움).`);
+  if((r.newBlocks||[]).length) lines.push('※ 통합본에 블록이 없던 카드는 맨 마지막 카드 블록 바로 아래에 새 블록을 만들어 채웠습니다(머리글·소계 줄은 없으니 필요하면 엑셀에서 정리해주세요):\n  ' + r.newBlocks.join('\n  '));
+  if((r.report||[]).length) lines.push('채운 곳:\n  ' + r.report.join('\n  '));
+  if((r.skipped||[]).length) lines.push('넣지 못한 곳:\n  ' + r.skipped.join('\n  '));
+  if((r.noBlock||[]).length) lines.push(`통합본에 해당 카드 블록이 없어 건너뛴 곳 ${r.noBlock.length}건:\n  ` + r.noBlock.slice(0,10).join('\n  ') + (r.noBlock.length>10 ? `\n  …외 ${r.noBlock.length-10}건` : ''));
+  return lines;
+}
+// 다운로드용 갱신도 엑셀 도우미가 켜져 있으면 엑셀로 채운다 — 앱에 보관된 통합본을 도우미 임시 폴더에
+// 두고, "PC 파일 갱신"과 같은 규칙(행 자동 추가·없는 카드 블록 만들기)으로 채운 뒤 내려받는다.
+// 도우미가 꺼져 있거나 예전 버전이면 false를 돌려주고, 호출한 쪽은 예전 방식(기존 칸만 채우기)으로 한다.
+async function downloadCardMasterViaHelper(tmplId, onlyMonth, onStatus){
+  const tmpl = corpCardMasterTemplates.find(t=>t.id===tmplId);
+  if(!tmpl) return false;
+  let ping;
+  try{ ping = await excelHelperCall('/ping', {}, 2000); }catch(e){ return false; }
+  if(Number(ping.version||0) < EXCEL_HELPER_VERSION) return false;
+  let buf = tmpl.buffer;
+  if(!buf){
+    const b64 = await loadFileFromStorage('corp-card-master-buf:'+tmpl.id, 30000);
+    if(!b64) return false;
+    buf = base64ToArrayBuffer(b64); tmpl.buffer = buf;
+  }
+  await flushCorpCardSave({ silent:true });
+  const months = buildCardMasterWritePayload(onlyMonth);
+  if(!months.length){ alert(`법인카드 탭에서 ${onlyMonth ? onlyMonth+'월 ' : ''}내역(날짜가 적힌 행)을 찾지 못했습니다.`); return true; }
+  const fileName = tmpl.fileName || '통합본.xlsx';
+  if(onStatus) onStatus('엑셀에서 채우는 중…');
+  const put = await excelHelperJson(await excelHelperFetch('/tempfile', { headers:{ 'Content-Type':'application/octet-stream', 'X-File-Name': encodeURIComponent(fileName) }, body: buf }));
+  try{
+    const r = await excelHelperCall('/cardmaster/write', { path: put.path, months }, 10*60*1000);
+    const res = await excelHelperFetch('/read', { headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ path: put.path }) });
+    if(!/octet-stream/.test(res.headers.get('Content-Type')||'')){ await excelHelperJson(res); throw new Error('채운 파일을 읽지 못했습니다.'); }
+    const out = await res.arrayBuffer();
+    const url = URL.createObjectURL(new Blob([out], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `${fileName.replace(/\.xlsx$/i,'')}_갱신_${isoDate(new Date())}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    alert(`${r.applied ? `${r.applied}개 카드 블록을 채워 내려받았습니다.` : '채운 카드 블록이 없습니다.'}\n\n${cardMasterWriteResultLines(r).join('\n\n')}`);
+  } finally {
+    try{ await excelHelperCall('/tempdelete', { path: put.path }, 10000); }catch(e){}
+  }
+  return true;
 }
 // 엑셀 도우미에 보낼 통합본 채우기 내용 — 달마다 카드(끝 4자리)별로 B~Q 16칸 값 목록.
 // 내역이 없는 카드는 넣지 않는다(그 카드 블록은 건드리지 않음 — 다운로드용 갱신과 같은 규칙).
@@ -10397,7 +10437,7 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
   if(noBlock.length) notes.push(`통합본에 해당 카드 블록이 없어 건너뛴 곳 ${noBlock.length}건:\n  ` + noBlock.slice(0,10).join('\n  ') + (noBlock.length>10 ? `\n  …외 ${noBlock.length-10}건` : ''));
   // 다운로드용 갱신은 파일 구조(행)를 바꾸지 않는다. 행 자동 추가·새 블록 만들기는 엑셀이 직접 하는
   // "PC 파일 갱신"에서만 된다 — 그 방법을 알려준다.
-  if(!(opts && opts.deliver) && (skipped.length || noBlock.length)) notes.push('→ 행 자동 추가와 없는 카드 블록 만들기는 "💾 최신 데이터로 PC 파일 갱신"(PC 엑셀 파일 연결 + 엑셀 도우미)에서 됩니다. 이 다운로드 버튼은 기존 칸에만 채웁니다.');
+  if(!(opts && opts.deliver) && (skipped.length || noBlock.length)) notes.push('→ 엑셀 도우미가 꺼져 있거나 예전 버전이라 기존 칸에만 채웠습니다. 카드관리 탭 "⬇ 엑셀 도우미 내려받기"로 최신 도우미를 실행해 두면, 이 버튼도 행을 자동으로 늘리고 없는 카드 블록을 만들어 채웁니다.');
   if(notes.length || missingMsg || createdMsg || (opts && opts.deliver)){
     alert(`${applied.length}개 블록을 반영해서 ${doneMsg}.${(opts && opts.doneNote) || ''}${createdMsg}${missingMsg}${notes.length ? '\n\n' + notes.join('\n\n') : ''}`);
   }
@@ -10582,6 +10622,8 @@ async function renderCardReconMain(){
     btn.addEventListener('click', async ()=>{
       btn.disabled = true; btn.textContent = '처리중… (0%)';
       try{
+        const onlyMonth = cardMasterSelectedMonth(btn.dataset.id);
+        if(await downloadCardMasterViaHelper(btn.dataset.id, onlyMonth, t=>{ btn.textContent = t; })){ renderCardReconMain(); return; }
         await regenerateCardMasterAndDownload(btn.dataset.id, (done, total)=>{
           const pct = total ? Math.round(done/total*100) : 0;
           btn.textContent = `처리중… (${pct}%)`;
@@ -12669,7 +12711,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 4;
+const EXCEL_HELPER_VERSION = 5;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -18996,7 +19038,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '4'
+$Version = '5'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -19383,11 +19425,24 @@ function Handle-Context($ctx){
     $ctx.Response.Headers.Add('Vary', 'Origin')
     if($req.HttpMethod -eq 'OPTIONS'){
       $ctx.Response.Headers.Add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-      $ctx.Response.Headers.Add('Access-Control-Allow-Headers', 'Content-Type, X-File-Path')
+      $ctx.Response.Headers.Add('Access-Control-Allow-Headers', 'Content-Type, X-File-Path, X-File-Name')
       $ctx.Response.Headers.Add('Access-Control-Allow-Private-Network', 'true')
       $ctx.Response.StatusCode = 204; $ctx.Response.Close(); return
     }
     $route = $req.Url.AbsolutePath.TrimEnd('/')
+    if($route -eq '/tempfile'){
+      # 앱이 보낸 파일 내용(바이트)을 이 PC의 임시 폴더에 저장하고 경로를 돌려준다 —
+      # 앱에 보관된 통합본을 엑셀로 열어 채운 뒤 내려받게 할 때 쓴다(다 쓰면 /tempdelete로 지운다).
+      $dir = Join-Path $env:TEMP 'ExcelHelper'
+      [void](New-Item -ItemType Directory -Force -Path $dir)
+      $name = [IO.Path]::GetFileName([Uri]::UnescapeDataString([string]$req.Headers['X-File-Name']))
+      if(-not $name -or $name -notmatch '\.(xlsx|xlsm|xls)$'){ $name = 'file.xlsx' }
+      $tmp = Join-Path $dir ([Guid]::NewGuid().ToString('N').Substring(0,8) + '_' + $name)
+      $ms = New-Object IO.MemoryStream; $req.InputStream.CopyTo($ms)
+      [IO.File]::WriteAllBytes($tmp, $ms.ToArray())
+      Log "$route $tmp"
+      Send-Json $ctx @{ ok=$true; path=$tmp } 200; return
+    }
     if($route -eq '/writefile'){
       # 파일 내용은 JSON이 아니라 그대로(바이트) 받는다 — 큰 파일도 문제없게.
       # 한글 경로가 깨지지 않게 주소가 아니라 머리글(X-File-Path, URL 인코딩)로 받는다.
@@ -19410,6 +19465,13 @@ function Handle-Context($ctx){
       '/pick'           { Handle-Pick $body }
       '/corpcard/write' { Handle-CorpCardWrite $body }
       '/cardmaster/write' { Handle-CardMasterWrite $body }
+      '/tempdelete'     {
+        # 도우미 임시 폴더 안의 파일만 지운다.
+        $dir = [IO.Path]::GetFullPath((Join-Path $env:TEMP 'ExcelHelper'))
+        $p = [IO.Path]::GetFullPath([string]$body.path)
+        if($p.StartsWith($dir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)){ Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        @{ ok=$true }
+      }
       default           { @{ ok=$false; error="알 수 없는 요청: $route" } }
     }
     Send-Json $ctx $result 200
