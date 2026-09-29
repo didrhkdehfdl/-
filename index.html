@@ -10233,7 +10233,7 @@ function bindCardMasterLinkButtons(rerender){
       // 파일을 바이트로 읽어 고치지 않고, 엑셀 도우미가 엑셀로 파일을 열어 칸에 바로 쓴다 —
       // 문서보안(DRM)으로 암호화된 파일도 엑셀이 열 수 있으면 되고, 엑셀에 열려 있어도 그대로 된다.
       const ping = await excelHelperCall('/ping', {}, 5000);
-      if(Number(ping.version||0) < 3){
+      if(Number(ping.version||0) < EXCEL_HELPER_VERSION){
         alert('엑셀 도우미가 예전 버전입니다. 알림 영역의 도우미 아이콘을 오른쪽 클릭 → 종료한 뒤, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
         return;
       }
@@ -10395,6 +10395,9 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
   const notes = [];
   if(skipped.length) notes.push('블록 칸보다 입력이 많아 넣지 못한 곳:\n  ' + skipped.join('\n  '));
   if(noBlock.length) notes.push(`통합본에 해당 카드 블록이 없어 건너뛴 곳 ${noBlock.length}건:\n  ` + noBlock.slice(0,10).join('\n  ') + (noBlock.length>10 ? `\n  …외 ${noBlock.length-10}건` : ''));
+  // 다운로드용 갱신은 파일 구조(행)를 바꾸지 않는다. 행 자동 추가·새 블록 만들기는 엑셀이 직접 하는
+  // "PC 파일 갱신"에서만 된다 — 그 방법을 알려준다.
+  if(!(opts && opts.deliver) && (skipped.length || noBlock.length)) notes.push('→ 행 자동 추가와 없는 카드 블록 만들기는 "💾 최신 데이터로 PC 파일 갱신"(PC 엑셀 파일 연결 + 엑셀 도우미)에서 됩니다. 이 다운로드 버튼은 기존 칸에만 채웁니다.');
   if(notes.length || missingMsg || createdMsg || (opts && opts.deliver)){
     alert(`${applied.length}개 블록을 반영해서 ${doneMsg}.${(opts && opts.doneNote) || ''}${createdMsg}${missingMsg}${notes.length ? '\n\n' + notes.join('\n\n') : ''}`);
   }
@@ -12664,6 +12667,10 @@ function saveCorpCardRows(cardId){
 const EXCEL_HELPER_URL = 'http://localhost:39217';
 const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
+// 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
+// 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
+const EXCEL_HELPER_VERSION = 4;
+let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
 }
@@ -12700,7 +12707,7 @@ async function excelHelperCall(route, body, timeoutMs){
   return data;
 }
 async function checkExcelHelper(){
-  try{ await excelHelperCall('/ping', {}, 2500); }catch(e){}
+  try{ const r = await excelHelperCall('/ping', {}, 2500); excelHelperVersion = Number(r.version||0); }catch(e){}
   return excelHelperRunning;
 }
 // 파일 선택 창은 도우미가 PC 화면에 띄운다(브라우저 뒤에 뜨면 작업표시줄에서 찾아주세요).
@@ -12767,6 +12774,7 @@ function excelHelperStatusHtml(){
       <span style="font-weight:700; color:${running?'#2e9e5b':'var(--muted)'};">${running===null ? '⏳ 엑셀 도우미 확인 중…' : (running ? '🟢 엑셀 도우미 실행 중' : '⚪ 엑셀 도우미가 꺼져 있습니다')}</span>
       <button class="excel-helper-recheck" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">다시 확인</button>
       <button class="excel-helper-download" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">⬇ 엑셀 도우미 내려받기</button>
+      ${running && excelHelperVersion && excelHelperVersion < EXCEL_HELPER_VERSION ? `<span style="font-size:12px; color:var(--neg); font-weight:700;">⚠ 실행 중인 도우미가 예전 버전입니다 — 알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.</span>` : ''}
       ${running ? '' : `<span style="font-size:11.5px; color:var(--muted);">받은 <b>excel-helper.cmd</b>를 더블클릭하면 창 없이 실행되고, 작업표시줄 오른쪽 아래 알림 영역에 엑셀 아이콘이 생깁니다(끌 때는 아이콘 오른쪽 클릭 → 종료). 처음 실행 때 "Windows의 PC 보호" 창이 뜨면 "추가 정보 → 실행"을 눌러주세요.</span>`}
     </div>`;
 }
@@ -18988,7 +18996,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '3'
+$Version = '4'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
