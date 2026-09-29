@@ -19240,9 +19240,33 @@ function Handle-CardMasterWrite($body){
       foreach($c in @($m.cards)){
         $last4 = [string]$c.last4
         $rows = @($c.rows)
-        if(-not $blocks.ContainsKey($last4)){ $noBlock += "$($ws.Name) · 카드 $last4"; continue }
+        if(-not $blocks.ContainsKey($last4)){
+          # 왜 못 찾았는지 알 수 있게, 시트 어디에 그 4자리가 적혀 있는지 찾아 함께 알려준다.
+          $hint = ''
+          try {
+            $hit = $ws.UsedRange.Find($last4, [Type]::Missing, -4163, 2)
+            if($hit){ $hint = " (시트의 $($hit.Address($false,$false)) 칸에 ""$($hit.Text)""로 적혀 있음 — R열이 아니거나 4자리만 있는 게 아님)" }
+            else { $hint = " (시트 어디에도 $last4 가 없음 — 이 카드 블록이 파일에 없습니다)" }
+          } catch {}
+          $noBlock += "$($ws.Name) · 카드 $last4$hint"; continue
+        }
         $blockRows = $blocks[$last4]
-        if($rows.Count -gt $blockRows.Count){ $skipped += "$($ws.Name) · 카드 ${last4}: 블록 칸($($blockRows.Count)행)보다 입력 건수($($rows.Count)건)가 더 많음"; continue }
+        $added = 0
+        if($rows.Count -gt $blockRows.Count){
+          # 블록 칸이 모자라면 블록의 마지막 행을 복사해 그 위에 끼워 넣어 블록을 늘린다 — 블록 안쪽에
+          # 넣어야 합계(SUM·SUMIF) 수식 범위가 엑셀에서 저절로 따라 늘어난다. R열(카드 끝 4자리)도 같이 복사된다.
+          $need = $rows.Count - $blockRows.Count
+          $lastR = [int]$blockRows[$blockRows.Count - 1]
+          for($k=0; $k -lt $need; $k++){
+            Invoke-Retry { [void]$ws.Rows.Item($lastR).Copy(); [void]$ws.Rows.Item($lastR).Insert() } | Out-Null
+            $lastR++; $added++
+          }
+          try { $xl.CutCopyMode = $false } catch {}
+          # 행이 끼어들어 아래쪽 블록들의 위치가 바뀌었으니 다시 찾는다.
+          $blocks = Get-CardBlockRows $ws
+          $blockRows = $blocks[$last4]
+          if($rows.Count -gt $blockRows.Count){ $skipped += "$($ws.Name) · 카드 ${last4}: 블록 칸을 늘리지 못함($($blockRows.Count)행, 입력 $($rows.Count)건)"; continue }
+        }
         for($i=0; $i -lt $blockRows.Count; $i++){
           $r = $blockRows[$i]
           if($i -lt $rows.Count){
@@ -19265,7 +19289,7 @@ function Handle-CardMasterWrite($body){
           }
         }
         $applied++
-        $report += "$($ws.Name) · 카드 $last4 $($rows.Count)건"
+        $report += "$($ws.Name) · 카드 $last4 $($rows.Count)건" + $(if($added){ " (행 $added 개 추가)" } else { '' })
       }
     }
     if($applied -gt 0 -or $created.Count -gt 0){ Invoke-Retry { $wb.Save() } | Out-Null }
