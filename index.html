@@ -12715,7 +12715,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 6;
+const EXCEL_HELPER_VERSION = 7;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -16070,7 +16070,17 @@ function renderUploadMode(){
       renderImportMain();
       return;
     }
-    parseImportSheet(sheetSel.value);
+    const wb = importState.workbook, name = sheetSel.value;
+    if(wb.fromLinkedExcel && !wb.Sheets[name]){
+      // 연결된 파일에서 불러온 경우 — 고른 시트를 도우미로 읽어 온다.
+      sheetSel.disabled = true;
+      readLinkedImportSheet(name).then(r=>{
+        wb.Sheets[r.sheet] = r.ws;
+        parseImportSheet(r.sheet);
+      }).catch(e=>{ alert(linkedFileErrorMessage(e)); renderImportMain(); });
+      return;
+    }
+    parseImportSheet(name);
   });
   const searchInp = document.getElementById('importSearch');
   if(searchInp) searchInp.addEventListener('input', ()=>{ importState.search = searchInp.value; renderImportRowsOnly(); });
@@ -16432,7 +16442,16 @@ function bindImportLinkedFileButtons(){
     try{ await fn(); }
     catch(e){ alert(linkedFileErrorMessage(e)); btn.textContent = label; btn.disabled = false; }
   };
-  const loadFromLink = async () => { await loadImportWorkbookFile(await readLinkedFile(IMPORT_LINK_KEY)); };
+  const loadFromLink = async () => {
+    await checkExcelHelper();
+    // 도우미 7판부터는 엑셀로 직접 열어 값을 읽는다 — 문서보안(DRM)으로 암호화된 파일도 된다.
+    if(excelHelperVersion >= 7){ await loadImportFromLinkedExcel(); return; }
+    try{ await loadImportWorkbookFile(await readLinkedFile(IMPORT_LINK_KEY)); }
+    catch(e){
+      if(e.helperDown) throw e;
+      throw new Error(linkedFileErrorMessage(e) + '\n\n실행 중인 엑셀 도우미가 예전 버전입니다. 알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행하면 이런 파일도 불러올 수 있습니다.');
+    }
+  };
   const linkBtn = document.getElementById('importLinkFileBtn');
   if(linkBtn) linkBtn.addEventListener('click', ()=>run(linkBtn, '파일 선택 창을 띄웠습니다…', async ()=>{
     const link = await pickLinkedFile(IMPORT_LINK_KEY, '사급 실적리스트 엑셀 파일 선택');
@@ -16451,6 +16470,29 @@ async function handleImportFile(e){
   const file = e.target.files[0];
   if(!file) return;
   await loadImportWorkbookFile(file);
+}
+// 연결된 실적리스트를 도우미가 엑셀로 열어 읽은 값(시트 한 장씩)으로 불러온다.
+// 파일을 바이트로 읽지 않으므로 문서보안(DRM)으로 암호화된 파일도 되고, 엑셀에 열어 둔 채
+// 저장 안 한 내용도 그대로 읽힌다. 다른 시트를 고르면 그 시트만 다시 읽어 온다.
+async function readLinkedImportSheet(sheet){
+  const link = getLinkedFile(IMPORT_LINK_KEY);
+  if(!link) throw new Error('연결된 파일이 없습니다.');
+  const r = await excelHelperCall('/readvalues', { path: link.path, sheet: sheet || '' }, 5*60*1000);
+  await loadXlsxLib();
+  return { ...r, ws: XLSX.utils.aoa_to_sheet((r.rows||[]).map(row=>row.map(v=>v==null ? '' : v))) };
+}
+async function loadImportFromLinkedExcel(){
+  const link = getLinkedFile(IMPORT_LINK_KEY);
+  importState = { ...importState, fileName:(link && link.name)||'', sheetNames:[], sheetName:'', rows:[], search:'', loading:true, error:'', selected:new Set() };
+  renderImportMain();
+  let r;
+  try{ r = await readLinkedImportSheet(''); }
+  catch(e){ importState.loading = false; renderImportMain(); throw e; }
+  importState.fileName = r.name || importState.fileName;
+  importState.workbook = { SheetNames: r.sheetNames, Sheets: { [r.sheet]: r.ws }, fromLinkedExcel: true };
+  importState.sheetNames = r.sheetNames;
+  importState.loading = false;
+  parseImportSheet(r.sheet);
 }
 async function loadImportWorkbookFile(file){
   importState = { ...importState, fileName:file.name, sheetNames:[], sheetName:'', rows:[], search:'', loading:true, error:'', selected:new Set() };
@@ -19042,7 +19084,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '6'
+$Version = '7'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -19472,6 +19514,101 @@ function Handle-CardMasterWrite($body){
   }
 }
 
+# ---- 엑셀로 열어 시트 값 읽기 — 문서보안(DRM)으로 암호화돼 파일 바이트를 앱이 못 읽을 때 쓴다 ----
+# 엑셀이 열 수 있으면 되고, 엑셀에 열려 있으면 저장 안 한 내용까지 그대로 읽는다(파일은 바꾸지 않음).
+# 날짜 칸은 "yyyy-MM-dd" 글자로, 숫자는 숫자로, 오류 값(#N/A 등)은 빈칸으로 보낸다.
+function Add-JsonString([Text.StringBuilder]$sb, [string]$s){
+  [void]$sb.Append('"')
+  if($s -notmatch '["\\\x00-\x1f]'){ [void]$sb.Append($s).Append('"'); return }
+  foreach($ch in $s.ToCharArray()){
+    $n = [int]$ch
+    if($ch -eq '"'){ [void]$sb.Append('\"') }
+    elseif($ch -eq '\'){ [void]$sb.Append('\\') }
+    elseif($n -lt 32){ [void]$sb.Append(('\u{0:x4}' -f $n)) }
+    else { [void]$sb.Append($ch) }
+  }
+  [void]$sb.Append('"')
+}
+function Add-JsonCell([Text.StringBuilder]$sb, $v){
+  if($null -eq $v){ [void]$sb.Append('null') }
+  elseif($v -is [string]){ Add-JsonString $sb $v }
+  elseif($v -is [datetime]){ Add-JsonString $sb ($v.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)) }
+  elseif($v -is [bool]){ [void]$sb.Append($(if($v){ 'true' } else { 'false' })) }
+  elseif($v -is [double] -or $v -is [decimal] -or $v -is [single]){
+    $d = [double]$v
+    if([double]::IsNaN($d) -or [double]::IsInfinity($d)){ [void]$sb.Append('null') }
+    else { [void]$sb.Append($d.ToString('R', [Globalization.CultureInfo]::InvariantCulture)) }
+  }
+  else { [void]$sb.Append('null') }   # 오류 값(#N/A 등)은 엑셀이 정수로 준다
+}
+function Add-SheetValuesJson([Text.StringBuilder]$sb, $ws){
+  $used = $ws.UsedRange
+  $lastRow = $used.Row + $used.Rows.Count - 1
+  $lastCol = $used.Column + $used.Columns.Count - 1
+  [void]$sb.Append('[')
+  if($lastRow -ge 1 -and $lastCol -ge 1){
+    # A1부터 읽어 앱이 파일을 직접 읽을 때와 행·열 위치가 같게 한다.
+    $rg = $ws.Range($ws.Cells.Item(1,1), $ws.Cells.Item($lastRow, $lastCol))
+    # Value2 대신 Value — 날짜 칸이 일련번호가 아니라 날짜로 온다.
+    # (배열을 함수 결과로 돌려받으면 PowerShell이 풀어 버리므로 상자(hashtable)에 담아 꺼낸다.)
+    $box = @{}
+    Invoke-Retry { $box.v = [System.__ComObject].InvokeMember('Value', [Reflection.BindingFlags]::GetProperty, $null, $rg, $null) } | Out-Null
+    $vals = $box.v
+    for($r=1; $r -le $lastRow; $r++){
+      if($r -gt 1){ [void]$sb.Append(',') }
+      [void]$sb.Append('[')
+      for($c=1; $c -le $lastCol; $c++){
+        if($c -gt 1){ [void]$sb.Append(',') }
+        $v = if($lastRow -eq 1 -and $lastCol -eq 1){ $vals } else { $vals[$r,$c] }
+        Add-JsonCell $sb $v
+      }
+      [void]$sb.Append(']')
+    }
+  }
+  [void]$sb.Append(']')
+}
+# body: path, sheet(없으면 "2026"처럼 네 자리 숫자 이름의 첫 시트, 없으면 첫 시트)
+# 돌려주는 것(JSON 글자): ok, name, sheetNames, sheet, rows
+function Handle-ReadValues($body){
+  $path = [string]$body.path
+  $xl = Get-Excel $true
+  $wb = Find-OpenWorkbook $xl $path
+  $openedHere = $false
+  if(-not $wb){
+    if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
+    # 읽기 전용으로 연다 — 다른 사람이 쓰고 있어도 되고, 파일은 바뀌지 않는다.
+    $wb = Invoke-Retry { $xl.Workbooks.Open($path, 0, $true) }
+    $openedHere = $true
+  }
+  try {
+    $names = @(); foreach($s in $wb.Worksheets){ $names += [string]$s.Name }
+    $want = [string]$body.sheet
+    if(-not $want -or $names -notcontains $want){
+      $want = $names | Where-Object { $_ -match '^\d{4}$' } | Select-Object -First 1
+      if(-not $want){ $want = $names[0] }
+    }
+    $ws = $null; foreach($s in $wb.Worksheets){ if([string]$s.Name -eq $want){ $ws = $s; break } }
+    $sb = New-Object Text.StringBuilder
+    [void]$sb.Append('{"ok":true,"name":'); Add-JsonString $sb ([IO.Path]::GetFileName($path))
+    [void]$sb.Append(',"wasOpen":'); [void]$sb.Append($(if($openedHere){ 'false' } else { 'true' }))
+    [void]$sb.Append(',"sheetNames":['); for($i=0; $i -lt $names.Count; $i++){ if($i){ [void]$sb.Append(',') }; Add-JsonString $sb $names[$i] }
+    [void]$sb.Append('],"sheet":'); Add-JsonString $sb $want
+    [void]$sb.Append(',"rows":'); Add-SheetValuesJson $sb $ws
+    [void]$sb.Append('}')
+    return $sb.ToString()
+  } finally {
+    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+  }
+}
+function Send-JsonText($ctx, [string]$json){
+  $buf = [Text.Encoding]::UTF8.GetBytes($json)
+  $ctx.Response.StatusCode = 200
+  $ctx.Response.ContentType = 'application/json; charset=utf-8'
+  $ctx.Response.ContentLength64 = $buf.Length
+  $ctx.Response.OutputStream.Write($buf, 0, $buf.Length)
+  $ctx.Response.OutputStream.Close()
+}
+
 function Send-Json($ctx, $obj, [int]$status){
   $json = $obj | ConvertTo-Json -Depth 6 -Compress
   $buf = [Text.Encoding]::UTF8.GetBytes($json)
@@ -19522,6 +19659,10 @@ function Handle-Context($ctx){
     $reader = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8)
     $text = $reader.ReadToEnd(); $reader.Close()
     $body = if($text){ $text | ConvertFrom-Json } else { [pscustomobject]@{} }
+    if($route -eq '/readvalues'){
+      Log "$route $($body.path) $($body.sheet)"
+      Send-JsonText $ctx (Handle-ReadValues $body); return
+    }
     if($route -eq '/read'){
       Log "$route $($body.path)"
       $r = Handle-Read $body
