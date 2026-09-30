@@ -12727,7 +12727,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 8;
+const EXCEL_HELPER_VERSION = 9;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -14895,7 +14895,7 @@ async function exportCorpCardReportPdf(card, month, rows){
   const link = getLinkedFile(corpCardLinkKey(card.id));
   if(!link) throw new Error('연결된 파일이 없습니다.');
   await checkExcelHelper();
-  if(excelHelperRunning && excelHelperVersion < 8) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
+  if(excelHelperRunning && excelHelperVersion < 9) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
   const { columns, toValues } = corpCardHelperColumns();
   const res = await excelHelperFetch('/corpcard/reportpdf', { headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({ path: link.path, cardNumber: card.cardNumber, columns, month: { name: month, rows: rows.map(toValues) } }) }, 5*60*1000);
@@ -19154,7 +19154,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '8'
+$Version = '9'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -19372,6 +19372,12 @@ function Handle-CorpCardWrite($body){
 # 원본 파일은 건드리지 않는다: 복사본(임시 폴더)을 만들어 그 달 시트에 앱 내역(보낸 행만)을
 # 넣고, 보고용 시트를 엑셀의 "PDF로 저장"으로 뽑은 뒤 복사본은 지운다. 그 달 보고용 시트가
 # 없으면 가장 가까운 이전 달 보고용 시트를 복사해 쓰고, 수식이 가리키는 월 시트만 이번 달로 바꾼다.
+# COM 메서드를 PowerShell 변환 없이 엑셀(IDispatch)에 바로 부른다.
+function Invoke-ComMethod($obj, [string]$name, [object[]]$argList){
+  $o = if($obj -is [psobject]){ $obj.psobject.BaseObject } else { $obj }
+  $a = @($argList | ForEach-Object { if($null -ne $_ -and $_.psobject.BaseObject -is [System.__ComObject]){ $_.psobject.BaseObject } else { $_ } })
+  return [System.__ComObject].InvokeMember($name, [Reflection.BindingFlags]::InvokeMethod, $null, $o, [object[]]$a)
+}
 function Handle-CorpCardReportPdf($body){
   $path = [string]$body.path
   $monthName = [string]$body.month.name
@@ -19390,10 +19396,13 @@ function Handle-CorpCardReportPdf($body){
     Copy-Item -LiteralPath $path -Destination $tmp -Force
   }
   $wb = $null
+  $step = '파일 복사본 만들기'
   try {
     # 1) 복사본의 그 달 시트에 내역 넣기(없는 달이면 이전 달 시트를 복사해 만든다)
+    $step = '복사본에 이달 내역 넣기'
     [void](Handle-CorpCardWrite ([pscustomobject]@{ path=$tmp; cardNumber=$body.cardNumber; columns=$body.columns; months=@($body.month) }))
     # (쓰기가 끝나면 엑셀이 닫혔을 수 있으니 다시 잡는다)
+    $step = '복사본 열기'
     $xl = Get-Excel $true
     $wb = Invoke-Retry { $xl.Workbooks.Open($tmp) }
     $sheets = @(); foreach($s in $wb.Worksheets){ $sheets += $s }
@@ -19407,7 +19416,9 @@ function Handle-CorpCardReportPdf($body){
       $src = $reports | Where-Object { $null -ne $_.num -and $_.num -lt $num } | Sort-Object num -Descending | Select-Object -First 1
       if(-not $src){ $src = $reports | Where-Object { $null -ne $_.num } | Sort-Object num -Descending | Select-Object -First 1 }
       if(-not $src){ $src = $reports[0] }
-      Invoke-Retry { $src.ws.Copy([Type]::Missing, $src.ws) } | Out-Null
+      $step = '보고용 시트 복사'
+      # PowerShell의 COM 변환을 거치지 않고 엑셀에 바로 부탁한다(형식 변환 오류 방지).
+      Invoke-Retry { Invoke-ComMethod $src.ws 'Copy' @([Reflection.Missing]::Value, $src.ws) } | Out-Null
       $want = $src.ws.Index + 1; $ws = $null; foreach($t in $wb.Worksheets){ if($t.Index -eq $want){ $ws = $t } }
       # 이름도 이번 달로("08월 보고용" → "09월 보고용")
       $m2 = [regex]::Match([string]$src.ws.Name, '(\d{1,2})(?=\s*월)')
@@ -19433,10 +19444,18 @@ function Handle-CorpCardReportPdf($body){
       }
     }
     if(-not $refs){ $note = ($note + ' 보고용 시트에 월 시트를 가져오는 수식이 없어, 앱에서 보낸 내역이 PDF에 반영되지 않았을 수 있습니다.').Trim() }
-    Invoke-Retry { $xl.Calculate() } | Out-Null
-    Invoke-Retry { $ws.ExportAsFixedFormat(0, $pdf) } | Out-Null
+    $step = '다시 계산'
+    try { Invoke-Retry { [void]$xl.Calculate() } | Out-Null } catch {}
+    $step = 'PDF로 저장'
+    try { Invoke-Retry { Invoke-ComMethod $ws 'ExportAsFixedFormat' @(0, $pdf) } | Out-Null }
+    catch { Invoke-Retry { $ws.ExportAsFixedFormat(0, $pdf) } | Out-Null }
+    if(-not (Test-Path -LiteralPath $pdf)){ throw 'PDF 파일이 만들어지지 않았습니다.' }
+    $step = 'PDF 읽기'
     $bytes = [IO.File]::ReadAllBytes($pdf)
     return @{ bytes=$bytes; name=([IO.Path]::GetFileNameWithoutExtension($path) + '_' + $ws.Name + '.pdf'); sheet=[string]$ws.Name; note=$note }
+  } catch {
+    $ln = $_.InvocationInfo.ScriptLineNumber
+    throw "[$step] $($_.Exception.Message) (도우미 $ln 줄: $(([string]$_.InvocationInfo.Line).Trim()))"
   } finally {
     if($wb){ try { $wb.Close($false) } catch {} }
     if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} }
@@ -19840,6 +19859,7 @@ function Handle-Context($ctx){
     Send-Json $ctx $result 200
   } catch {
     $msg = "$($_.Exception.Message)"
+    try { $ln = $_.InvocationInfo.ScriptLineNumber; if($ln -and $msg -notmatch '^\['){ $msg = "$msg (도우미 $ln 줄: $(([string]$_.InvocationInfo.Line).Trim()))" } } catch {}
     Log "오류: $msg"
     try { Send-Json $ctx @{ ok=$false; error=$msg } 200 } catch {}
   }
