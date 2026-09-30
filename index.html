@@ -12742,7 +12742,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 14;
+const EXCEL_HELPER_VERSION = 15;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -16541,11 +16541,13 @@ function importLinkedFileHtml(){
       <span style="font-size:11.5px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:380px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}</span>
       ${linkedFileBtnHtml('importLinkedLoadBtn', '🔄 PC 엑셀에서 불러오기', 'var(--gold)', '연결된 실적리스트 파일의 지금 내용을 다시 읽어옵니다(엑셀 도우미 사용).')}
       ${(() => { const n = pendingImportOverrideRows().length; return n ? linkedFileBtnHtml('importLinkedWriteBtn', `💾 PC 엑셀에 반영 (${n}건)`, '#2e9e5b', '실적리스트에서 직접 고치거나 영업비 정산·사업 이윤정산에서 고친 값(노란 칸)을 연결된 엑셀 파일의 그 칸에 써 넣고 저장합니다(보통은 고치면 자동으로 씁니다).') : ''; })()}
+      ${importState.autoLoadNote ? `<span style="font-size:11px; color:${/^⚠/.test(importState.autoLoadNote)?'var(--neg)':'var(--muted)'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px;" title="${escapeHtml(importState.autoLoadNote)}">${escapeHtml(importState.autoLoadNote)}</span>` : `<span style="font-size:11px; color:var(--muted); white-space:nowrap;" title="이 탭을 보고 있는 동안 1분마다 PC 엑셀 파일이 저장됐는지 확인해 자동으로 다시 불러옵니다(엑셀 도우미 15판 이상).">🔄 자동 불러오기 켜짐</span>`}
       ${importState.excelWriteNote ? `<span style="font-size:11px; color:${/^⚠/.test(importState.excelWriteNote)?'var(--neg)':'var(--muted)'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px;" title="${escapeHtml(importState.excelWriteNote)}">${escapeHtml(importState.excelWriteNote)}</span>` : ''}
       <button id="importUnlinkFileBtn" title="연결 해제" style="font-size:11px; padding:4px 7px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">✕</button>
     </span>`;
 }
 function bindImportLinkedFileButtons(){
+  if(getLinkedFile(IMPORT_LINK_KEY)) ensureImportAutoSync();
   const run = async (btn, text, fn) => {
     const label = btn.textContent; btn.textContent = text; btn.disabled = true;
     try{ await fn(); }
@@ -16592,18 +16594,73 @@ async function readLinkedImportSheet(sheet){
   await loadXlsxLib();
   return { ...r, ws: XLSX.utils.aoa_to_sheet((r.rows||[]).map(row=>row.map(v=>v==null ? '' : v))) };
 }
-async function loadImportFromLinkedExcel(){
+// opts.quiet: 자동으로 다시 불러올 때 — 목록을 비우고 "불러오는 중"을 띄우지 않고, 보던 시트·검색어·체크를 그대로 둔 채 바꿔 넣는다.
+async function loadImportFromLinkedExcel(opts){
+  const quiet = !!(opts && opts.quiet);
   const link = getLinkedFile(IMPORT_LINK_KEY);
-  importState = { ...importState, prevRows: importState.rows && importState.rows.length ? importState.rows : importState.prevRows, fileName:(link && link.name)||'', sheetNames:[], sheetName:'', rows:[], search:'', loading:true, error:'', selected:new Set() };
-  renderImportMain();
+  const keepSheet = importState.sheetName || '';
+  if(quiet){
+    importState.prevRows = importState.rows && importState.rows.length ? importState.rows : importState.prevRows;
+  } else {
+    importState = { ...importState, prevRows: importState.rows && importState.rows.length ? importState.rows : importState.prevRows, fileName:(link && link.name)||'', sheetNames:[], sheetName:'', rows:[], search:'', loading:true, error:'', selected:new Set() };
+    renderImportMain();
+  }
   let r;
-  try{ r = await readLinkedImportSheet(''); }
-  catch(e){ importState.loading = false; renderImportMain(); throw e; }
+  try{ r = await readLinkedImportSheet(keepSheet); }
+  catch(e){ importState.loading = false; if(!quiet) renderImportMain(); throw e; }
   importState.fileName = r.name || importState.fileName;
   importState.workbook = { SheetNames: r.sheetNames, Sheets: { [r.sheet]: r.ws }, fromLinkedExcel: true };
   importState.sheetNames = r.sheetNames;
   importState.loading = false;
   parseImportSheet(r.sheet);
+  if(!quiet) rememberImportFileMtime();
+}
+// ---- PC 엑셀 → 앱 자동 불러오기 ----
+// 실적리스트 탭을 보고 있는 동안 1분마다(탭을 열 때는 바로) 도우미에게 연결된 파일의 저장 시각을 물어,
+// 마지막으로 불러온 뒤 파일이 저장(바뀜)됐으면 조용히 다시 불러온다. 엑셀에서 고친 내용은 "저장"해야 반영된다.
+// 앱이 파일에 쓴 직후에는 그 저장 시각을 기억해 두어 자기가 쓴 것 때문에 다시 불러오지 않는다.
+let importAutoTimer = null, importAutoLastCheck = 0, importAutoBusy = false;
+async function importFileStat(){
+  const link = getLinkedFile(IMPORT_LINK_KEY);
+  if(!link) return null;
+  const r = await excelHelperCall('/filestat', { path: link.path }, 15000);
+  return r && r.mtime ? String(r.mtime) : null;
+}
+async function rememberImportFileMtime(){
+  try{
+    if(excelHelperVersion < 15) return;
+    const m = await importFileStat();
+    const link = getLinkedFile(IMPORT_LINK_KEY);
+    if(m && link) setLinkedFile(IMPORT_LINK_KEY, { ...link, lastMtime: m });
+  }catch(e){}
+}
+async function checkImportFileChanged(force){
+  if(importAutoBusy || importOverrideWriting) return;
+  if(state.activeTab !== 'import' || importState.mode !== 'upload' || importState.loading) return;
+  const link = getLinkedFile(IMPORT_LINK_KEY);
+  if(!link) return;
+  if(!force && Date.now() - importAutoLastCheck < 55000) return;
+  // 표에서 칸을 고치는 중이면 이번엔 건너뛴다(입력 중인 화면이 바뀌지 않게).
+  const a = document.activeElement;
+  if(a && a.matches && a.matches('#main input, #main select, #main textarea')) return;
+  importAutoBusy = true; importAutoLastCheck = Date.now();
+  try{
+    await checkExcelHelper();
+    if(!excelHelperRunning || excelHelperVersion < 15) return;
+    const m = await importFileStat();
+    if(!m || m === link.lastMtime) return;
+    await loadImportFromLinkedExcel({ quiet:true });
+    const cur = getLinkedFile(IMPORT_LINK_KEY);
+    if(cur) setLinkedFile(IMPORT_LINK_KEY, { ...cur, lastMtime: m });
+    importState.autoLoadNote = `🔄 ${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} PC 엑셀에서 바뀐 내용을 자동으로 불러옴`;
+    if(state.activeTab === 'import') renderImportMain();
+  }catch(e){
+    importState.autoLoadNote = '⚠ 자동 불러오기 실패: ' + linkedFileErrorMessage(e).split('\n')[0];
+  }finally{ importAutoBusy = false; }
+}
+function ensureImportAutoSync(){
+  if(!importAutoTimer) importAutoTimer = setInterval(()=>checkImportFileChanged(false), 60000);
+  checkImportFileChanged(false);
 }
 async function loadImportWorkbookFile(file){
   importState = { ...importState, prevRows: importState.rows && importState.rows.length ? importState.rows : importState.prevRows, fileName:file.name, sheetNames:[], sheetName:'', rows:[], search:'', loading:true, error:'', selected:new Set() };
@@ -17043,6 +17100,7 @@ async function writeImportOverridesToExcel(opts){
     const res = await excelHelperCall('/sagup/write', { path: link.path, sheet: importState.sheetName,
       customerCol: cols.customer, dateCol: cols.date || 0, headerRow: Math.max(1, Math.min(...items.map(i=>i.row||1)) - 1), items }, 5*60*1000);
     const done = new Set(res.written || []);
+    if(done.size) rememberImportFileMtime();   // 방금 앱이 쓴 저장 때문에 자동으로 다시 불러오지 않게
     (importState.rows||[]).forEach(r=>{
       if(!done.has(r.id) || !r.caseOverrides) return;
       const item = items.find(i=>i.id===r.id);
@@ -19497,7 +19555,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '14'
+$Version = '15'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20362,6 +20420,13 @@ function Handle-Context($ctx){
       '/corpcard/write' { Handle-CorpCardWrite $body }
       '/cardmaster/write' { Handle-CardMasterWrite $body }
       '/sagup/write'      { Handle-SagupWrite $body }
+      '/filestat'         {
+        # 파일의 마지막 저장 시각(바뀌었는지 보는 용도) — 파일을 열지 않고 정보만 본다.
+        $p = [string]$body.path
+        if(-not (Test-Path -LiteralPath $p)){ throw "파일을 찾을 수 없습니다: $p" }
+        $fi = Get-Item -LiteralPath $p
+        @{ ok=$true; mtime=[string]$fi.LastWriteTimeUtc.Ticks; size=$fi.Length }
+      }
       '/tempdelete'     {
         # 도우미 임시 폴더 안의 파일만 지운다.
         $dir = [IO.Path]::GetFullPath((Join-Path $env:TEMP 'ExcelHelper'))
