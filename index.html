@@ -6613,7 +6613,7 @@ const PERF_COLUMNS = [
   ['totalAmount','계약금액','number'],
   ['moduleModel','모듈 모델명','module'],
   ['moduleQty','모듈수량','number'],
-  ['inverterModel','인버터 모델명','text'],
+  ['inverterModel','인버터 모델명','inverter'],
   ['inverterQty','인버터 수량','number'],
   ['team','시공담당자','team'],
   ['structureType','시공형태','text'],
@@ -16627,6 +16627,16 @@ function rebuildInverterDerived(){
   dl.innerHTML = inverterMaster.filter(i=>String(i.modelCode||'').trim()).map(i=>`<option value="${escapeHtml(i.modelCode)}">${escapeHtml(i.displayName||'')}</option>`).join('');
 }
 // 띄어쓰기·대소문자가 달라도 찾는다(예: "t3r7k", "T3R 7K").
+// 실적리스트에 적힌 인버터 모델명을 인버터 단가 관리의 모델명으로 맞춘다(못 찾으면 적힌 그대로).
+function matchInverterModel(v){
+  const s = String(v==null ? '' : v).trim();
+  if(!s) return '';
+  const norm = x => String(x||'').toUpperCase().replace(/[\s\-_.]/g,'');
+  const hit = inverterMaster.find(i=>String(i.modelCode||'').trim() === s)
+    || inverterMaster.find(i=>i.modelCode && norm(i.modelCode) === norm(s))
+    || inverterMaster.find(i=>i.displayName && norm(i.displayName) === norm(s));
+  return hit ? String(hit.modelCode).trim() : s;
+}
 function inverterPriceFor(model){
   const raw = String(model||'').trim();
   return PROFIT_INVERTER_PRICES[raw] || PROFIT_INVERTER_PRICES[raw.toUpperCase().replace(/[\s\-_.]/g,'')] || null;
@@ -16688,6 +16698,19 @@ function perfCellHtml(r, field, type){
       <option value="">선택 안 함</option>
       ${unknown ? `<option value="${escapeHtml(mv)}" selected>${escapeHtml(mv)} (목록에 없음)</option>` : ''}
       ${PERF_MODULE_MODELS.map(label=>`<option value="${escapeHtml(label)}" ${mv===label?'selected':''}>${escapeHtml(label)}</option>`).join('')}
+    </select>`;
+  }
+  if(type === 'inverter'){
+    // 인버터 단가 관리(모듈 단가 관리 탭)에 등록된 모델에서 고른다. 표기만 다른 값(띄어쓰기·대소문자·표시명)은
+    // 등록된 모델명으로 맞추고, 목록에 없는 값은 가리지 않고 빨간 글씨로 그대로 보여준다.
+    const iv = matchInverterModel(v);
+    if(iv !== (v==null ? '' : String(v))) r[field] = iv;
+    const codes = inverterMaster.map(i=>String(i.modelCode||'').trim()).filter(Boolean);
+    const unknown = iv && !codes.includes(iv);
+    return `<select data-perf="${field}" style="width:100%;${unknown ? ' color:var(--neg);' : ''}" ${unknown ? 'title="인버터 단가 관리 목록에 없는 모델명입니다(파일에 적힌 그대로 표시)"' : ''}>
+      <option value="">선택 안 함</option>
+      ${unknown ? `<option value="${escapeHtml(iv)}" selected>${escapeHtml(iv)} (목록에 없음)</option>` : ''}
+      ${inverterMaster.filter(i=>String(i.modelCode||'').trim()).map(i=>`<option value="${escapeHtml(i.modelCode)}" ${iv===i.modelCode?'selected':''}>${escapeHtml(i.modelCode)}${i.displayName ? ' · '+escapeHtml(i.displayName) : ''}</option>`).join('')}
     </select>`;
   }
   if(type === 'team'){
@@ -17096,7 +17119,7 @@ function parseImportSheet(sheetName){
         totalAmount: parseExcelNumber(get('totalAmount')),
         moduleModel: matchModuleModel(get('moduleModel')),
         moduleQty: parseExcelNumber(get('moduleQty')),
-        inverterModel: String(get('inverterModel')||''),
+        inverterModel: matchInverterModel(get('inverterModel')),
         inverterQty: parseExcelNumber(get('inverterQty')),
         team: String(get('team')||''),
         structureType: String(get('structureType')||''),
