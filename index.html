@@ -12742,7 +12742,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 12;
+const EXCEL_HELPER_VERSION = 13;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -14910,7 +14910,7 @@ async function exportCorpCardReportPdf(card, month, rows){
   const link = getLinkedFile(corpCardLinkKey(card.id));
   if(!link) throw new Error('연결된 파일이 없습니다.');
   await checkExcelHelper();
-  if(excelHelperRunning && excelHelperVersion < 12) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
+  if(excelHelperRunning && excelHelperVersion < 13) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
   const { columns, toValues } = corpCardHelperColumns();
   const res = await excelHelperFetch('/corpcard/reportpdf', { headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({ path: link.path, cardNumber: card.cardNumber, columns, month: { name: month, rows: rows.map(toValues) } }) }, 5*60*1000);
@@ -19497,7 +19497,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '12'
+$Version = '13'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -19821,16 +19821,52 @@ function Handle-CorpCardReportPdf($body){
     $ws = $rep.ws
     try { $ws.Visible = -1 } catch {}
     # 보고용 시트가 월 시트를 수식으로 가져오지 않으면 앱 내역이 반영되지 않는다 — 알려준다.
-    $refs = $false
-    foreach($s in $sheets){
-      if($s.Name -match '보고용' -or $null -eq (Get-MonthNum $s.Name)){ continue }
-      foreach($what in @("'$($s.Name)'!", "$($s.Name)!")){
-        try { if($ws.UsedRange.Find($what, [Type]::Missing, -4123, 2)){ $refs = $true } } catch {}
+    # (Find 대신 사용 범위의 수식을 한 번에 읽어 찾는다 — PC에 따라 Find 호출이 형식 오류로 실패해서)
+    $step = '보고용 시트 살펴보기'
+    $ur = $ws.UsedRange
+    $urRow = [int]$ur.Row; $urCol = [int]$ur.Column
+    $urRows = [int]$ur.Rows.Count; $urCols = [int]$ur.Columns.Count
+    $box = @{}
+    Invoke-Retry { $box.f = $ur.Formula; $box.v = $ur.Value2 } | Out-Null
+    $cellAt = { param($arr, $i, $j) if($urRows -eq 1 -and $urCols -eq 1){ $arr } else { $arr[$i, $j] } }
+    $monthRefs = @(); foreach($s in $sheets){ if($s.Name -notmatch '보고용' -and $null -ne (Get-MonthNum $s.Name)){ $monthRefs += "'$($s.Name)'!"; $monthRefs += "$($s.Name)!" } }
+    $monthRefs += "'$monthName'!"
+    $refs = $false; $hdrRow = 0; $hdrCol = 0; $totalRow = 0; $lastValRow = 0
+    for($i=1; $i -le $urRows; $i++){
+      $hasDate = $false; $hasPlace = $false
+      for($j=1; $j -le $urCols; $j++){
+        $fx = [string](& $cellAt $box.f $i $j)
+        if(-not $refs -and $fx.StartsWith('=')){ foreach($m in $monthRefs){ if($fx.Contains($m)){ $refs = $true; break } } }
+        $v = & $cellAt $box.v $i $j
+        if($null -eq $v -or ([string]$v).Trim() -eq ''){ continue }
+        $lastValRow = $urRow + $i - 1
+        $t = ([string]$v) -replace '\s',''
+        if($t -eq '날짜'){ $hasDate = $true; if(-not $hdrCol){ $hdrCol = $urCol + $j - 1 } }
+        if($t -eq '사용처'){ $hasPlace = $true }
+        if(-not $totalRow -and $t -eq '총사용금액합계'){ $totalRow = $urRow + $i - 1 }
       }
+      if(-not $hdrRow -and $hasDate -and $hasPlace){ $hdrRow = $urRow + $i - 1 } elseif(-not $hdrRow){ $hdrCol = 0 }
     }
     if(-not $refs){ $note = ($note + ' 보고용 시트에 월 시트를 가져오는 수식이 없어, 앱에서 보낸 내역이 PDF에 반영되지 않았을 수 있습니다.').Trim() }
     $step = '다시 계산'
     try { Invoke-Retry { [void]$xl.Calculate() } | Out-Null } catch {}
+    # 인쇄 범위를 "총 사용금액 합계" 줄(없으면 값이 있는 마지막 줄)까지로 줄여 뒤쪽 빈 페이지가 안 나오게 하고,
+    # 표 머리글("날짜 … 사용처" 줄)을 페이지마다 반복 인쇄해 2쪽부터도 머리글이 나오게 한다.
+    $step = '인쇄 범위·반복 머리글 맞추기'
+    try {
+      $colL = { param($n) $sN = ''; while($n -gt 0){ $m = ($n - 1) % 26; $sN = ([string][char](65 + $m)) + $sN; $n = [int][Math]::Floor(($n - $m) / 26) }; $sN }
+      $pa = ''; try { $pa = [string]$ws.PageSetup.PrintArea } catch {}
+      $c1 = & $colL $urCol; $r1 = 1; $c2 = & $colL ($urCol + $urCols - 1)
+      $pm = [regex]::Match($pa, '^\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)$')
+      if($pm.Success){ $c1 = $pm.Groups[1].Value; $r1 = [int]$pm.Groups[2].Value; $c2 = $pm.Groups[3].Value }
+      $lastRow = if($totalRow){ $totalRow } elseif($lastValRow){ $lastValRow } else { $urRow + $urRows - 1 }
+      $ws.PageSetup.PrintArea = ('$' + $c1 + '$' + $r1 + ':$' + $c2 + '$' + $lastRow)
+      if($hdrRow -and $hdrRow -gt $r1){
+        $h2 = $hdrRow
+        try { if($hdrCol){ $ma = $ws.Cells.Item($hdrRow, $hdrCol).MergeArea; $h2 = [int]$ma.Row + [int]$ma.Rows.Count - 1 } } catch {}
+        $ws.PageSetup.PrintTitleRows = ('$' + $hdrRow + ':$' + $h2)
+      }
+    } catch { Log "인쇄 설정 실패(그대로 PDF로 저장): $($_.Exception.Message)" }
     $step = 'PDF로 저장'
     try { Invoke-Retry { Invoke-ComMethod $ws 'ExportAsFixedFormat' @(0, $pdf) } | Out-Null }
     catch { Invoke-Retry { $ws.ExportAsFixedFormat(0, $pdf) } | Out-Null }
