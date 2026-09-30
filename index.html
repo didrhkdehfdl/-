@@ -609,6 +609,19 @@
   </div>
 </div>
 
+<div id="importEditLogOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:90; display:none; align-items:center; justify-content:center; padding:20px;">
+  <div style="background:var(--bg); border-radius:12px; width:900px; max-width:100%; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 20px; border-bottom:1px solid var(--line); flex-wrap:wrap;">
+      <div style="font-family:'Noto Sans KR', sans-serif; font-weight:700; font-size:15px;">📜 사급 실적리스트 수정 이력</div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button id="importEditLogBackupBtn" title="수정 이력 전체(고객·항목·원래 값·고친 값·고친 사람·시각)를 엑셀 파일로 내려받아 백업합니다." style="font-size:12px; padding:6px 12px; border-radius:6px; border:1px solid #2e9e5b; background:transparent; color:#2e9e5b; cursor:pointer; font-weight:600;">💾 이력 엑셀로 백업</button>
+        <button id="importEditLogCloseBtn" style="border:none; background:transparent; font-size:18px; color:var(--muted); cursor:pointer;">✕</button>
+      </div>
+    </div>
+    <div id="importEditLogList" style="padding:12px 20px; overflow:auto; flex:1;"></div>
+  </div>
+</div>
+
 <div id="genericHistoryOverlay" style="position:fixed; inset:0; background:rgba(20,20,20,.55); z-index:90; display:none; align-items:center; justify-content:center; padding:20px;">
   <div style="background:var(--bg); border-radius:12px; width:520px; max-width:100%; max-height:80vh; display:flex; flex-direction:column; overflow:hidden;">
     <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line);">
@@ -16086,7 +16099,7 @@ function renderUploadMode(){
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
         <div style="font-size:12px; color:var(--muted);">
           총 ${filtered.length}건 중 ${capped.length}건 표시${filtered.length>200?' (검색으로 좁혀보세요)':''}
-          ${(() => { const n = st.rows.filter(r=>r.editHistory && Object.keys(r.editHistory).length).length; return n ? ` · <span style="box-shadow:inset 3px 0 0 #4fa3e3; padding-left:7px;">수정한 행 ${n}건</span> (칸에 마우스를 올리면 원래 값이 보입니다) <button id="importClearEditMarks" style="font-size:11px; padding:3px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; margin-left:4px;">수정 표시 지우기</button>` : ''; })()}
+          ${(() => { const n = st.rows.filter(r=>r.editHistory && Object.keys(r.editHistory).length).length; const nLog = st.rows.some(r=>r.editLog && r.editLog.length); return (!n && nLog) ? ` · <button id="importEditLogBtn" style="font-size:11px; padding:3px 8px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">📜 수정 이력·되돌리기·백업</button>` : n ? ` · <span style="box-shadow:inset 3px 0 0 #4fa3e3; padding-left:7px;">수정한 행 ${n}건</span> (칸에 마우스를 올리면 원래 값이 보입니다) <button id="importEditLogBtn" style="font-size:11px; padding:3px 8px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer; margin-left:4px;">📜 수정 이력·되돌리기·백업</button> <button id="importClearEditMarks" style="font-size:11px; padding:3px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; margin-left:4px;">수정 표시 지우기</button>` : ''; })()}
         </div>
         ${st.selected.size>0 ? `
         <div style="display:flex; gap:8px;">
@@ -16149,9 +16162,11 @@ function renderUploadMode(){
     }
     parseImportSheet(name);
   });
+  const editLogBtn = document.getElementById('importEditLogBtn');
+  if(editLogBtn) editLogBtn.addEventListener('click', openImportEditLog);
   const clearMarksBtn = document.getElementById('importClearEditMarks');
   if(clearMarksBtn) clearMarksBtn.addEventListener('click', ()=>{
-    if(!confirm('실적리스트의 수정 이력 표시(왼쪽 파란 줄)를 모두 지울까요? 값은 그대로 두고 표시만 지웁니다.\n(아직 PC 엑셀에 못 쓴 노란 칸은 그대로 남습니다)')) return;
+    if(!confirm('실적리스트의 수정 표시(왼쪽 파란 줄)를 모두 지울까요? 값은 그대로 두고 표시만 지웁니다.\n(📜 수정 이력 목록과 아직 PC 엑셀에 못 쓴 노란 칸은 그대로 남습니다)')) return;
     (importState.rows||[]).forEach(r=>{ delete r.editHistory; });
     debouncedSaveImportRows();
     renderImportMain();
@@ -16626,6 +16641,7 @@ function carryOverImportRowIds(rows, prevRows){
     if(!old) return;
     r.id = old.id;
     if(old.editHistory) r.editHistory = { ...old.editHistory };
+    if(old.editLog) r.editLog = old.editLog.slice();
     if(old.caseOverrides && Object.keys(old.caseOverrides).length){
       r.caseOverrides = { ...old.caseOverrides };
       Object.keys(r.caseOverrides).forEach(f=>{ r[f] = r.caseOverrides[f]; });
@@ -17072,7 +17088,7 @@ const debouncedWriteImportOverrides = debounce(()=>{ writeImportOverridesToExcel
 // ---- 실적리스트 칸 표시 ----
 // · 노란 바탕: 앱에서 고쳤는데 아직 PC 엑셀 파일에 못 쓴 칸(caseOverrides) — 파일에 쓰면 사라진다.
 // · 왼쪽 파란 줄: 앱에서 고친 적이 있는 칸(editHistory) — 파일에 써도 남는다(원래 값·고친 사람·시각을 칸에 마우스를 올리면 보여준다).
-const IMPORT_EDIT_SOURCE_LABEL = { list:'실적리스트', sales:'영업비 정산', profit:'사업 이윤정산' };
+const IMPORT_EDIT_SOURCE_LABEL = { list:'실적리스트', sales:'영업비 정산', profit:'사업 이윤정산', revert:'되돌리기' };
 function recordImportEdit(row, field, prevVal, newVal, source){
   if(!row) return;
   const norm = v => v==null ? '' : String(v);
@@ -17081,6 +17097,101 @@ function recordImportEdit(row, field, prevVal, newVal, source){
   if(first === norm(newVal)){ delete hist[field]; }   // 원래 값으로 되돌렸으면 표시도 지운다
   else hist[field] = { from: first, to: norm(newVal), at: new Date().toISOString(), by: presenceDisplayName(), src: source };
   if(Object.keys(hist).length) row.editHistory = hist; else delete row.editHistory;
+  // 시간순 수정 이력(되돌리기·백업용). 한 칸을 이어서 타이핑하는 동안(같은 사람, 1분 안)은 한 줄로 합친다.
+  const log = row.editLog || [];
+  const last = log[log.length-1];
+  const me = presenceDisplayName(), now = Date.now();
+  if(last && last.f === field && last.by === me && last.src === source && now - Date.parse(last.at) < 60000){
+    last.to = norm(newVal); last.at = new Date(now).toISOString();
+    if(last.from === last.to) log.pop();
+  } else if(norm(prevVal) !== norm(newVal)){
+    log.push({ f: field, from: norm(prevVal), to: norm(newVal), at: new Date(now).toISOString(), by: me, src: source });
+  }
+  if(log.length > 100) log.splice(0, log.length - 100);
+  if(log.length) row.editLog = log; else delete row.editLog;
+}
+// ---- 수정 이력 창: 모든 행의 수정 이력을 최신순으로 보여주고, 한 줄씩 "고치기 전 값으로 되돌리기"와
+// 전체 이력을 엑셀로 내려받는 백업을 한다. 되돌린 값도 한 번의 수정으로 기록되고 PC 엑셀 파일에 쓴다.
+function importFieldLabel(f){
+  const c = PERF_COLUMNS.find(([k])=>k===f);
+  if(c) return c[1];
+  const m = IMPORT_HEADER_MAP.find(([,k])=>k===f);
+  return m ? m[0] : f;
+}
+function collectImportEditLog(){
+  const items = [];
+  (importState.rows||[]).forEach(r=>{
+    (r.editLog||[]).forEach((e, i)=>items.push({ row: r, idx: i, e }));
+  });
+  items.sort((a,b)=>String(b.e.at).localeCompare(String(a.e.at)));
+  return items;
+}
+function fmtEditAt(iso){
+  const d = new Date(iso);
+  if(isNaN(d)) return '';
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function openImportEditLog(){
+  const overlay = document.getElementById('importEditLogOverlay');
+  const listEl = document.getElementById('importEditLogList');
+  const render = () => {
+    const items = collectImportEditLog();
+    if(!items.length){ listEl.innerHTML = '<div style="color:var(--muted); font-size:13px; padding:20px 0; text-align:center;">수정 이력이 없습니다.</div>'; return; }
+    const cell = 'padding:6px 8px; border-bottom:1px solid var(--line); font-size:12px; vertical-align:top;';
+    listEl.innerHTML = `<table style="width:100%; border-collapse:collapse;">
+      <thead><tr>${['시각','고객명','항목','원래 값','고친 값','고친 사람','어디서',''].map(h=>`<th style="${cell} text-align:left; color:var(--muted); font-weight:600; white-space:nowrap; position:sticky; top:0; background:var(--bg);">${h}</th>`).join('')}</tr></thead>
+      <tbody>${items.map((it,k)=>{
+        const cur = it.row[it.e.f]==null ? '' : String(it.row[it.e.f]);
+        const already = cur === it.e.from;
+        return `<tr>
+          <td style="${cell} white-space:nowrap;">${escapeHtml(fmtEditAt(it.e.at))}</td>
+          <td style="${cell}">${escapeHtml(it.row.customer||'')}</td>
+          <td style="${cell} white-space:nowrap;">${escapeHtml(importFieldLabel(it.e.f))}</td>
+          <td style="${cell} color:var(--muted);">${it.e.from===''?'<i>(빈칸)</i>':escapeHtml(it.e.from)}</td>
+          <td style="${cell}">${it.e.to===''?'<i>(빈칸)</i>':escapeHtml(it.e.to)}</td>
+          <td style="${cell} white-space:nowrap;">${escapeHtml(it.e.by||'')}</td>
+          <td style="${cell} white-space:nowrap;">${escapeHtml(IMPORT_EDIT_SOURCE_LABEL[it.e.src]||it.e.src||'')}</td>
+          <td style="${cell} white-space:nowrap;">${already ? '<span style="color:var(--muted); font-size:11px;">지금 이 값</span>'
+            : `<button class="import-edit-revert" data-k="${k}" title="이 칸을 &quot;원래 값&quot;으로 되돌립니다(PC 엑셀 파일에도 씁니다)." style="font-size:11px; padding:3px 8px; border-radius:5px; border:1px solid var(--gold); background:transparent; color:var(--gold); cursor:pointer;">↩ 되돌리기</button>`}</td>
+        </tr>`; }).join('')}</tbody></table>`;
+    listEl.querySelectorAll('.import-edit-revert').forEach(btn=>btn.addEventListener('click', ()=>{
+      const it = items[Number(btn.dataset.k)];
+      if(!it) return;
+      if(!confirm(`${it.row.customer||''} · ${importFieldLabel(it.e.f)}\n"${it.e.to}" → "${it.e.from}"(으)로 되돌릴까요?`)) return;
+      revertImportEdit(it.row, it.e);
+      render();
+    }));
+  };
+  document.getElementById('importEditLogCloseBtn').onclick = () => { overlay.style.display = 'none'; if(state.activeTab === 'import') renderImportMain(); };
+  document.getElementById('importEditLogBackupBtn').onclick = () => backupImportEditLog();
+  render();
+  overlay.style.display = 'flex';
+}
+function revertImportEdit(row, e){
+  const f = e.f;
+  const isNum = IMPORT_WRITE_TYPES[f] === 'number';
+  const val = isNum ? (e.from === '' ? 0 : (Number(String(e.from).replace(/,/g,'')) || 0)) : e.from;
+  const prev = row[f];
+  row[f] = val;
+  recordImportEdit(row, f, prev, val, 'revert');
+  if((importState.rows||[]).includes(row)){
+    row.caseOverrides = { ...(row.caseOverrides||{}), [f]: val };
+    debouncedSaveImportRows(); debouncedSyncFromImportRows(); debouncedWriteImportOverrides();
+  } else { debouncedSavePerfRows(); debouncedSyncFromManualRows(); }
+}
+async function backupImportEditLog(){
+  const items = collectImportEditLog();
+  if(!items.length){ alert('백업할 수정 이력이 없습니다.'); return; }
+  await loadXlsxLib();
+  const aoa = [['시각','고객명','시공일자','항목','원래 값','고친 값','지금 값','고친 사람','어디서']].concat(items.map(it=>[
+    fmtEditAt(it.e.at), it.row.customer||'', it.row.date||'', importFieldLabel(it.e.f), it.e.from, it.e.to,
+    it.row[it.e.f]==null ? '' : String(it.row[it.e.f]), it.e.by||'', IMPORT_EDIT_SOURCE_LABEL[it.e.src]||it.e.src||'',
+  ]));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:17},{wch:18},{wch:12},{wch:14},{wch:22},{wch:22},{wch:22},{wch:12},{wch:14}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '수정이력');
+  XLSX.writeFile(wb, `사급실적리스트_수정이력_${isoDate(new Date())}.xlsx`);
 }
 function perfCellMark(r, f){
   const pending = !!(r && r.caseOverrides && Object.prototype.hasOwnProperty.call(r.caseOverrides, f));
