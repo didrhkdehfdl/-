@@ -12727,7 +12727,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 7;
+const EXCEL_HELPER_VERSION = 8;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -14561,13 +14561,26 @@ async function renderCorpCardMain(){
     const exportRows = picked.length ? picked : rows;
     const cardId = activeCard.id;
     // 인쇄·PDF 저장을 실제로 누르면 내보낸 행에 날짜를 남겨서 "어디까지 출력했는지" 보이게 한다.
-    openCorpCardMonthPrintPreview(activeCard, s.activeMonth, exportRows, ()=>{
+    const markExported = ()=>{
       const at = new Date().toISOString();
       exportRows.forEach(r=>{ r.pdfExportedAt = at; });
       markCorpCardDirty(cardId);
       flushCorpCardSave();
       if(state.activeTab === 'corpCard' && corpCardState.activeCardId === cardId) renderCorpCardMain();
-    });
+    };
+    if(corpCardUsesReportPdf(activeCard)){
+      // 연결된 엑셀의 "N월 보고용" 탭 모양 그대로(엑셀 도우미가 엑셀로 PDF를 만든다).
+      const label = monthPdfBtn.textContent;
+      monthPdfBtn.disabled = true; monthPdfBtn.textContent = '보고용 탭 PDF 만드는 중…';
+      exportCorpCardReportPdf(activeCard, s.activeMonth, exportRows).then(r=>{
+        markExported();
+        if(r.note) alert(`"${r.sheet}" 탭으로 PDF를 만들었습니다.\n\n${r.note}`);
+      }).catch(err=>alert(linkedFileErrorMessage(err))).finally(()=>{
+        if(document.body.contains(monthPdfBtn)){ monthPdfBtn.disabled = false; monthPdfBtn.textContent = label; }
+      });
+      return;
+    }
+    openCorpCardMonthPrintPreview(activeCard, s.activeMonth, exportRows, markExported);
   });
   const selectAllBox = document.getElementById('corpCardSelectAllBox');
   if(selectAllBox){
@@ -14797,6 +14810,7 @@ function corpCardLinkRowHtml(card){
       ${link ? `
         ${btn('cc-link-save', '💾 PC 엑셀에 저장', '#2e9e5b', '법인카드 탭에 적은 내역을 연결된 엑셀 파일에 바로 써 넣고 저장합니다(엑셀에서 열어 둔 채로도 됩니다). 내역이 있는 달의 입력 칸만 바꾸고 다른 부분은 그대로 둡니다.')}
         ${btn('cc-link-load', '🔄 PC 엑셀에서 불러오기', 'var(--gold)', '연결된 엑셀 파일의 지금 내용(엑셀에서 열어 둔 채 아직 저장 안 한 내용 포함)을 앱으로 가져옵니다. 이 카드의 앱 내역이 파일 내용으로 바뀝니다.')}
+        <label title="켜면 법인카드 탭의 &quot;이 달 PDF로 내보내기&quot;가 이 파일의 &quot;N월 보고용&quot; 탭을 엑셀이 직접 PDF로 만든 것으로 나옵니다(파일 복사본에 이 달 내역을 넣어 만들고, 원본 파일은 그대로)." style="display:inline-flex; align-items:center; gap:4px; font-size:12px; color:var(--text); cursor:pointer; white-space:nowrap;"><input type="checkbox" class="cc-link-reportpdf" data-card="${card.id}" ${corpCardUsesReportPdf(card)?'checked':''}> PDF는 보고용 탭으로</label>
         ${btn('cc-link-pick', '다른 파일로 바꾸기', 'var(--muted)', '이 카드에 연결할 파일을 다시 고릅니다.')}
         ${btn('cc-link-unlink', '✕ 해제', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
       ` : btn('cc-link-pick', '🔗 PC 엑셀 파일 연결', 'var(--sky)', '내 PC(네트워크 드라이브 포함)에 있는 이 카드의 관리대장 엑셀 파일을 연결합니다. 파일 선택 창은 엑셀 도우미가 띄웁니다.')}
@@ -14837,6 +14851,12 @@ function bindCorpCardLinkButtons(rerender){
     if(!confirm(`${card.label||card.cardNumber} 카드와 PC 엑셀 파일의 연결을 해제할까요? (파일 자체는 그대로 남습니다)`)) return;
     unlinkFile(corpCardLinkKey(card.id)); rerender();
   }));
+  document.querySelectorAll('.cc-link-reportpdf').forEach(box=>box.addEventListener('change', ()=>{
+    const card = cardOf(box); if(!card) return;
+    const key = corpCardLinkKey(card.id);
+    const link = getLinkedFile(key); if(!link) return;
+    setLinkedFile(key, { ...link, reportPdf: box.checked });
+  }));
   document.querySelectorAll('.cc-link-save').forEach(btn=>btn.addEventListener('click', ()=>{
     const card = cardOf(btn); if(!card) return;
     busy(btn, '저장 중…', ()=>saveCorpCardToLinkedFile(card));
@@ -14849,6 +14869,46 @@ function bindCorpCardLinkButtons(rerender){
       if(await importCorpCardFile(file, card.id)){ alert(`"${file.name}" 파일 내용을 불러왔습니다.`); rerender(); }
     });
   }));
+}
+// 도우미에 보낼 열 구성(B~Q)과, 앱 행 하나를 그 열 순서의 값 배열로 바꾸는 함수.
+function corpCardHelperColumns(){
+  const fields = CORP_CARD_COL_LETTERS.map((l,i)=>CORP_CARD_COLUMNS[i][0]);
+  const columns = CORP_CARD_COL_LETTERS.map((letter,i)=>({ letter, type: fields[i]==='date' ? 'date' : (fields[i]==='amount' ? 'number' : 'text') }));
+  const toValues = r => fields.map(f => {
+    if(f === 'date') return /^\d{4}-\d{2}-\d{2}$/.test(String(r.date||'')) ? r.date : '';
+    if(f === 'amount') return Number(r.amount)||0;
+    return r[f] == null ? '' : String(r[f]);
+  });
+  return { columns, toValues };
+}
+// "이 달 PDF로 내보내기"를 연결된 엑셀 파일의 "N월 보고용" 탭 모양으로 할지(카드별, 이 PC에 저장).
+// 1956 카드는 처음부터 켜 둔다(보고용 탭으로 보고하는 카드).
+function corpCardUsesReportPdf(card){
+  const link = getLinkedFile(corpCardLinkKey(card.id));
+  if(!link) return false;
+  if(link.reportPdf === undefined) return /1956$/.test(String(card.cardNumber||'').replace(/\D/g,''));
+  return !!link.reportPdf;
+}
+// 도우미가 연결된 파일의 복사본에 이 달 내역(rows)을 넣고 보고용 탭을 엑셀로 PDF로 만들어 준다
+// (원본 파일은 그대로). 받은 PDF를 내려받는다.
+async function exportCorpCardReportPdf(card, month, rows){
+  const link = getLinkedFile(corpCardLinkKey(card.id));
+  if(!link) throw new Error('연결된 파일이 없습니다.');
+  await checkExcelHelper();
+  if(excelHelperRunning && excelHelperVersion < 8) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
+  const { columns, toValues } = corpCardHelperColumns();
+  const res = await excelHelperFetch('/corpcard/reportpdf', { headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ path: link.path, cardNumber: card.cardNumber, columns, month: { name: month, rows: rows.map(toValues) } }) }, 5*60*1000);
+  if(!/octet-stream/.test(res.headers.get('Content-Type')||'')){ await excelHelperJson(res); throw new Error('PDF를 만들지 못했습니다.'); }
+  const blob = new Blob([await res.arrayBuffer()], { type:'application/pdf' });
+  const sheet = decodeURIComponent(res.headers.get('X-Report-Sheet')||'');
+  const note = decodeURIComponent(res.headers.get('X-Report-Note')||'');
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `법인카드_${card.label||card.cardNumber}_${month}_${isoDate(new Date())}.pdf`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
+  return { sheet, note };
 }
 async function saveCorpCardToLinkedFile(card){
   const key = corpCardLinkKey(card.id);
@@ -14863,16 +14923,8 @@ async function saveCorpCardToLinkedFile(card){
   const rowsByMonth = corpCardState.rowsByCard[card.id] || {};
   const monthsWithData = Object.keys(rowsByMonth).filter(m => (rowsByMonth[m]||[]).length>0);
   if(!monthsWithData.length){ alert('입력된 내역이 없습니다.'); return; }
-  const fields = CORP_CARD_COL_LETTERS.map((l,i)=>CORP_CARD_COLUMNS[i][0]);
-  const columns = CORP_CARD_COL_LETTERS.map((letter,i)=>({ letter, type: fields[i]==='date' ? 'date' : (fields[i]==='amount' ? 'number' : 'text') }));
-  const months = monthsWithData.map(name => ({
-    name,
-    rows: rowsByMonth[name].map(r => fields.map(f => {
-      if(f === 'date') return /^\d{4}-\d{2}-\d{2}$/.test(String(r.date||'')) ? r.date : '';
-      if(f === 'amount') return Number(r.amount)||0;
-      return r[f] == null ? '' : String(r[f]);
-    })),
-  }));
+  const { columns, toValues } = corpCardHelperColumns();
+  const months = monthsWithData.map(name => ({ name, rows: rowsByMonth[name].map(toValues) }));
   const res = await excelHelperCall('/corpcard/write', { path: link.path, cardNumber: card.cardNumber, columns, months }, 5*60*1000);
   // 앱에 보관하는 양식도 방금 저장한 파일로 맞춰 둔다(인쇄 모양이 PC 파일과 같게).
   try{
@@ -19102,7 +19154,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '7'
+$Version = '8'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -19313,6 +19365,83 @@ function Handle-CorpCardWrite($body){
   } finally {
     try { $xl.ScreenUpdating = $true } catch {}
     if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+  }
+}
+
+# ---- 보고용 탭을 PDF로 — 카드 관리대장 파일의 "N월 보고용" 시트를 엑셀이 직접 PDF로 만든다 ----
+# 원본 파일은 건드리지 않는다: 복사본(임시 폴더)을 만들어 그 달 시트에 앱 내역(보낸 행만)을
+# 넣고, 보고용 시트를 엑셀의 "PDF로 저장"으로 뽑은 뒤 복사본은 지운다. 그 달 보고용 시트가
+# 없으면 가장 가까운 이전 달 보고용 시트를 복사해 쓰고, 수식이 가리키는 월 시트만 이번 달로 바꾼다.
+function Handle-CorpCardReportPdf($body){
+  $path = [string]$body.path
+  $monthName = [string]$body.month.name
+  $num = Get-MonthNum $monthName
+  if($null -eq $num){ throw "달 이름을 알 수 없습니다: $monthName" }
+  $dir = Join-Path $env:TEMP 'ExcelHelper'
+  [void](New-Item -ItemType Directory -Force -Path $dir)
+  $id = [Guid]::NewGuid().ToString('N').Substring(0,8)
+  $tmp = Join-Path $dir ($id + '_report' + [IO.Path]::GetExtension($path))
+  $pdf = Join-Path $dir ($id + '_report.pdf')
+  $xl = Get-Excel $true
+  $open = Find-OpenWorkbook $xl $path
+  if($open){ Invoke-Retry { $open.SaveCopyAs($tmp) } | Out-Null }   # 열려 있으면 저장 안 한 내용까지
+  else {
+    if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
+    Copy-Item -LiteralPath $path -Destination $tmp -Force
+  }
+  $wb = $null
+  try {
+    # 1) 복사본의 그 달 시트에 내역 넣기(없는 달이면 이전 달 시트를 복사해 만든다)
+    [void](Handle-CorpCardWrite ([pscustomobject]@{ path=$tmp; cardNumber=$body.cardNumber; columns=$body.columns; months=@($body.month) }))
+    # (쓰기가 끝나면 엑셀이 닫혔을 수 있으니 다시 잡는다)
+    $xl = Get-Excel $true
+    $wb = Invoke-Retry { $xl.Workbooks.Open($tmp) }
+    $sheets = @(); foreach($s in $wb.Worksheets){ $sheets += $s }
+    $reports = @($sheets | Where-Object { $_.Name -match '보고용' } | ForEach-Object {
+      $n = if($_.Name -match '(\d{1,2})\s*월'){ [int]$Matches[1] } else { $null }
+      [pscustomobject]@{ ws=$_; num=$n } })
+    if($reports.Count -eq 0){ throw '이 파일에 "보고용" 시트가 없습니다.' }
+    $rep = $reports | Where-Object { $_.num -eq $num } | Select-Object -First 1
+    $note = ''
+    if(-not $rep){
+      $src = $reports | Where-Object { $null -ne $_.num -and $_.num -lt $num } | Sort-Object num -Descending | Select-Object -First 1
+      if(-not $src){ $src = $reports | Where-Object { $null -ne $_.num } | Sort-Object num -Descending | Select-Object -First 1 }
+      if(-not $src){ $src = $reports[0] }
+      Invoke-Retry { $src.ws.Copy([Type]::Missing, $src.ws) } | Out-Null
+      $want = $src.ws.Index + 1; $ws = $null; foreach($t in $wb.Worksheets){ if($t.Index -eq $want){ $ws = $t } }
+      # 이름도 이번 달로("08월 보고용" → "09월 보고용")
+      $m2 = [regex]::Match([string]$src.ws.Name, '(\d{1,2})(?=\s*월)')
+      if($m2.Success){ try { $ws.Name = ([string]$src.ws.Name).Remove($m2.Index, $m2.Length).Insert($m2.Index, ([string]$num).PadLeft($m2.Length, '0')) } catch {} }
+      # 수식이 가리키는 월 시트("8 월")를 이번 달 시트("9 월")로 바꾼다.
+      $srcMonth = $sheets | Where-Object { $_.Name -notmatch '보고용' -and (Get-MonthNum $_.Name) -eq $src.num } | Select-Object -First 1
+      if($srcMonth){
+        foreach($pair in @(@("'$($srcMonth.Name)'!", "'$monthName'!"), @("$($srcMonth.Name)!", "'$monthName'!"))){
+          try { [void]$ws.UsedRange.Replace($pair[0], $pair[1], 2) } catch {}
+        }
+      }
+      $note = "${num}월 보고용 시트가 없어 ""$($src.ws.Name)"" 시트를 본떠 만들었습니다(수식이 가리키는 달만 $monthName 으로 바꿈)."
+      $rep = [pscustomobject]@{ ws=$ws; num=$num }
+    }
+    $ws = $rep.ws
+    try { $ws.Visible = -1 } catch {}
+    # 보고용 시트가 월 시트를 수식으로 가져오지 않으면 앱 내역이 반영되지 않는다 — 알려준다.
+    $refs = $false
+    foreach($s in $sheets){
+      if($s.Name -match '보고용' -or $null -eq (Get-MonthNum $s.Name)){ continue }
+      foreach($what in @("'$($s.Name)'!", "$($s.Name)!")){
+        try { if($ws.UsedRange.Find($what, [Type]::Missing, -4123, 2)){ $refs = $true } } catch {}
+      }
+    }
+    if(-not $refs){ $note = ($note + ' 보고용 시트에 월 시트를 가져오는 수식이 없어, 앱에서 보낸 내역이 PDF에 반영되지 않았을 수 있습니다.').Trim() }
+    Invoke-Retry { $xl.Calculate() } | Out-Null
+    Invoke-Retry { $ws.ExportAsFixedFormat(0, $pdf) } | Out-Null
+    $bytes = [IO.File]::ReadAllBytes($pdf)
+    return @{ bytes=$bytes; name=([IO.Path]::GetFileNameWithoutExtension($path) + '_' + $ws.Name + '.pdf'); sheet=[string]$ws.Name; note=$note }
+  } finally {
+    if($wb){ try { $wb.Close($false) } catch {} }
+    if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} }
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $pdf -Force -ErrorAction SilentlyContinue
   }
 }
 
@@ -19677,6 +19806,13 @@ function Handle-Context($ctx){
     $reader = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8)
     $text = $reader.ReadToEnd(); $reader.Close()
     $body = if($text){ $text | ConvertFrom-Json } else { [pscustomobject]@{} }
+    if($route -eq '/corpcard/reportpdf'){
+      Log "$route $($body.path) $($body.month.name)"
+      $r = Handle-CorpCardReportPdf $body
+      $ctx.Response.Headers.Add('X-Report-Sheet', [Uri]::EscapeDataString($r.sheet))
+      $ctx.Response.Headers.Add('X-Report-Note', [Uri]::EscapeDataString($r.note))
+      Send-Bytes $ctx $r.bytes $r.name $false; return
+    }
     if($route -eq '/readvalues'){
       Log "$route $($body.path) $($body.sheet)"
       Send-JsonText $ctx (Handle-ReadValues $body); return
@@ -19712,7 +19848,7 @@ function Handle-Context($ctx){
 function Send-Bytes($ctx, [byte[]]$bytes, [string]$name, [bool]$wasOpen){
   $ctx.Response.StatusCode = 200
   $ctx.Response.ContentType = 'application/octet-stream'
-  $ctx.Response.Headers.Add('Access-Control-Expose-Headers', 'X-File-Name, X-Was-Open')
+  $ctx.Response.Headers.Add('Access-Control-Expose-Headers', 'X-File-Name, X-Was-Open, X-Report-Sheet, X-Report-Note')
   $ctx.Response.Headers.Add('X-File-Name', [Uri]::EscapeDataString($name))
   $ctx.Response.Headers.Add('X-Was-Open', $(if($wasOpen){ '1' } else { '0' }))
   $ctx.Response.ContentLength64 = $bytes.Length
