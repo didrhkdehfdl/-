@@ -12742,7 +12742,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 11;
+const EXCEL_HELPER_VERSION = 12;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -14910,7 +14910,7 @@ async function exportCorpCardReportPdf(card, month, rows){
   const link = getLinkedFile(corpCardLinkKey(card.id));
   if(!link) throw new Error('연결된 파일이 없습니다.');
   await checkExcelHelper();
-  if(excelHelperRunning && excelHelperVersion < 9) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
+  if(excelHelperRunning && excelHelperVersion < 12) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
   const { columns, toValues } = corpCardHelperColumns();
   const res = await excelHelperFetch('/corpcard/reportpdf', { headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({ path: link.path, cardNumber: card.cardNumber, columns, month: { name: month, rows: rows.map(toValues) } }) }, 5*60*1000);
@@ -19497,7 +19497,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '11'
+$Version = '12'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -19669,7 +19669,7 @@ function Handle-CorpCardWrite($body){
         $target = Get-MonthNum $name
         $src = ($monthSheets | Where-Object { $_.num -lt $target } | Sort-Object num -Descending | Select-Object -First 1)
         if(-not $src){ $src = ($monthSheets | Sort-Object num | Select-Object -First 1) }
-        Invoke-Retry { $src.ws.Copy([Type]::Missing, $src.ws) } | Out-Null
+        Invoke-Retry { Copy-SheetAfter $src.ws } | Out-Null
         # 복사본은 원본 바로 오른쪽(원본 순번 + 1)에 생긴다
         $want = $src.ws.Index + 1; $ws = $null; foreach($t in $wb.Worksheets){ if($t.Index -eq $want){ $ws = $t } }
         $ws.Name = $name
@@ -19731,6 +19731,33 @@ function Handle-CorpCardWrite($body){
 # 넣고, 보고용 시트를 엑셀의 "PDF로 저장"으로 뽑은 뒤 복사본은 지운다. 그 달 보고용 시트가
 # 없으면 가장 가까운 이전 달 보고용 시트를 복사해 쓰고, 수식이 가리키는 월 시트만 이번 달로 바꾼다.
 # COM 메서드를 PowerShell 변환 없이 엑셀(IDispatch)에 바로 부른다.
+# 시트를 바로 오른쪽에 복사한다(Copy After:=시트). PC마다 COM 인수 변환이 달라
+# "형식이 일치하지 않습니다"가 나는 경우가 있어서, 되는 방법이 나올 때까지 차례로 시도한다:
+#  1) 인수 이름(After)을 붙여 엑셀에 바로 요청  2) PowerShell 보통 호출
+#  3) 다음 시트 앞에 복사(Before:=다음 시트)  4) 맨 뒤 시트면: 앞에 복사한 뒤 원본을 복사본 앞으로 옮김
+function Copy-SheetAfter($ws){
+  $o = if($ws -is [psobject]){ $ws.psobject.BaseObject } else { $ws }
+  $errs = @()
+  try { [void]$o.GetType().InvokeMember('Copy', [Reflection.BindingFlags]::InvokeMethod, $null, $o, [object[]]@($o), $null, $null, [string[]]@('After')); return } catch { $errs += "$($_.Exception.Message)" }
+  try { [void]$ws.Copy([Type]::Missing, $ws); return } catch { $errs += "$($_.Exception.Message)" }
+  $wb = $ws.Parent
+  $next = $null; foreach($t in $wb.Sheets){ if($t.Index -eq $ws.Index + 1){ $next = $t } }
+  if($next){
+    $no = $next.psobject.BaseObject
+    try { [void]$o.GetType().InvokeMember('Copy', [Reflection.BindingFlags]::InvokeMethod, $null, $o, [object[]]@($no), $null, $null, [string[]]@('Before')); return } catch { $errs += "$($_.Exception.Message)" }
+    try { [void]$ws.Copy($next); return } catch { $errs += "$($_.Exception.Message)" }
+  } else {
+    # 맨 뒤 시트: 자기 앞에 복사하면 복사본이 자기 자리(Index)에 오고 원본이 한 칸 뒤로 밀린다 →
+    # 원본을 복사본 앞으로 옮겨 "원본, 복사본" 순서로 만든다.
+    try {
+      [void]$ws.Copy($ws)
+      $copy = $null; foreach($t in $wb.Sheets){ if($t.Index -eq $ws.Index - 1){ $copy = $t } }
+      if($copy){ [void]$ws.Move($copy) }
+      return
+    } catch { $errs += "$($_.Exception.Message)" }
+  }
+  throw "시트를 복사하지 못했습니다 — $($errs -join ' / ')"
+}
 function Invoke-ComMethod($obj, [string]$name, [object[]]$argList){
   $o = if($obj -is [psobject]){ $obj.psobject.BaseObject } else { $obj }
   $a = @($argList | ForEach-Object { if($null -ne $_ -and $_.psobject.BaseObject.GetType().Name -eq '__ComObject'){ $_.psobject.BaseObject } else { $_ } })
@@ -19776,7 +19803,7 @@ function Handle-CorpCardReportPdf($body){
       if(-not $src){ $src = $reports[0] }
       $step = '보고용 시트 복사'
       # PowerShell의 COM 변환을 거치지 않고 엑셀에 바로 부탁한다(형식 변환 오류 방지).
-      Invoke-Retry { Invoke-ComMethod $src.ws 'Copy' @([Reflection.Missing]::Value, $src.ws) } | Out-Null
+      Invoke-Retry { Copy-SheetAfter $src.ws } | Out-Null
       $want = $src.ws.Index + 1; $ws = $null; foreach($t in $wb.Worksheets){ if($t.Index -eq $want){ $ws = $t } }
       # 이름도 이번 달로("08월 보고용" → "09월 보고용")
       $m2 = [regex]::Match([string]$src.ws.Name, '(\d{1,2})(?=\s*월)')
@@ -20027,7 +20054,7 @@ function Handle-CardMasterWrite($body){
         if(-not $src){ $src = $pool | Sort-Object { & $monthOf $_.Name } | Select-Object -Last 1 }
         if(-not $src){ throw "통합본에 본으로 삼을 월 시트가 없어 ${num}월 시트를 만들 수 없습니다." }
         $newName = if($src.Name -match '\d\s+월'){ "${num} 월" } else { "${num}월" }
-        Invoke-Retry { $src.Copy([Type]::Missing, $src) } | Out-Null
+        Invoke-Retry { Copy-SheetAfter $src } | Out-Null
         # 복사본은 원본 바로 오른쪽(원본 순번 + 1)에 생긴다
         $want = $src.Index + 1; $ws = $null; foreach($t in $wb.Worksheets){ if($t.Index -eq $want){ $ws = $t } }
         Invoke-Retry { $ws.Name = $newName } | Out-Null
