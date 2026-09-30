@@ -12742,7 +12742,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 13;
+const EXCEL_HELPER_VERSION = 14;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -14910,7 +14910,7 @@ async function exportCorpCardReportPdf(card, month, rows){
   const link = getLinkedFile(corpCardLinkKey(card.id));
   if(!link) throw new Error('연결된 파일이 없습니다.');
   await checkExcelHelper();
-  if(excelHelperRunning && excelHelperVersion < 13) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
+  if(excelHelperRunning && excelHelperVersion < 14) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
   const { columns, toValues } = corpCardHelperColumns();
   const res = await excelHelperFetch('/corpcard/reportpdf', { headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({ path: link.path, cardNumber: card.cardNumber, columns, month: { name: month, rows: rows.map(toValues) } }) }, 5*60*1000);
@@ -19497,7 +19497,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '13'
+$Version = '14'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -19848,6 +19848,25 @@ function Handle-CorpCardReportPdf($body){
       if(-not $hdrRow -and $hasDate -and $hasPlace){ $hdrRow = $urRow + $i - 1 } elseif(-not $hdrRow){ $hdrCol = 0 }
     }
     if(-not $refs){ $note = ($note + ' 보고용 시트에 월 시트를 가져오는 수식이 없어, 앱에서 보낸 내역이 PDF에 반영되지 않았을 수 있습니다.').Trim() }
+    # 보고용 시트는 월 시트의 줄을 한 줄씩 수식으로 가져오는데 줄 수가 정해져 있다 — 이번 달 내역이 더 많으면
+    # 뒷부분이 PDF에서 빠진다. 머리글과 "총 사용금액 합계" 사이 줄이 모자라면 합계 바로 위에 줄을 끼워 넣고
+    # (합계 SUM 범위 안쪽이라 범위도 같이 늘어난다) 첫 내역 줄의 수식을 아래로 채워(FillDown) 줄마다 월 시트의
+    # 다음 줄을 가리키게 한다.
+    $step = '보고용 시트 줄 늘리기'
+    $want = @($body.month.rows).Count
+    if($refs -and $hdrRow -and $totalRow -and $want -gt 0){
+      $h2 = $hdrRow
+      try { if($hdrCol){ $ma = $ws.Cells.Item($hdrRow, $hdrCol).MergeArea; $h2 = [int]$ma.Row + [int]$ma.Rows.Count - 1 } } catch {}
+      $firstData = $h2 + 1; $lastData = $totalRow - 1
+      $cap = $lastData - $firstData + 1
+      if($cap -ge 1 -and $want -gt $cap){
+        $need = $want - $cap
+        Invoke-Retry { [void]$ws.Range("A$($lastData):A$($lastData + $need - 1)").EntireRow.Insert() } | Out-Null
+        $lastData += $need; $totalRow += $need
+        Invoke-Retry { [void]$ws.Range("A$($firstData):A$($lastData)").EntireRow.FillDown() } | Out-Null
+        $note = ($note + " 보고용 시트 줄이 모자라 $need 줄을 늘렸습니다(내역 $want 건).").Trim()
+      }
+    }
     $step = '다시 계산'
     try { Invoke-Retry { [void]$xl.Calculate() } | Out-Null } catch {}
     # 인쇄 범위를 "총 사용금액 합계" 줄(없으면 값이 있는 마지막 줄)까지로 줄여 뒤쪽 빈 페이지가 안 나오게 하고,
