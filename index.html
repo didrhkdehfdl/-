@@ -1427,6 +1427,7 @@ function applyProfitListFieldChange(p, col, inputEl){
   if(pfield === 'structureNote') applyAttachedStructurePricing(p);
   if(pfield === 'structureBuy') p.structureSell = Math.round((Number(p.structureBuy)||0) * 1.2);
   if(pfield === 'capacityKw') p.constructionCost = computeConstructionCost(p.capacityKw);
+  pushCaseEditsToImportRow('profit', p, (pfield === 'moduleModel' || pfield === 'structureNote') ? [pfield, 'depositPrice'] : [pfield]);
 }
 
 // Computes every PROFIT_LIST_COLUMNS value for one profit case, reusing
@@ -6254,6 +6255,7 @@ function renderProfitMain(){
       }
       updateProfitCalculations();
       debouncedSave();
+      pushCaseEditsToImportRow('profit', p, (key === 'moduleModel' || key === 'structureNote') ? [key, 'depositPrice'] : [key]);
       if(key === 'moduleModel' || key === 'module2Model' || key === 'inverterModel' || key === 'structureNote') renderProfitMain();
     };
     let markupDirty = false;
@@ -16111,7 +16113,7 @@ function renderUploadMode(){
               <tr data-row-id="${r.id}" class="${st.selected.has(r.id)?'row-selected':''}">
                 <td style="padding:6px 4px; text-align:center;"><input type="checkbox" class="import-row-check" data-idx="${i}" ${st.selected.has(r.id)?'checked':''}></td>
                 <td class="seq-cell">${i+1}</td>
-                ${PERF_COLUMNS.map(([f,label,type])=>`<td>${perfCellHtml(r,f,type)}</td>`).join('')}
+                ${PERF_COLUMNS.map(([f,label,type])=>`<td${perfOverrideTdAttr(r,f)}>${perfCellHtml(r,f,type)}</td>`).join('')}
                 <td style="padding:6px; white-space:nowrap;">
                   <button class="import-make-sales" data-idx="${i}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">영업비 정산</button>
                   <button class="import-make-profit" data-idx="${i}" style="font-size:11px; padding:5px 8px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">이윤정산</button>
@@ -16166,6 +16168,7 @@ function renderUploadMode(){
       const field = inp.dataset.perf;
       row[field] = isNumeric ? (parseFloat(String(inp.value).replace(/,/g,''))||0) : inp.value;
       if(field === 'certDate') delete row.certDateAuto; // 사람이 직접 손댔으니 자동 채움 표시는 지운다
+      if(row.caseOverrides && field in row.caseOverrides){ delete row.caseOverrides[field]; const td = inp.closest('td'); if(td){ td.removeAttribute('style'); td.removeAttribute('title'); } }
       if(field === 'moduleModel' || field === 'structureType'){
         const price = computePerfCompanyPrice(row);
         if(price !== null){
@@ -16382,7 +16385,7 @@ function renderPerfRowHtml(r, i){
     <tr class="perf-main-row ${importState.selectedManual.has(r.id)?'row-selected':''}" data-id="${r.id}">
       <td style="padding:6px 4px; text-align:center;"><input type="checkbox" class="perf-row-check" data-id="${r.id}" ${importState.selectedManual.has(r.id)?'checked':''}></td>
       <td class="seq-cell">${i+1}</td>
-      ${PERF_COLUMNS.map(([f,label,type])=>`<td>${perfCellHtml(r,f,type)}</td>`).join('')}
+      ${PERF_COLUMNS.map(([f,label,type])=>`<td${perfOverrideTdAttr(r,f)}>${perfCellHtml(r,f,type)}</td>`).join('')}
       <td class="manage-cell" style="display:block;">
         <button class="perf-make-sales" style="width:100%; font-size:10.5px; padding:5px 4px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">영업비 정산</button>
         <button class="perf-make-profit" style="width:100%; margin-top:3px; font-size:10.5px; padding:5px 4px; border-radius:5px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">이윤정산</button>
@@ -16440,6 +16443,7 @@ function wirePerfRowEvents(){
       const field = inp.dataset.perf;
       row[field] = isNumeric ? (parseFloat(String(inp.value).replace(/,/g,''))||0) : inp.value;
       if(field === 'certDate') delete row.certDateAuto; // 사람이 직접 손댔으니 자동 채움 표시는 지운다
+      if(row.caseOverrides && field in row.caseOverrides){ delete row.caseOverrides[field]; const td = inp.closest('td'); if(td){ td.removeAttribute('style'); td.removeAttribute('title'); } }
       if(field === 'moduleModel' || field === 'structureType'){
         const price = computePerfCompanyPrice(row);
         if(price !== null){
@@ -16553,7 +16557,7 @@ async function readLinkedImportSheet(sheet){
 }
 async function loadImportFromLinkedExcel(){
   const link = getLinkedFile(IMPORT_LINK_KEY);
-  importState = { ...importState, fileName:(link && link.name)||'', sheetNames:[], sheetName:'', rows:[], search:'', loading:true, error:'', selected:new Set() };
+  importState = { ...importState, prevRows: importState.rows && importState.rows.length ? importState.rows : importState.prevRows, fileName:(link && link.name)||'', sheetNames:[], sheetName:'', rows:[], search:'', loading:true, error:'', selected:new Set() };
   renderImportMain();
   let r;
   try{ r = await readLinkedImportSheet(''); }
@@ -16565,7 +16569,7 @@ async function loadImportFromLinkedExcel(){
   parseImportSheet(r.sheet);
 }
 async function loadImportWorkbookFile(file){
-  importState = { ...importState, fileName:file.name, sheetNames:[], sheetName:'', rows:[], search:'', loading:true, error:'', selected:new Set() };
+  importState = { ...importState, prevRows: importState.rows && importState.rows.length ? importState.rows : importState.prevRows, fileName:file.name, sheetNames:[], sheetName:'', rows:[], search:'', loading:true, error:'', selected:new Set() };
   renderImportMain();
   try{
     await loadXlsxLib();
@@ -16584,6 +16588,27 @@ async function loadImportWorkbookFile(file){
   }
 }
 
+// 파일을 다시 불러와도 같은 고객 행(고객명+시공일자, 같은 게 여럿이면 순서대로)은 예전 행 id를
+// 그대로 쓴다 — 그래야 그 행으로 만든 영업비 정산·이윤정산 건과의 연결이 끊기지 않는다.
+// 정산 쪽에서 고친 값(caseOverrides)도 다시 덮어 유지한다.
+function carryOverImportRowIds(rows, prevRows){
+  // 정산 쪽에서 고객명·날짜를 고쳤어도 짝을 찾도록, 파일에 적혀 있던 값으로 만든 열쇠(fileKey)를 행에 남겨 둔다.
+  const keyOf = r => `${String(r.customer||'').replace(/\s+/g,'')}|${r.date||''}`;
+  rows.forEach(r=>{ r.fileKey = keyOf(r); });
+  if(!prevRows || !prevRows.length) return;
+  const pool = new Map();
+  prevRows.forEach(r=>{ const k = r.fileKey || keyOf(r); if(!pool.has(k)) pool.set(k, []); pool.get(k).push(r); });
+  rows.forEach(r=>{
+    const list = pool.get(r.fileKey);
+    const old = list && list.shift();
+    if(!old) return;
+    r.id = old.id;
+    if(old.caseOverrides && Object.keys(old.caseOverrides).length){
+      r.caseOverrides = { ...old.caseOverrides };
+      Object.keys(r.caseOverrides).forEach(f=>{ r[f] = r.caseOverrides[f]; });
+    }
+  });
+}
 function parseImportSheet(sheetName){
   try{
     const wb = importState.workbook;
@@ -16675,6 +16700,7 @@ function parseImportSheet(sheetName){
         note: redactRRN(String(get('note')||'')),
       });
     }
+    carryOverImportRowIds(rows, importState.prevRows || importState.rows || []);
     importState.sheetName = sheetName;
     importState.rows = rows;
     importState.error = rows.length ? '' : '이 시트에서 고객 데이터를 찾지 못했습니다.';
@@ -16875,6 +16901,63 @@ async function syncCasesFromImportRows(rows){
 }
 const debouncedSyncFromImportRows = debounce(()=> syncCasesFromImportRows(importState.rows), 600);
 const debouncedSyncFromManualRows = debounce(()=> syncCasesFromImportRows(importState.manualRows), 600);
+// ---- 반대 방향: 영업비 정산·사업 이윤정산에서 고친 값을 그 건을 만든 실적리스트 행에도 반영 ----
+// 정산 쪽 항목 → 실적리스트 항목. 정산 건에만 있는 값(비고 문구, 매입·매출 단가 등)은 넣지 않는다.
+const SALES_FIELD_TO_ROW = { date:'date', contractDate:'contractDate', depositDate:'depositDate', customer:'customer',
+  address:'address', team:'team', structureType:'structureType', corp:'corp', capacity:'capacity', deposit:'deposit',
+  companyPrice:'companyPrice', extra:'extra', module:'moduleModel', inverter:'inverter' };
+const PROFIT_FIELD_TO_ROW = { customer:'customer', corp:'corp', inspectionCert:'certDate', constructionDate:'date',
+  capacityKw:'capacity', agentName:'agent', teamName:'team', totalBusinessCost:'supplyAmount', depositPrice:'companyPrice',
+  moduleModel:'moduleModel', moduleQty:'moduleQty', inverterModel:'inverterModel', inverterQty:'inverterQty',
+  structureNote:'structureType', structureBuy:'structureBuy', structureSell:'structureSell', customerDeposit:'deposit',
+  salesDeduction:'extra', salesDeductionNote:'extraNote' };
+function findImportRowById(id){
+  if(!id) return null;
+  let row = (importState.rows||[]).find(r=>r.id===id);
+  if(row) return { row, list:'upload' };
+  row = (importState.manualRows||[]).find(r=>r.id===id);
+  return row ? { row, list:'manual' } : null;
+}
+// kind: 'sales'(영업비 레코드) | 'profit'(이윤정산 건), keys: 방금 고친 항목들
+function pushCaseEditsToImportRow(kind, obj, keys){
+  const hit = obj && findImportRowById(obj.sourceRowId);
+  if(!hit) return;
+  const map = kind === 'profit' ? PROFIT_FIELD_TO_ROW : SALES_FIELD_TO_ROW;
+  const updates = {};
+  keys.forEach(k=>{
+    const f = map[k];
+    if(!f) return;
+    const v = obj[k];
+    if(f === 'inverter'){
+      // 영업비 정산의 "금비 3.7kW*2" → 인버터 모델명 "금비 3.7kW" + 수량 2
+      const m = String(v||'').trim().match(/^(.*?)(?:\s*\*\s*(\d+(?:\.\d+)?))?$/);
+      updates.inverterModel = m ? m[1].trim() : String(v||'');
+      if(m && m[2]) updates.inverterQty = Number(m[2]);
+      return;
+    }
+    if(f === 'capacity'){ updates.capacity = String(v==null ? '' : v).replace(/\s*kw\s*$/i, '').trim(); return; }
+    if(f === 'companyPrice' || f === 'extra'){ updates[f] = Math.abs(Number(v)||0); return; }
+    updates[f] = v;
+  });
+  const row = hit.row;
+  let changed = false;
+  Object.keys(updates).forEach(f=>{
+    if(JSON.stringify(row[f]) === JSON.stringify(updates[f])) return;
+    row[f] = updates[f];
+    if(f === 'certDate') delete row.certDateAuto;
+    // 엑셀에서 다시 불러와도 이 값이 유지되도록(그리고 목록에서 표시되도록) 적어 둔다.
+    row.caseOverrides = { ...(row.caseOverrides||{}), [f]: updates[f] };
+    changed = true;
+  });
+  if(!changed) return;
+  if(hit.list === 'upload'){ debouncedSaveImportRows(); debouncedSyncFromImportRows(); }
+  else { debouncedSavePerfRows(); debouncedSyncFromManualRows(); }
+}
+// 실적리스트 표에서 정산 쪽에서 고친 칸은 옅은 노란색으로 표시한다.
+function perfOverrideTdAttr(r, f){
+  return r && r.caseOverrides && Object.prototype.hasOwnProperty.call(r.caseOverrides, f)
+    ? ' style="background:rgba(214,158,46,.16);" title="영업비 정산·사업 이윤정산에서 고친 값입니다(엑셀에서 다시 불러와도 유지)"' : '';
+}
 function createCaseFromImportRow(row, type){
   if(!row) return;
   if(type === 'sales'){
@@ -17111,6 +17194,7 @@ function renderRecordRows(){
       debouncedSave();
       updateTotalsOnly();
       refreshDocsOnly();
+      pushCaseEditsToImportRow('sales', rec, (f === 'module' || f === 'capacity') ? [f,'companyPrice'] : [f]);
     };
     inp.addEventListener('input', handler);
     inp.addEventListener('change', handler);
