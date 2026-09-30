@@ -5468,8 +5468,11 @@ async function writeProfitCasesToLinkedLedger(cases, opts){
   Object.keys(LEDGER_FORMULA_TEMPLATES).forEach(col => { templates[col] = LEDGER_FORMULA_TEMPLATES[col]('{n}'); });
   const items = cases.map(p => ({ id: p.id, customer: p.customer || '', onlyExisting: !!(opts && opts.onlyExisting),
     cells: profitLedgerCellsFor(p, findMatchingSalesRecord(p.customer)) }));
-  return excelHelperCall('/profitledger/write', { path: link.path, sheet: PROFIT_LEDGER_SHEET, headerRow: 4, dataStart: 6,
+  const res = await excelHelperCall('/profitledger/write', { path: link.path, sheet: PROFIT_LEDGER_SHEET, headerRow: 4, dataStart: 6,
     headerChecks: { C:'고객명', L:'총사업비', AP:'회사입금가' }, formulaTemplates: templates, items }, 5*60*1000);
+  // 방금 앱이 쓴 저장 때문에 "파일이 바뀌었다"며 다시 읽지 않게 저장 시각을 기억한다.
+  if((res.results||[]).some(r=>!r.error && !r.skipped)) await rememberProfitLedgerMtime();
+  return res;
 }
 function profitLedgerResultText(res){
   const rs = res.results || [];
@@ -5509,12 +5512,13 @@ function profitLedgerLinkHtml(writeLabel){
       ${writeLabel ? b('profitLedgerLinkWriteBtn', writeLabel, '#2e9e5b', '같은 고객명의 행을 갱신하고, 없으면 마지막 고객 행 아래에 새 행을 만들어 기록합니다(엑셀에 열어 둔 채로도 됩니다). 기록 전 원본은 건드리지 않은 다른 칸·시트·수식 그대로 둡니다.') : ''}
       ${b('profitLedgerLinkPickBtn', '다른 파일로 바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
       ${b('profitLedgerUnlinkBtn', '✕ 해제', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
-      <span id="profitLedgerAutoNote" style="font-size:11px; color:${/^⚠/.test(profitLedgerAutoNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(profitLedgerAutoNote || '이윤정산 건을 고치면 파일에 이미 있는 고객 행은 자동으로 갱신됩니다.')}</span>`
+      <span id="profitLedgerAutoNote" style="font-size:11px; color:${/^⚠/.test(profitLedgerAutoNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(profitLedgerAutoNote || '양방향 자동 연동: 이윤정산을 고치면 파일의 고객 행이, 파일에서 고치고 저장하면 이윤정산이 자동으로 바뀝니다(1분마다 확인).')}</span>`
     : `${b('profitLedgerLinkPickBtn', '🔗 PC 엑셀 파일 연결', 'var(--sky)', 'W:\\9.회계\\1. 사업관련\\3. 사급 의 "사급 건별 정산 (2026년)_최종" 같은 정산데이터 파일을 연결합니다. 파일 선택 창은 엑셀 도우미가 띄웁니다.')}
        <span style="font-size:11px; color:var(--muted);">연결하면 파일을 올리고 내려받지 않고 PC 파일에 바로 기록합니다(엑셀 도우미 필요).</span>`}
   </div>`;
 }
 function bindProfitLedgerLinkButtons(getCases, rerender, onMessage){
+  ensureProfitLedgerSync();
   const busy = async (btn, text, fn) => {
     const label = btn.textContent; btn.textContent = text; btn.disabled = true;
     try{ await fn(); } catch(e){ alert(linkedFileErrorMessage(e)); } finally{ btn.textContent = label; btn.disabled = false; }
@@ -5538,6 +5542,125 @@ function bindProfitLedgerLinkButtons(getCases, rerender, onMessage){
     if(onMessage) onMessage(msg); else alert(msg);
     rerender();
   }));
+}
+// ---- 사급 건별 정산 PC 파일 → 이윤정산 자동 반영 ----
+// 이윤정산 탭을 보는 동안 1분마다(탭을 열 때는 바로) 파일 저장 시각을 확인해, 바뀌었으면 정산데이터 시트를 읽는다.
+// 지난번에 읽은 값(스냅샷)과 비교해 "파일에서 바뀐 칸"만 같은 고객명의 이윤정산 건에 넣는다 — 그래서 처음 연결했을
+// 때는 기준만 잡고 아무것도 바꾸지 않으며, 앱에서 고쳐 파일에 쓴 값이 되돌아오지도 않는다.
+// 같은 고객명의 이윤정산 건이 여러 개면 어느 건인지 알 수 없어 건너뛴다. 파일에서 가져온 항목은 "직접 고친 항목"으로
+// 표시해 실적리스트 쪽 자동 갱신이 덮어쓰지 않게 하고, 실적리스트(와 그 PC 파일)에도 전달한다.
+const PROFIT_LEDGER_READ_MAP = [
+  ['D','branch','text'], ['E','constructionDate','date'], ['G','corp','text'], ['H','agentName','text'], ['J','teamName','text'],
+  ['K','capacityKw','number'], ['L','totalBusinessCost','vat'], ['P','moduleModel','text'], ['Q','moduleQty','number'],
+  ['U','inverterModel','text'], ['V','inverterQty','number'], ['W','inverterBuy','number'], ['X','inverterSell','number'],
+  ['Z','structureNote','text'], ['AA','structureQty','number'], ['AB','structureBuy','number'], ['AE','etcMaterial','number'],
+  ['AG','structureReviewCost','number'], ['AH','designSupervisionCost','number'], ['AI','inspectionFeeCost','number'],
+  ['AJ','constructionCost','number'], ['AK','etcAgencyCost','number'], ['AP','depositPrice','number'],
+  ['AQ','salesDeduction','number'], ['AS','salesDeductionNote','text'], ['AU','maintenanceCost','number'],
+];
+const PROFIT_LEDGER_SNAPSHOT_KEY = 'profit-ledger-snapshot-v1';
+function normLedgerVal(v, type){
+  if(v === null || v === undefined) v = '';
+  if(type === 'number' || type === 'vat'){ const n = Number(String(v).replace(/,/g,'')); return v === '' || isNaN(n) ? '' : String(Math.round(n*100)/100); }
+  return String(v).trim();
+}
+let profitLedgerSyncTimer = null, profitLedgerLastCheck = 0, profitLedgerSyncBusy = false;
+async function rememberProfitLedgerMtime(){
+  try{
+    const link = getLinkedFile(PROFIT_LEDGER_LINK_KEY);
+    if(!link || excelHelperVersion < 16) return;
+    const r = await excelHelperCall('/filestat', { path: link.path }, 15000);
+    if(r && r.mtime) setLinkedFile(PROFIT_LEDGER_LINK_KEY, { ...getLinkedFile(PROFIT_LEDGER_LINK_KEY), lastMtime: String(r.mtime) });
+  }catch(e){}
+}
+async function loadAllProfitCases(){
+  const out = [];
+  for(const entry of state.cases){
+    if(entry.caseType !== 'profit') continue;
+    const c = caseCache[entry.id] || await loadCase(entry.id);
+    if(c){ caseCache[entry.id] = c; out.push(c); }
+  }
+  return out;
+}
+async function syncProfitCasesFromLedgerFile(force){
+  if(profitLedgerSyncBusy || state.activeTab !== 'profit') return;
+  const link = getLinkedFile(PROFIT_LEDGER_LINK_KEY);
+  if(!link) return;
+  if(!force && Date.now() - profitLedgerLastCheck < 55000) return;
+  const a = document.activeElement;
+  if(a && a.matches && a.matches('#main input, #main select, #main textarea')) return;  // 입력 중이면 이번엔 건너뜀
+  profitLedgerSyncBusy = true; profitLedgerLastCheck = Date.now();
+  try{
+    await checkExcelHelper();
+    if(!excelHelperRunning || excelHelperVersion < 16) return;
+    const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
+    const mtime = st && st.mtime ? String(st.mtime) : '';
+    if(!mtime || mtime === link.lastMtime) return;
+    const r = await excelHelperCall('/readvalues', { path: link.path, sheet: PROFIT_LEDGER_SHEET }, 5*60*1000);
+    if(r.sheet !== PROFIT_LEDGER_SHEET) throw new Error(`"${PROFIT_LEDGER_SHEET}" 시트를 찾지 못했습니다.`);
+    const rows = r.rows || [];
+    const idx = col => xlsxColToIdx(col);
+    const fresh = {};
+    for(let i=5; i<rows.length; i++){               // 6행부터
+      const cust = String((rows[i]||[])[idx('C')] ?? '').trim();
+      if(!cust) continue;
+      if(fresh[cust]){ fresh[cust].__dup = true; continue; }
+      const vals = {};
+      PROFIT_LEDGER_READ_MAP.forEach(([col,,type]) => { vals[col] = normLedgerVal((rows[i]||[])[idx(col)], type); });
+      fresh[cust] = vals;
+    }
+    let snap = null;
+    try{ snap = JSON.parse(localStorage.getItem(PROFIT_LEDGER_SNAPSHOT_KEY) || 'null'); }catch(e){}
+    const applied = [];
+    if(snap && snap.path === link.path){
+      await ensureSalesCasesLoaded();
+      const profits = await loadAllProfitCases();
+      Object.keys(fresh).forEach(cust => {
+        const now = fresh[cust], before = snap.rows[cust];
+        if(now.__dup || !before) return;
+        const changedCols = PROFIT_LEDGER_READ_MAP.filter(([col]) => now[col] !== before[col]);
+        if(!changedCols.length) return;
+        const matches = profits.filter(p => String(p.customer||'').trim() === cust);
+        if(matches.length !== 1) return;
+        const p = matches[0];
+        const caseCells = {}; profitLedgerCellsFor(p, findMatchingSalesRecord(p.customer)).forEach(c => { caseCells[c.col] = c; });
+        const fields = [];
+        changedCols.forEach(([col, field, type]) => {
+          const cc = caseCells[col];
+          if(cc && normLedgerVal(cc.value, type) === now[col]) return;   // 이미 앱과 같은 값
+          const raw = now[col];
+          let val;
+          if(type === 'number') val = raw === '' ? 0 : Number(raw);
+          else if(type === 'vat') val = raw === '' ? 0 : Math.round(Number(raw)/1.1);
+          else val = raw;
+          p[field] = val;
+          if(field === 'moduleModel'){ const pr = PROFIT_MODULE_PRICES[val]; if(pr){ p.moduleBuy = pr.buy; p.moduleSell = pr.sell; } }
+          if(!p.touchedFields) p.touchedFields = [];
+          if(!p.touchedFields.includes(field)) p.touchedFields.push(field);
+          fields.push(field);
+        });
+        if(!fields.length) return;
+        persistCase(p);
+        pushCaseEditsToImportRow('profit', p, fields);
+        applied.push(`${cust}(${fields.length}항목)`);
+      });
+    }
+    try{ localStorage.setItem(PROFIT_LEDGER_SNAPSHOT_KEY, JSON.stringify({ path: link.path, rows: fresh })); }catch(e){}
+    setLinkedFile(PROFIT_LEDGER_LINK_KEY, { ...getLinkedFile(PROFIT_LEDGER_LINK_KEY), lastMtime: mtime });
+    const t = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+    profitLedgerAutoNote = !snap || snap.path !== link.path ? `${t} 사급 건별 정산 파일을 읽어 기준을 잡았습니다(이제부터 파일에서 고친 칸이 자동 반영됩니다).`
+      : applied.length ? `${t} 파일에서 고친 내용 반영: ${applied.join(', ')}` : `${t} 파일 확인 — 이윤정산에 반영할 변경 없음`;
+    if(applied.length && state.activeTab === 'profit') renderMain();
+    else { const el = document.getElementById('profitLedgerAutoNote'); if(el){ el.textContent = profitLedgerAutoNote; el.style.color = 'var(--muted)'; } }
+  }catch(e){
+    profitLedgerAutoNote = '⚠ 사급 건별 정산 파일 읽기 실패: ' + linkedFileErrorMessage(e).split('\n')[0];
+    const el = document.getElementById('profitLedgerAutoNote'); if(el){ el.textContent = profitLedgerAutoNote; el.style.color = 'var(--neg)'; }
+  }finally{ profitLedgerSyncBusy = false; }
+}
+function ensureProfitLedgerSync(){
+  if(!getLinkedFile(PROFIT_LEDGER_LINK_KEY)) return;
+  if(!profitLedgerSyncTimer) profitLedgerSyncTimer = setInterval(()=>syncProfitCasesFromLedgerFile(false), 60000);
+  syncProfitCasesFromLedgerFile(false);
 }
 function expandLedgerNamedRange(wbDoc, name, newRowNum){
   // 같은 이름의 이름정의가 여러 개 있을 수 있다(예: "화성 15건" 시트 전용
