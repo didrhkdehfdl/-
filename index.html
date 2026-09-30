@@ -854,7 +854,7 @@ const debouncedSavePerfRows = debounce(()=>{
 const debouncedSaveImportRows = debounce(()=>{
   saveWithGenericHistory(IMPORT_DATA_KEY, JSON.stringify({
     fileName: importState.fileName, sheetNames: importState.sheetNames,
-    sheetName: importState.sheetName, rows: importState.rows
+    sheetName: importState.sheetName, xlCols: importState.xlCols, rows: importState.rows
   }));
 }, 500);
 
@@ -12729,7 +12729,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 10;
+const EXCEL_HELPER_VERSION = 11;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -16507,6 +16507,8 @@ function importLinkedFileHtml(){
   return `<span style="display:inline-flex; align-items:center; gap:6px; padding:3px 6px; border-radius:8px; border:1px dashed var(--sky); max-width:100%;">
       <span style="font-size:11.5px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:380px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}</span>
       ${linkedFileBtnHtml('importLinkedLoadBtn', '🔄 PC 엑셀에서 불러오기', 'var(--gold)', '연결된 실적리스트 파일의 지금 내용을 다시 읽어옵니다(엑셀 도우미 사용).')}
+      ${(() => { const n = pendingImportOverrideRows().length; return n ? linkedFileBtnHtml('importLinkedWriteBtn', `💾 PC 엑셀에 반영 (${n}건)`, '#2e9e5b', '영업비 정산·사업 이윤정산에서 고친 값(노란 칸)을 연결된 엑셀 파일의 그 칸에 써 넣고 저장합니다(보통은 고치면 자동으로 씁니다).') : ''; })()}
+      ${importState.excelWriteNote ? `<span style="font-size:11px; color:${/^⚠/.test(importState.excelWriteNote)?'var(--neg)':'var(--muted)'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px;" title="${escapeHtml(importState.excelWriteNote)}">${escapeHtml(importState.excelWriteNote)}</span>` : ''}
       <button id="importUnlinkFileBtn" title="연결 해제" style="font-size:11px; padding:4px 7px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">✕</button>
     </span>`;
 }
@@ -16532,6 +16534,8 @@ function bindImportLinkedFileButtons(){
     if(!link){ renderImportMain(); return; }
     await loadFromLink();
   }));
+  const writeBtn = document.getElementById('importLinkedWriteBtn');
+  if(writeBtn) writeBtn.addEventListener('click', ()=>run(writeBtn, '쓰는 중…', ()=>writeImportOverridesToExcel()));
   const loadBtn = document.getElementById('importLinkedLoadBtn');
   if(loadBtn) loadBtn.addEventListener('click', ()=>run(loadBtn, '불러오는 중…', loadFromLink));
   const unlinkBtn = document.getElementById('importUnlinkFileBtn');
@@ -16657,6 +16661,11 @@ function parseImportSheet(sheetName){
       }
     }
 
+    // 엑셀의 실제 행·열 번호(1부터) — 정산에서 고친 값을 PC 엑셀 파일의 그 칸에 다시 쓸 때 쓴다.
+    const origin = sheet && sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']).s : { r:0, c:0 };
+    const xlCols = {};
+    Object.keys(colMap).forEach(f=>{ xlCols[f] = colMap[f] + origin.c + 1; });
+    importState.xlCols = xlCols;
     const rows = [];
     for(let i=headerRowIdx+1; i<grid.length; i++){
       const row = grid[i];
@@ -16666,6 +16675,7 @@ function parseImportSheet(sheetName){
       if(!customer) continue; // skip rows without a customer name (section spacers, totals, etc.)
       rows.push({
         id: rid(),
+        xlRow: i + origin.r + 1,
         date: excelDateToIso(get('date')),
         contractDate: excelDateToIso(get('contractDate')),
         corp: String(get('corp')||''),
@@ -16707,10 +16717,12 @@ function parseImportSheet(sheetName){
     if(rows.length){
       saveWithGenericHistory(IMPORT_DATA_KEY, JSON.stringify({
         fileName: importState.fileName, sheetNames: importState.sheetNames,
-        sheetName: importState.sheetName, rows: importState.rows
+        sheetName: importState.sheetName, xlCols: importState.xlCols, rows: importState.rows
       }));
     }
     renderImportMain();
+    // 불러온 파일에 아직 못 쓴 정산 쪽 수정이 남아 있으면 바로 써 넣는다.
+    if(rows.some(r=>r.caseOverrides && Object.keys(r.caseOverrides).length)) debouncedWriteImportOverrides();
   }catch(err){
     console.error(err);
     importState.error = '시트를 읽는 중 오류가 발생했습니다.';
@@ -16950,13 +16962,76 @@ function pushCaseEditsToImportRow(kind, obj, keys){
     changed = true;
   });
   if(!changed) return;
-  if(hit.list === 'upload'){ debouncedSaveImportRows(); debouncedSyncFromImportRows(); }
+  if(hit.list === 'upload'){ debouncedSaveImportRows(); debouncedSyncFromImportRows(); debouncedWriteImportOverrides(); }
   else { debouncedSavePerfRows(); debouncedSyncFromManualRows(); }
 }
 // 실적리스트 표에서 정산 쪽에서 고친 칸은 옅은 노란색으로 표시한다.
+// 정산 쪽에서 고친 값(caseOverrides)을 연결된 PC 실적리스트 엑셀 파일의 그 칸에 써 넣는다(엑셀 도우미).
+// 다 쓴 칸은 표시(caseOverrides)를 지운다. 파일이 연결돼 있지 않거나 도우미가 꺼져 있으면
+// 그대로 두었다가 다음에(수정할 때·불러올 때·"PC 엑셀에 반영" 버튼) 다시 쓴다.
+const IMPORT_WRITE_TYPES = { date:'date', contractDate:'date', depositDate:'date', certDate:'date', taxDate:'date', payDate:'date',
+  totalAmount:'number', moduleQty:'number', inverterQty:'number', structureBuy:'number', structureSell:'number', deposit:'number',
+  receivable:'number', supplyAmount:'number', companyPrice:'number', extra:'number', salesCost:'number', finalSalesCost:'number' };
+let importOverrideWriting = false;
+// 파일에 쓸 게 남은 행 — 엑셀 파일에 그 열이 없는 항목(예: 입금금액 열이 없는 파일)은 셀 수 없으니 뺀다.
+function pendingImportOverrideRows(){
+  const cols = importState.xlCols;
+  return (importState.rows||[]).filter(r=>r.caseOverrides && Object.keys(r.caseOverrides).some(f=>!cols || cols[f]));
+}
+async function writeImportOverridesToExcel(opts){
+  const silent = opts && opts.silent;
+  const link = getLinkedFile(IMPORT_LINK_KEY);
+  const pending = pendingImportOverrideRows();
+  if(!pending.length){ if(!silent) alert('PC 엑셀 파일에 쓸 수정 내용이 없습니다.'); return; }
+  if(!link){ if(!silent) alert('사급 실적리스트 탭에서 PC 엑셀 파일을 먼저 연결해주세요.'); return; }
+  const cols = importState.xlCols;
+  if(!cols || !cols.customer || !importState.sheetName){ if(!silent) alert('엑셀의 열 위치를 몰라 쓸 수 없습니다. "🔄 PC 엑셀에서 불러오기"로 한 번 불러온 뒤 다시 해주세요.'); return; }
+  if(importOverrideWriting) return;
+  importOverrideWriting = true;
+  try{
+    await checkExcelHelper();
+    if(!excelHelperRunning){ if(!silent) throw new Error('엑셀 도우미가 실행되어 있지 않습니다. 카드관리 탭에서 받은 excel-helper.cmd를 실행한 뒤 다시 눌러주세요.'); return; }
+    if(excelHelperVersion < 11){ if(!silent) throw new Error('실행 중인 엑셀 도우미가 예전 버전입니다. 알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.'); return; }
+    const items = [];
+    pending.forEach(r=>{
+      const values = {};
+      Object.keys(r.caseOverrides).forEach(f=>{
+        if(!cols[f]) return;
+        const v = r.caseOverrides[f];
+        values[f] = { col: cols[f], type: IMPORT_WRITE_TYPES[f] || 'text', value: v==null ? '' : v };
+      });
+      if(!Object.keys(values).length) return;
+      const [customerKey, fileDate] = String(r.fileKey || '').split('|');
+      items.push({ id: r.id, row: r.xlRow || 0, customerKey: customerKey || String(r.customer||'').replace(/\s+/g,''), date: fileDate || '', values });
+    });
+    if(!items.length){ if(!silent) alert('엑셀 파일에 해당 열이 없는 항목만 고쳐져 있어 쓸 것이 없습니다.'); return; }
+    const res = await excelHelperCall('/sagup/write', { path: link.path, sheet: importState.sheetName,
+      customerCol: cols.customer, dateCol: cols.date || 0, headerRow: Math.max(1, Math.min(...items.map(i=>i.row||1)) - 1), items }, 5*60*1000);
+    const done = new Set(res.written || []);
+    (importState.rows||[]).forEach(r=>{
+      if(!done.has(r.id) || !r.caseOverrides) return;
+      const item = items.find(i=>i.id===r.id);
+      Object.keys(item.values).forEach(f=>{ delete r.caseOverrides[f]; });
+      // 고객명·시공일자 자체를 파일에 썼으면, 다음에 불러올 때 짝을 찾는 열쇠도 새 값으로 바꾼다.
+      if(item.values.customer || item.values.date) r.fileKey = `${String(r.customer||'').replace(/\s+/g,'')}|${r.date||''}`;
+      if(!Object.keys(r.caseOverrides).length) delete r.caseOverrides;
+      if(res.rows && res.rows[r.id]) r.xlRow = res.rows[r.id];
+    });
+    importState.excelWriteNote = `${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} PC 엑셀에 ${done.size}건 반영` +
+      ((res.notFound||[]).length ? ` · 파일에서 못 찾은 고객: ${res.notFound.join(', ')}` : '');
+    debouncedSaveImportRows();
+    if(state.activeTab === 'import') renderImportMain();
+    if(!silent) alert(`"${link.name}" 파일에 반영했습니다 (${done.size}건).${(res.notFound||[]).length ? `\n\n파일에서 찾지 못한 고객: ${res.notFound.join(', ')}` : ''}`);
+  }catch(e){
+    importState.excelWriteNote = '⚠ PC 엑셀에 못 씀: ' + linkedFileErrorMessage(e).split('\n')[0];
+    if(state.activeTab === 'import') renderImportMain();
+    if(!silent) throw e;
+  }finally{ importOverrideWriting = false; }
+}
+const debouncedWriteImportOverrides = debounce(()=>{ writeImportOverridesToExcel({ silent:true }).catch(()=>{}); }, 3000);
 function perfOverrideTdAttr(r, f){
   return r && r.caseOverrides && Object.prototype.hasOwnProperty.call(r.caseOverrides, f)
-    ? ' style="background:rgba(214,158,46,.16);" title="영업비 정산·사업 이윤정산에서 고친 값입니다(엑셀에서 다시 불러와도 유지)"' : '';
+    ? ' style="background:rgba(214,158,46,.16);" title="영업비 정산·사업 이윤정산에서 고친 값인데 아직 PC 엑셀 파일에 못 쓴 칸입니다(파일에 쓰면 표시가 사라집니다. 엑셀에서 다시 불러와도 이 값은 유지)"' : '';
 }
 function createCaseFromImportRow(row, type){
   if(!row) return;
@@ -18663,6 +18738,7 @@ async function init(){
         importState.fileName = data.fileName || '';
         importState.sheetNames = data.sheetNames || [];
         importState.sheetName = data.sheetName || '';
+        importState.xlCols = data.xlCols || null;
         importState.rows = (data.rows || []).map(r => r.id ? r : { ...r, id: rid() });
       }
     },
@@ -19238,7 +19314,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '10'
+$Version = '11'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -19560,6 +19636,80 @@ function Handle-CorpCardReportPdf($body){
     if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} }
     Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $pdf -Force -ErrorAction SilentlyContinue
+  }
+}
+
+# ---- 사급 실적리스트: 앱(정산 쪽)에서 고친 값을 그 고객 행의 칸에 써 넣는다 ----
+# 행은 앱이 불러올 때 기억한 행 번호로 찾되, 그 행의 고객명(띄어쓰기 무시)이 다르면
+# (그 사이 행이 끼워졌거나 지워진 경우) 고객명 열 전체에서 고객명(+시공일자)으로 다시 찾는다.
+function Get-CellDateText($cell){
+  $o = $cell.psobject.BaseObject
+  $v = $o.GetType().InvokeMember('Value', [Reflection.BindingFlags]::GetProperty, $null, $o, $null)
+  if($v -is [datetime]){ return $v.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
+  return ([string]$cell.Text).Trim()
+}
+function Handle-SagupWrite($body){
+  $path = [string]$body.path
+  $xl = Get-Excel $true
+  $wb = Find-OpenWorkbook $xl $path
+  $openedHere = $false
+  if(-not $wb){
+    if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
+    $wb = Invoke-Retry { $xl.Workbooks.Open($path) }
+    $openedHere = $true
+  }
+  try {
+    if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
+    $ws = $null; foreach($s in $wb.Worksheets){ if([string]$s.Name -eq [string]$body.sheet){ $ws = $s } }
+    if(-not $ws){ throw """$($body.sheet)"" 시트를 찾지 못했습니다." }
+    $cc = [int]$body.customerCol; $dc = [int]$body.dateCol
+    $used = $ws.UsedRange
+    $lastRow = $used.Row + $used.Rows.Count - 1
+    $start = [Math]::Max(1, [int]$body.headerRow)
+    $keyAt = { param($r) (([string]$ws.Cells.Item($r, $cc).Text) -replace '\s','') }
+    $written = @(); $notFound = @(); $rowsOut = @{}
+    foreach($it in @($body.items)){
+      $key = [string]$it.customerKey
+      $r = [int]$it.row
+      if($r -lt 1 -or (& $keyAt $r) -ne $key){
+        $r = 0; $firstHit = 0
+        for($k=$start; $k -le $lastRow; $k++){
+          if((& $keyAt $k) -ne $key){ continue }
+          if(-not $firstHit){ $firstHit = $k }
+          if(-not $it.date -or $dc -lt 1 -or (Get-CellDateText $ws.Cells.Item($k, $dc)) -eq [string]$it.date){ $r = $k; break }
+        }
+        if(-not $r){ $r = $firstHit }
+      }
+      if(-not $r){ $notFound += $key; continue }
+      foreach($p in $it.values.psobject.Properties){
+        $spec = $p.Value
+        $cell = $ws.Cells.Item($r, [int]$spec.col)
+        $v = $spec.value
+        if($null -eq $v -or [string]$v -eq ''){ Invoke-Retry { [void]$cell.ClearContents() } | Out-Null; continue }
+        $t = [string]$spec.type
+        if($t -eq 'date'){
+          $d = [datetime]::MinValue
+          # 날짜 칸이 원래 날짜 값이면 날짜로, 글자(여러 날짜를 줄바꿈으로 적은 칸 등)면 글자로 쓴다.
+          $isDate = $false; try { $isDate = ($cell.Value2 -is [double]) -or ([string]$cell.Text -eq '') } catch {}
+          if($isDate -and [datetime]::TryParseExact([string]$v, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$d)){
+            Set-CellValue $cell ($d.ToOADate())
+          } else { Set-CellValue $cell ([string]$v) }
+        } elseif($t -eq 'number'){
+          $n = 0.0
+          if([double]::TryParse((([string]$v) -replace ',',''), [ref]$n)){ Set-CellValue $cell $n } else { Set-CellValue $cell ([string]$v) }
+        } else {
+          $sv = [string]$v
+          if($sv -match '^0\d+$' -or $sv -match '^[=+\-@]'){ $sv = "'" + $sv }
+          Set-CellValue $cell $sv
+        }
+      }
+      $written += [string]$it.id
+      $rowsOut[[string]$it.id] = $r
+    }
+    if($written.Count){ Invoke-Retry { $wb.Save() } | Out-Null }
+    return @{ ok=$true; written=$written; notFound=$notFound; rows=$rowsOut; wasOpen=(-not $openedHere) }
+  } finally {
+    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
   }
 }
 
@@ -19946,6 +20096,7 @@ function Handle-Context($ctx){
       '/pick'           { Handle-Pick $body }
       '/corpcard/write' { Handle-CorpCardWrite $body }
       '/cardmaster/write' { Handle-CardMasterWrite $body }
+      '/sagup/write'      { Handle-SagupWrite $body }
       '/tempdelete'     {
         # 도우미 임시 폴더 안의 파일만 지운다.
         $dir = [IO.Path]::GetFullPath((Join-Path $env:TEMP 'ExcelHelper'))
