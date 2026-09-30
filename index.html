@@ -16086,6 +16086,7 @@ function renderUploadMode(){
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
         <div style="font-size:12px; color:var(--muted);">
           총 ${filtered.length}건 중 ${capped.length}건 표시${filtered.length>200?' (검색으로 좁혀보세요)':''}
+          ${(() => { const n = st.rows.filter(r=>r.editHistory && Object.keys(r.editHistory).length).length; return n ? ` · <span style="box-shadow:inset 3px 0 0 #4fa3e3; padding-left:7px;">수정한 행 ${n}건</span> (칸에 마우스를 올리면 원래 값이 보입니다) <button id="importClearEditMarks" style="font-size:11px; padding:3px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; margin-left:4px;">수정 표시 지우기</button>` : ''; })()}
         </div>
         ${st.selected.size>0 ? `
         <div style="display:flex; gap:8px;">
@@ -16148,6 +16149,13 @@ function renderUploadMode(){
     }
     parseImportSheet(name);
   });
+  const clearMarksBtn = document.getElementById('importClearEditMarks');
+  if(clearMarksBtn) clearMarksBtn.addEventListener('click', ()=>{
+    if(!confirm('실적리스트의 수정 이력 표시(왼쪽 파란 줄)를 모두 지울까요? 값은 그대로 두고 표시만 지웁니다.\n(아직 PC 엑셀에 못 쓴 노란 칸은 그대로 남습니다)')) return;
+    (importState.rows||[]).forEach(r=>{ delete r.editHistory; });
+    debouncedSaveImportRows();
+    renderImportMain();
+  });
   const searchInp = document.getElementById('importSearch');
   if(searchInp) searchInp.addEventListener('input', ()=>{ importState.search = searchInp.value; renderImportRowsOnly(); });
 
@@ -16166,17 +16174,20 @@ function renderUploadMode(){
       const row = importState.rows.find(r=>r.id===tr.dataset.rowId);
       if(!row) return;
       const field = inp.dataset.perf;
+      const prevVal = row[field];
       row[field] = isNumeric ? (parseFloat(String(inp.value).replace(/,/g,''))||0) : inp.value;
+      recordImportEdit(row, field, prevVal, row[field], 'list');
       if(field === 'certDate') delete row.certDateAuto; // 사람이 직접 손댔으니 자동 채움 표시는 지운다
       // 여기서 직접 고친 값도 연결된 PC 엑셀 파일에 쓸 목록(caseOverrides)에 올린다 — 정산 쪽 수정과 같은 길로 파일에 쓴다.
       const markPending = (f, td) => {
         row.caseOverrides = { ...(row.caseOverrides||{}), [f]: row[f] };
-        if(td){ const a = perfOverrideTdAttr(row, f); td.style.background = 'rgba(214,158,46,.16)'; const m = a.match(/title="([^"]*)"/); if(m) td.title = m[1]; }
+        applyPerfCellMark(td, row, f);
       };
       markPending(field, inp.closest('td'));
       if(field === 'moduleModel' || field === 'structureType'){
         const price = computePerfCompanyPrice(row);
         if(price !== null){
+          recordImportEdit(row, 'companyPrice', row.companyPrice, price, 'list');
           row.companyPrice = price;
           const priceInp = tr.querySelector('[data-perf="companyPrice"]');
           if(priceInp) priceInp.value = price.toLocaleString('ko-KR');
@@ -16614,6 +16625,7 @@ function carryOverImportRowIds(rows, prevRows){
     const old = list && list.shift();
     if(!old) return;
     r.id = old.id;
+    if(old.editHistory) r.editHistory = { ...old.editHistory };
     if(old.caseOverrides && Object.keys(old.caseOverrides).length){
       r.caseOverrides = { ...old.caseOverrides };
       Object.keys(r.caseOverrides).forEach(f=>{ r[f] = r.caseOverrides[f]; });
@@ -16962,6 +16974,7 @@ function pushCaseEditsToImportRow(kind, obj, keys){
   let changed = false;
   Object.keys(updates).forEach(f=>{
     if(JSON.stringify(row[f]) === JSON.stringify(updates[f])) return;
+    recordImportEdit(row, f, row[f], updates[f], kind);
     row[f] = updates[f];
     if(f === 'certDate') delete row.certDateAuto;
     // 엑셀에서 다시 불러와도 이 값이 유지되도록(그리고 목록에서 표시되도록) 적어 둔다.
@@ -16972,7 +16985,6 @@ function pushCaseEditsToImportRow(kind, obj, keys){
   if(hit.list === 'upload'){ debouncedSaveImportRows(); debouncedSyncFromImportRows(); debouncedWriteImportOverrides(); }
   else { debouncedSavePerfRows(); debouncedSyncFromManualRows(); }
 }
-// 실적리스트 표에서 정산 쪽에서 고친 칸은 옅은 노란색으로 표시한다.
 // 정산 쪽에서 고친 값(caseOverrides)을 연결된 PC 실적리스트 엑셀 파일의 그 칸에 써 넣는다(엑셀 도우미).
 // 다 쓴 칸은 표시(caseOverrides)를 지운다. 파일이 연결돼 있지 않거나 도우미가 꺼져 있으면
 // 그대로 두었다가 다음에(수정할 때·불러올 때·"PC 엑셀에 반영" 버튼) 다시 쓴다.
@@ -17051,16 +17063,47 @@ function refreshImportAfterWrite(doneItems){
     if(!tr) return;
     const row = (importState.rows||[]).find(r=>r.id===it.id);
     Object.keys(it.values).forEach(f=>{
-      if(row && row.caseOverrides && f in row.caseOverrides) return; // 쓰는 사이 또 고친 칸은 그대로 표시
       const td = tr.querySelector(`[data-perf="${f}"]`)?.closest('td');
-      if(td){ td.style.background = ''; td.removeAttribute('title'); }
+      applyPerfCellMark(td, row, f);   // 쓰는 사이 또 고친 칸은 노란색 그대로, 수정 이력 줄은 남는다
     });
   });
 }
 const debouncedWriteImportOverrides = debounce(()=>{ writeImportOverridesToExcel({ silent:true }).catch(()=>{}); }, 3000);
+// ---- 실적리스트 칸 표시 ----
+// · 노란 바탕: 앱에서 고쳤는데 아직 PC 엑셀 파일에 못 쓴 칸(caseOverrides) — 파일에 쓰면 사라진다.
+// · 왼쪽 파란 줄: 앱에서 고친 적이 있는 칸(editHistory) — 파일에 써도 남는다(원래 값·고친 사람·시각을 칸에 마우스를 올리면 보여준다).
+const IMPORT_EDIT_SOURCE_LABEL = { list:'실적리스트', sales:'영업비 정산', profit:'사업 이윤정산' };
+function recordImportEdit(row, field, prevVal, newVal, source){
+  if(!row) return;
+  const norm = v => v==null ? '' : String(v);
+  const hist = row.editHistory || {};
+  const first = hist[field] ? hist[field].from : norm(prevVal);
+  if(first === norm(newVal)){ delete hist[field]; }   // 원래 값으로 되돌렸으면 표시도 지운다
+  else hist[field] = { from: first, to: norm(newVal), at: new Date().toISOString(), by: presenceDisplayName(), src: source };
+  if(Object.keys(hist).length) row.editHistory = hist; else delete row.editHistory;
+}
+function perfCellMark(r, f){
+  const pending = !!(r && r.caseOverrides && Object.prototype.hasOwnProperty.call(r.caseOverrides, f));
+  const h = r && r.editHistory && r.editHistory[f];
+  const styles = [], titles = [];
+  if(pending){ styles.push('background:rgba(214,158,46,.16)'); titles.push('아직 PC 엑셀 파일에 못 쓴 칸입니다(파일에 쓰면 노란색이 사라집니다. 엑셀에서 다시 불러와도 이 값은 유지)'); }
+  if(h){
+    styles.push('box-shadow:inset 3px 0 0 #4fa3e3');
+    const at = new Date(h.at);
+    const when = isNaN(at) ? '' : `${at.getMonth()+1}/${at.getDate()} ${String(at.getHours()).padStart(2,'0')}:${String(at.getMinutes()).padStart(2,'0')}`;
+    titles.push(`수정됨 · ${when} · ${h.by||''} (${IMPORT_EDIT_SOURCE_LABEL[h.src]||h.src||''}에서)\n원래 값: ${h.from===''?'(빈칸)':h.from}\n고친 값: ${h.to===''?'(빈칸)':h.to}`);
+  }
+  return { style: styles.join('; '), title: titles.join('\n\n') };
+}
 function perfOverrideTdAttr(r, f){
-  return r && r.caseOverrides && Object.prototype.hasOwnProperty.call(r.caseOverrides, f)
-    ? ' style="background:rgba(214,158,46,.16);" title="앱에서 고친 값인데 아직 PC 엑셀 파일에 못 쓴 칸입니다(파일에 쓰면 표시가 사라집니다. 엑셀에서 다시 불러와도 이 값은 유지)"' : '';
+  const m = perfCellMark(r, f);
+  return (m.style ? ` style="${m.style}"` : '') + (m.title ? ` title="${escapeHtml(m.title)}"` : '');
+}
+function applyPerfCellMark(td, r, f){
+  if(!td) return;
+  const m = perfCellMark(r, f);
+  if(m.style) td.setAttribute('style', m.style); else td.removeAttribute('style');
+  if(m.title) td.title = m.title; else td.removeAttribute('title');
 }
 function createCaseFromImportRow(row, type){
   if(!row) return;
