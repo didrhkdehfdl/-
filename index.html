@@ -16168,17 +16168,24 @@ function renderUploadMode(){
       const field = inp.dataset.perf;
       row[field] = isNumeric ? (parseFloat(String(inp.value).replace(/,/g,''))||0) : inp.value;
       if(field === 'certDate') delete row.certDateAuto; // 사람이 직접 손댔으니 자동 채움 표시는 지운다
-      if(row.caseOverrides && field in row.caseOverrides){ delete row.caseOverrides[field]; const td = inp.closest('td'); if(td){ td.removeAttribute('style'); td.removeAttribute('title'); } }
+      // 여기서 직접 고친 값도 연결된 PC 엑셀 파일에 쓸 목록(caseOverrides)에 올린다 — 정산 쪽 수정과 같은 길로 파일에 쓴다.
+      const markPending = (f, td) => {
+        row.caseOverrides = { ...(row.caseOverrides||{}), [f]: row[f] };
+        if(td){ const a = perfOverrideTdAttr(row, f); td.style.background = 'rgba(214,158,46,.16)'; const m = a.match(/title="([^"]*)"/); if(m) td.title = m[1]; }
+      };
+      markPending(field, inp.closest('td'));
       if(field === 'moduleModel' || field === 'structureType'){
         const price = computePerfCompanyPrice(row);
         if(price !== null){
           row.companyPrice = price;
           const priceInp = tr.querySelector('[data-perf="companyPrice"]');
           if(priceInp) priceInp.value = price.toLocaleString('ko-KR');
+          markPending('companyPrice', priceInp && priceInp.closest('td'));
         }
       }
       debouncedSaveImportRows();
       debouncedSyncFromImportRows();
+      debouncedWriteImportOverrides();
     };
     inp.addEventListener('input', handler);
     inp.addEventListener('change', handler);
@@ -16507,7 +16514,7 @@ function importLinkedFileHtml(){
   return `<span style="display:inline-flex; align-items:center; gap:6px; padding:3px 6px; border-radius:8px; border:1px dashed var(--sky); max-width:100%;">
       <span style="font-size:11.5px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:380px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}</span>
       ${linkedFileBtnHtml('importLinkedLoadBtn', '🔄 PC 엑셀에서 불러오기', 'var(--gold)', '연결된 실적리스트 파일의 지금 내용을 다시 읽어옵니다(엑셀 도우미 사용).')}
-      ${(() => { const n = pendingImportOverrideRows().length; return n ? linkedFileBtnHtml('importLinkedWriteBtn', `💾 PC 엑셀에 반영 (${n}건)`, '#2e9e5b', '영업비 정산·사업 이윤정산에서 고친 값(노란 칸)을 연결된 엑셀 파일의 그 칸에 써 넣고 저장합니다(보통은 고치면 자동으로 씁니다).') : ''; })()}
+      ${(() => { const n = pendingImportOverrideRows().length; return n ? linkedFileBtnHtml('importLinkedWriteBtn', `💾 PC 엑셀에 반영 (${n}건)`, '#2e9e5b', '실적리스트에서 직접 고치거나 영업비 정산·사업 이윤정산에서 고친 값(노란 칸)을 연결된 엑셀 파일의 그 칸에 써 넣고 저장합니다(보통은 고치면 자동으로 씁니다).') : ''; })()}
       ${importState.excelWriteNote ? `<span style="font-size:11px; color:${/^⚠/.test(importState.excelWriteNote)?'var(--neg)':'var(--muted)'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px;" title="${escapeHtml(importState.excelWriteNote)}">${escapeHtml(importState.excelWriteNote)}</span>` : ''}
       <button id="importUnlinkFileBtn" title="연결 해제" style="font-size:11px; padding:4px 7px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">✕</button>
     </span>`;
@@ -17011,7 +17018,11 @@ async function writeImportOverridesToExcel(opts){
     (importState.rows||[]).forEach(r=>{
       if(!done.has(r.id) || !r.caseOverrides) return;
       const item = items.find(i=>i.id===r.id);
-      Object.keys(item.values).forEach(f=>{ delete r.caseOverrides[f]; });
+      // 쓰는 사이 또 고친 칸(값이 달라진 칸)은 다음에 다시 쓰도록 남겨 둔다.
+      Object.keys(item.values).forEach(f=>{
+        const sent = item.values[f].value, now = r.caseOverrides[f];
+        if(JSON.stringify(now==null?'':now) === JSON.stringify(sent)) delete r.caseOverrides[f];
+      });
       // 고객명·시공일자 자체를 파일에 썼으면, 다음에 불러올 때 짝을 찾는 열쇠도 새 값으로 바꾼다.
       if(item.values.customer || item.values.date) r.fileKey = `${String(r.customer||'').replace(/\s+/g,'')}|${r.date||''}`;
       if(!Object.keys(r.caseOverrides).length) delete r.caseOverrides;
@@ -17020,18 +17031,36 @@ async function writeImportOverridesToExcel(opts){
     importState.excelWriteNote = `${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} PC 엑셀에 ${done.size}건 반영` +
       ((res.notFound||[]).length ? ` · 파일에서 못 찾은 고객: ${res.notFound.join(', ')}` : '');
     debouncedSaveImportRows();
-    if(state.activeTab === 'import') renderImportMain();
+    refreshImportAfterWrite(items.filter(i=>done.has(i.id)));
     if(!silent) alert(`"${link.name}" 파일에 반영했습니다 (${done.size}건).${(res.notFound||[]).length ? `\n\n파일에서 찾지 못한 고객: ${res.notFound.join(', ')}` : ''}`);
   }catch(e){
     importState.excelWriteNote = '⚠ PC 엑셀에 못 씀: ' + linkedFileErrorMessage(e).split('\n')[0];
-    if(state.activeTab === 'import') renderImportMain();
+    refreshImportAfterWrite([]);
     if(!silent) throw e;
   }finally{ importOverrideWriting = false; }
+}
+// 표에서 칸을 고치는 중이면 화면을 통째로 다시 그리지 않는다(입력 중인 칸이 사라지지 않게) —
+// 파일에 쓴 칸의 노란 표시만 지우고, 버튼·안내 문구는 다음에 그릴 때 갱신된다.
+function refreshImportAfterWrite(doneItems){
+  if(state.activeTab !== 'import') return;
+  const active = document.activeElement;
+  const editing = active && active.matches && active.matches('[data-perf]');
+  if(!editing){ renderImportMain(); return; }
+  doneItems.forEach(it=>{
+    const tr = document.querySelector(`tr[data-row-id="${it.id}"]`);
+    if(!tr) return;
+    const row = (importState.rows||[]).find(r=>r.id===it.id);
+    Object.keys(it.values).forEach(f=>{
+      if(row && row.caseOverrides && f in row.caseOverrides) return; // 쓰는 사이 또 고친 칸은 그대로 표시
+      const td = tr.querySelector(`[data-perf="${f}"]`)?.closest('td');
+      if(td){ td.style.background = ''; td.removeAttribute('title'); }
+    });
+  });
 }
 const debouncedWriteImportOverrides = debounce(()=>{ writeImportOverridesToExcel({ silent:true }).catch(()=>{}); }, 3000);
 function perfOverrideTdAttr(r, f){
   return r && r.caseOverrides && Object.prototype.hasOwnProperty.call(r.caseOverrides, f)
-    ? ' style="background:rgba(214,158,46,.16);" title="영업비 정산·사업 이윤정산에서 고친 값인데 아직 PC 엑셀 파일에 못 쓴 칸입니다(파일에 쓰면 표시가 사라집니다. 엑셀에서 다시 불러와도 이 값은 유지)"' : '';
+    ? ' style="background:rgba(214,158,46,.16);" title="앱에서 고친 값인데 아직 PC 엑셀 파일에 못 쓴 칸입니다(파일에 쓰면 표시가 사라집니다. 엑셀에서 다시 불러와도 이 값은 유지)"' : '';
 }
 function createCaseFromImportRow(row, type){
   if(!row) return;
