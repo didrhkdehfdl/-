@@ -1430,7 +1430,7 @@ function applyProfitListFieldChange(p, col, inputEl){
     if(prices){ p.moduleBuy = prices.buy; p.moduleSell = prices.sell; }
   }
   if(pfield === 'inverterModel'){
-    const prices = PROFIT_INVERTER_PRICES[String(val).trim()];
+    const prices = inverterPriceFor(val);
     if(prices){ p.inverterBuy = prices.buy; p.inverterSell = prices.sell; }
   }
   if(pfield === 'moduleModel' || pfield === 'structureNote'){
@@ -4882,7 +4882,7 @@ async function renderProfitListMain(){
         } else if(col.edit==='date'){
           inputHtml = `<input type="date" class="plist-f" data-id="${p.id}" data-key="${col.key}" value="${escapeHtml(val)}" style="${plistInputStyle}">`;
         } else {
-          inputHtml = `<input type="text" class="plist-f" data-id="${p.id}" data-key="${col.key}" value="${escapeHtml(val)}" style="${plistInputStyle}">`;
+          inputHtml = `<input type="text" class="plist-f" data-id="${p.id}" data-key="${col.key}" ${col.key==='inverterModel'?'list="inverterModelList"':''} value="${escapeHtml(val)}" style="${plistInputStyle}">`;
         }
         if(col.key==='customer' && isDup){
           inputHtml += `<div title="같은 고객명·시공일자·설치용량·총사업비의 건이 ${dupCounts[profitCaseDupKey(p)]}건 있습니다." style="color:var(--neg); font-size:10px; font-weight:700; white-space:nowrap; margin-top:2px;">⚠ 중복의심 ${dupCounts[profitCaseDupKey(p)]}건</div>`;
@@ -6320,7 +6320,7 @@ function renderProfitMain(){
           </tr>
           <tr>
             <td style="padding:6px;">인버터</td>
-            <td style="padding:6px;"><input data-pf="inverterModel" value="${escapeHtml(p.inverterModel)}" placeholder="금비3.7" style="width:100%;"></td>
+            <td style="padding:6px;"><input data-pf="inverterModel" list="inverterModelList" value="${escapeHtml(p.inverterModel)}" placeholder="T3R7K" style="width:100%;"></td>
             <td style="padding:6px;">${pfMoney("inverterBuy", p.inverterBuy, 'class="num" style="width:100%;"')}</td>
             <td style="padding:6px;">${pfMoney("inverterSell", p.inverterSell, 'class="num" style="width:100%;"')}</td>
             <td style="padding:6px;"><input data-pf="inverterQty" type="number" value="${pf(p.inverterQty)}" class="num" style="width:70px;"></td>
@@ -6422,7 +6422,7 @@ function renderProfitMain(){
     if(modulePrices){ p.moduleBuy = modulePrices.buy; p.moduleSell = modulePrices.sell; }
     const module2Prices = PROFIT_MODULE_PRICES[p.module2Model];
     if(module2Prices){ p.module2Buy = module2Prices.buy; p.module2Sell = module2Prices.sell; }
-    const inverterPrices = PROFIT_INVERTER_PRICES[String(p.inverterModel||'').trim()];
+    const inverterPrices = inverterPriceFor(p.inverterModel);
     if(inverterPrices){ p.inverterBuy = inverterPrices.buy; p.inverterSell = inverterPrices.sell; }
     const isAttachedStructure = applyAttachedStructurePricing(p);
     if(!isAttachedStructure){
@@ -6492,7 +6492,7 @@ function renderProfitMain(){
         }
       }
       if(key === 'inverterModel'){
-        const prices = PROFIT_INVERTER_PRICES[String(val).trim()];
+        const prices = inverterPriceFor(val);
         if(prices){
           p.inverterBuy = prices.buy;
           p.inverterSell = prices.sell;
@@ -8998,7 +8998,50 @@ function renderModulePricesMain(){
         </tbody>
       </table>
     </div>
+
+    <h2 class="section-title" style="margin-top:28px;">인버터 단가 관리</h2>
+    <p style="font-size:12.5px; color:var(--muted); line-height:1.7; margin:0 0 12px;">
+      사업 이윤정산에서 인버터 모델명을 넣으면(모델명·표시명 어느 쪽이든, 띄어쓰기·대소문자 무관) 여기 적힌 <b>대당</b> 구매·판매 단가가 자동으로 들어갑니다.
+      실적리스트에서 새로 만드는 이윤정산 건에도 같은 단가가 쓰입니다. 이미 저장된 건의 숫자는 바뀌지 않고, 그 건에서 모델명을 다시 고를 때 반영됩니다.
+    </p>
+    <div style="margin-bottom:10px;">
+      <button id="invAddBtn" style="padding:9px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 인버터 추가</button>
+    </div>
+    <div class="table-wrap">
+      <table style="border-collapse:collapse; min-width:760px;">
+        <thead><tr>
+          ${['모델명(실적리스트·이윤정산에 적는 이름)','표시명','용량(kW)','구매단가(원/대)','판매단가(원/대)','마진','삭제'].map(h=>`<th style="padding:7px 6px; font-size:10.5px; color:var(--muted); text-align:left;">${h}</th>`).join('')}
+        </tr></thead>
+        <tbody>
+          ${inverterMaster.map(inv=>{
+            const f = (field, w, money) => `<td style="padding:6px;"><input data-inv="${field}" data-id="${inv.id}" value="${escapeHtml(money ? (inv[field] ? Number(inv[field]).toLocaleString('ko-KR') : '') : String(inv[field] ?? ''))}" style="width:${w}px; padding:6px 7px; border-radius:5px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; text-align:${money||field==='kw'?'right':'left'};"></td>`;
+            const margin = (Number(inv.sell)||0) - (Number(inv.buy)||0);
+            return `<tr>${f('modelCode',160)}${f('displayName',140)}${f('kw',70)}${f('buy',110,true)}${f('sell',110,true)}
+              <td style="padding:6px; font-size:11.5px; color:var(--muted); white-space:nowrap;">${fmtWon(margin)}</td>
+              <td style="padding:6px; text-align:center;"><button class="inv-delete-btn" data-id="${inv.id}" style="font-size:11px; padding:5px 9px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">삭제</button></td></tr>`;
+          }).join('') || `<tr><td colspan="7" style="padding:14px; color:var(--muted); font-size:12.5px;">등록된 인버터가 없습니다.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
   `;
+
+  document.getElementById('invAddBtn').addEventListener('click', ()=>{
+    inverterMaster.push({ id: rid(), modelCode:'', displayName:'', kw:0, buy:0, sell:0 });
+    rebuildInverterDerived(); debouncedSaveInverterMaster(); renderModulePricesMain();
+  });
+  main.querySelectorAll('.inv-delete-btn').forEach(btn=>btn.addEventListener('click', ()=>{
+    if(!confirm('이 인버터를 삭제할까요? (이미 저장된 이윤정산 건의 단가는 그대로 남습니다)')) return;
+    inverterMaster = inverterMaster.filter(x=>x.id!==btn.dataset.id);
+    rebuildInverterDerived(); debouncedSaveInverterMaster(); renderModulePricesMain();
+  }));
+  main.querySelectorAll('[data-inv]').forEach(inp=>inp.addEventListener('change', ()=>{
+    const inv = inverterMaster.find(x=>x.id===inp.dataset.id);
+    if(!inv) return;
+    const field = inp.dataset.inv;
+    if(field === 'modelCode' || field === 'displayName') inv[field] = inp.value.trim();
+    else inv[field] = parseFloat(String(inp.value).replace(/,/g,'')) || 0;
+    rebuildInverterDerived(); debouncedSaveInverterMaster(); renderModulePricesMain();
+  }));
 
   document.getElementById('mmAddBtn').addEventListener('click', ()=>{
     moduleMaster.push(newModuleMasterRow());
@@ -9794,6 +9837,11 @@ function simpleHistoryTargets(){
     { key: MODULE_MASTER_KEY, icon:'🏷️', label:'모듈 단가 관리', onRestore: async raw => {
         moduleMaster.length = 0; moduleMaster.push(...JSON.parse(raw));
         rebuildModuleDerived();
+        if(state.activeTab==='moduleprices') renderModulePricesMain();
+      } },
+    { key: INVERTER_MASTER_KEY, icon:'🏷️', label:'인버터 단가 관리', onRestore: async raw => {
+        inverterMaster = JSON.parse(raw);
+        rebuildInverterDerived();
         if(state.activeTab==='moduleprices') renderModulePricesMain();
       } },
     { key: CORP_CARD_MASTER_LIST_KEY, icon:'🔄', label:'카드관리 (통합본 목록)', onRestore: async raw => {
@@ -16557,9 +16605,35 @@ function renderManualEntry(){
 }
 
 // 사업 이윤정산 자재비 섹션의 인버터 구매가/판매가.
-const PROFIT_INVERTER_PRICES = {
-  'T3R7K': { buy:283000, sell:320000 },
-};
+// 인버터 단가 — 모듈 단가 관리 탭의 "인버터 단가" 표(inverterMaster)에서 만든다. 이윤정산에서 인버터 모델명을 고르면
+// 여기 적힌 구매·판매 단가(대당)가 자동으로 들어간다. 모델명은 띄어쓰기·대소문자를 가리지 않고 찾는다.
+const PROFIT_INVERTER_PRICES = {};
+const INVERTER_MASTER_KEY = 'inverter-price-master';
+let inverterMaster = [{ id:'inv-t3r7k', modelCode:'T3R7K', displayName:'금비 3.7kW', kw:3.7, buy:283000, sell:320000 }];
+function rebuildInverterDerived(){
+  Object.keys(PROFIT_INVERTER_PRICES).forEach(k=>delete PROFIT_INVERTER_PRICES[k]);
+  const norm = x => String(x||'').toUpperCase().replace(/[\s\-_.]/g,'');
+  inverterMaster.forEach(inv=>{
+    const code = String(inv.modelCode||'').trim();
+    if(!code) return;
+    const price = { buy: Number(inv.buy)||0, sell: Number(inv.sell)||0 };
+    PROFIT_INVERTER_PRICES[code] = price;
+    if(!PROFIT_INVERTER_PRICES[norm(code)]) PROFIT_INVERTER_PRICES[norm(code)] = price;
+    if(inv.displayName && !PROFIT_INVERTER_PRICES[String(inv.displayName).trim()]) PROFIT_INVERTER_PRICES[String(inv.displayName).trim()] = price;
+  });
+  // 모델명 입력칸에서 고를 수 있게 목록(datalist)도 새로 만든다.
+  let dl = document.getElementById('inverterModelList');
+  if(!dl){ dl = document.createElement('datalist'); dl.id = 'inverterModelList'; document.body.appendChild(dl); }
+  dl.innerHTML = inverterMaster.filter(i=>String(i.modelCode||'').trim()).map(i=>`<option value="${escapeHtml(i.modelCode)}">${escapeHtml(i.displayName||'')}</option>`).join('');
+}
+// 띄어쓰기·대소문자가 달라도 찾는다(예: "t3r7k", "T3R 7K").
+function inverterPriceFor(model){
+  const raw = String(model||'').trim();
+  return PROFIT_INVERTER_PRICES[raw] || PROFIT_INVERTER_PRICES[raw.toUpperCase().replace(/[\s\-_.]/g,'')] || null;
+}
+const debouncedSaveInverterMaster = debounce(()=>{
+  saveWithGenericHistory(INVERTER_MASTER_KEY, JSON.stringify(inverterMaster));
+}, 500);
 
 // PERF_MODULE_MODELS, PROFIT_MODULE_PRICES, PERF_MODULE_BASE_PRICE,
 // PERF_MODULE_TO_NOTE_INDEX are now derived from moduleMaster — see
@@ -17131,7 +17205,7 @@ function computeFinalSalesCost(customerDeposit, companyPrice, extra){
 function buildProfitCaseFromRow(row){
   const p = newProfitCase();
   const modulePrices = PROFIT_MODULE_PRICES[row.moduleModel];
-  const inverterPrices = PROFIT_INVERTER_PRICES[String(row.inverterModel||'').trim()];
+  const inverterPrices = inverterPriceFor(row.inverterModel);
   // 영업비 공제(공제금·비고)는 영업비 정산 기안지에 적힌 값을 최우선으로 쓰고,
   // 연결된 기안지가 없을 때만 실적리스트의 추가비를 쓴다.
   const draftDeduction = salesDraftDeductionFor(row.customer);
@@ -19235,6 +19309,12 @@ async function init(){
     moduleMaster = savedModuleMaster;
     rebuildModuleDerived();
   }
+  try{
+    const invRaw = await loadFileFromStorage(INVERTER_MASTER_KEY);
+    const inv = invRaw ? JSON.parse(invRaw) : null;
+    if(Array.isArray(inv)) inverterMaster = inv;
+  }catch(e){}
+  rebuildInverterDerived();
   const savedCompanyMaster = await loadCompanyMaster();
   if(Array.isArray(savedCompanyMaster)) companyMaster = savedCompanyMaster;
   await ensureCardMasterLoaded();
