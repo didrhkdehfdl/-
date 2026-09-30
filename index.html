@@ -1441,6 +1441,7 @@ function applyProfitListFieldChange(p, col, inputEl){
   if(pfield === 'structureBuy') p.structureSell = Math.round((Number(p.structureBuy)||0) * 1.2);
   if(pfield === 'capacityKw') p.constructionCost = computeConstructionCost(p.capacityKw);
   pushCaseEditsToImportRow('profit', p, (pfield === 'moduleModel' || pfield === 'structureNote') ? [pfield, 'depositPrice'] : [pfield]);
+  queueProfitLedgerAutoWrite(p);
 }
 
 // Computes every PROFIT_LIST_COLUMNS value for one profit case, reusing
@@ -4911,6 +4912,7 @@ async function renderProfitListMain(){
       좌우로 스크롤하면 고객정보부터 정산내역까지 각 건이 한 줄씩 표시됩니다. 총 ${cases.length}건.
       "열기" 버튼으로 해당 건의 상세 화면으로 이동할 수 있습니다. 왼쪽 체크박스로 여러 건을 골라 "정산데이터"에 한꺼번에 기록할 수 있습니다.
     </p>
+    ${profitLedgerLinkHtml(ls.selected.size ? `💾 선택한 ${ls.selected.size}건 PC 파일에 기록` : '')}
     ${cases.length===0 ? `<div class="empty-side">아직 저장된 사업 이윤정산 건이 없습니다.</div>` : `
     ${ls.selected.size>0 ? `
     <div class="table-wrap" style="padding:14px; margin-bottom:14px;">
@@ -4990,6 +4992,7 @@ async function renderProfitListMain(){
       renderProfitListMain();
     });
   });
+  bindProfitLedgerLinkButtons(()=>cases.filter(c=>ls.selected.has(c.id)), renderProfitListMain, msg=>{ ls.error=''; ls.message = msg; });
   const lsFileInput = document.getElementById('profitListLedgerFileInput');
   if(lsFileInput) lsFileInput.addEventListener('change', async (e)=>{
     const file = e.target.files[0];
@@ -5305,6 +5308,7 @@ function renderProfitLedgerPanel(p){
   const canWrite = s.buffer && (s.freshThisSession || s.ackFresh);
   return `
     <div class="table-wrap" style="padding:16px; margin-bottom:16px;">
+      ${profitLedgerLinkHtml('💾 이 건 PC 파일에 기록')}
       <div style="font-size:12.5px; color:var(--muted); line-height:1.7; margin-bottom:10px;">
         "정산데이터" 통합 엑셀 파일을 올리면, 이 이윤정산 건과 같은 고객명의 영업비 정산 건을 자동으로 찾아 합쳐서
         해당 고객의 행(이미 있으면 그 행, 없으면 새 행)에 값을 채워 넣습니다. 다른 고객 행·다른 시트·수식은 건드리지 않습니다.
@@ -5343,6 +5347,7 @@ function renderProfitLedgerPanel(p){
 }
 function wireProfitLedgerPanel(p){
   const s = profitLedgerState;
+  bindProfitLedgerLinkButtons(()=>[p], renderProfitMain, msg=>{ s.error=''; s.message = msg; });
   const fileInput = document.getElementById('ledgerFileInput');
   if(fileInput) fileInput.addEventListener('change', async (e)=>{
     const file = e.target.files[0];
@@ -5420,6 +5425,120 @@ const LEDGER_FORMULA_TEMPLATES = {
 // VLOOKUP 범위 밖이라 #N/A가 뜬다(실제로 "정산데이터" 시트에 96행까지 고객이
 // 있는데 이름정의가 92행에서 멈춰있어서 93행부터 전부 #N/A가 났던 사례로 발견).
 // 새 행을 추가할 때마다 이 이름정의의 마지막 행 번호를 새 행 번호까지 넓혀준다.
+// ---- 사급 건별 정산(정산데이터) PC 엑셀 파일 연결 — 엑셀 도우미가 파일에 바로 써 넣는다 ----
+// "기록하고 다운로드"와 같은 칸·같은 규칙으로 쓰되, 파일을 올리고 받는 대신 연결된 PC 파일(문서보안 파일 포함)에 직접 쓴다.
+// 이윤정산 건을 고치면(이미 파일에 있는 고객이면) 몇 초 뒤 자동으로 그 행도 갱신한다.
+const PROFIT_LEDGER_LINK_KEY = 'profitledger';
+function profitLedgerCellsFor(profitCase, salesMatch){
+  const rec = salesMatch ? salesMatch.record : null;
+  const salesCase = salesMatch ? salesMatch.salesCase : null;
+  const structureSell = computeLedgerStructureSell(profitCase, rec);
+  const lv = resolveProfitLedgerValues(profitCase, rec, salesCase);
+  const plain = {
+    C: profitCase.customer || '', D: profitCase.branch || '',
+    E: profitCase.constructionDate ? isoDate(new Date(profitCase.constructionDate)) : '',
+    F: '#N/A', G: lv.corp, H: lv.agentName, I: 'X', J: profitCase.teamName || '',
+    K: Number(profitCase.capacityKw)||0, L: Math.round((Number(profitCase.totalBusinessCost)||0)*1.1), O: '사무실',
+    P: lv.moduleModel, Q: Number(profitCase.moduleQty)||0, R: lv.moduleBuy, S: lv.moduleSell,
+    U: profitCase.inverterModel || '', V: Number(profitCase.inverterQty)||0, W: Number(profitCase.inverterBuy)||0, X: Number(profitCase.inverterSell)||0,
+    Z: profitCase.structureNote || '', AA: Number(profitCase.structureQty)||0, AB: Number(profitCase.structureBuy)||0, AC: structureSell,
+    AE: Number(profitCase.etcMaterial)||0, AG: Number(profitCase.structureReviewCost)||0, AH: Number(profitCase.designSupervisionCost)||0,
+    AI: Number(profitCase.inspectionFeeCost)||0, AJ: Number(profitCase.constructionCost)||0, AK: Number(profitCase.etcAgencyCost)||0,
+    AP: lv.companyPrice, AQ: lv.salesDeduction, AS: lv.salesDeductionNote, AU: Number(profitCase.maintenanceCost)||0,
+  };
+  const numericCols = new Set(['K','L','Q','R','S','V','W','X','AA','AB','AC','AE','AG','AH','AI','AJ','AK','AP','AQ','AU']);
+  const formulas = {};
+  if(lv.moduleBuyFormula) formulas.R = lv.moduleBuyFormula;
+  if(lv.moduleSellFormula) formulas.S = lv.moduleSellFormula;
+  return Object.entries(plain).map(([col, v]) => {
+    if(formulas[col]) return { col, type:'formula', value: String(formulas[col]).replace(/^=/, '') };
+    if(col === 'E') return { col, type:'date', value: v };
+    if(numericCols.has(col)) return { col, type:'number', value: Number(v)||0 };
+    return { col, type:'text', value: v==null ? '' : String(v) };
+  });
+}
+async function writeProfitCasesToLinkedLedger(cases, opts){
+  const link = getLinkedFile(PROFIT_LEDGER_LINK_KEY);
+  if(!link) throw new Error('사급 건별 정산 PC 엑셀 파일이 연결돼 있지 않습니다.');
+  await checkExcelHelper();
+  if(!excelHelperRunning) throw new Error('엑셀 도우미가 실행되어 있지 않습니다. 카드관리 탭에서 받은 excel-helper.cmd를 실행한 뒤 다시 해주세요.');
+  if(excelHelperVersion < 16) throw new Error('실행 중인 엑셀 도우미가 예전 버전입니다. 알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
+  await ensureSalesCasesLoaded();
+  const templates = {};
+  Object.keys(LEDGER_FORMULA_TEMPLATES).forEach(col => { templates[col] = LEDGER_FORMULA_TEMPLATES[col]('{n}'); });
+  const items = cases.map(p => ({ id: p.id, customer: p.customer || '', onlyExisting: !!(opts && opts.onlyExisting),
+    cells: profitLedgerCellsFor(p, findMatchingSalesRecord(p.customer)) }));
+  return excelHelperCall('/profitledger/write', { path: link.path, sheet: PROFIT_LEDGER_SHEET, headerRow: 4, dataStart: 6,
+    headerChecks: { C:'고객명', L:'총사업비', AP:'회사입금가' }, formulaTemplates: templates, items }, 5*60*1000);
+}
+function profitLedgerResultText(res){
+  const rs = res.results || [];
+  const ok = rs.filter(r=>!r.error && !r.skipped), fail = rs.filter(r=>r.error);
+  const newCount = ok.filter(r=>r.wasNewRow).length;
+  let msg = `PC 파일에 ${ok.length}건 기록 (새 행 ${newCount}건, 기존 행 갱신 ${ok.length-newCount}건)` + (ok.length ? ': ' + ok.map(r=>`${r.customer}(${r.rowNum}행)`).join(', ') : '');
+  if(fail.length) msg += `\n건너뜀 ${fail.length}건:\n` + fail.map(r=>`· ${r.customer}: ${r.error}`).join('\n');
+  return msg;
+}
+// 이윤정산 건을 고칠 때마다 부른다 — 5초 동안 모았다가, 이미 파일에 있는 고객 행만 조용히 갱신한다.
+const profitLedgerAutoQueue = new Map();
+let profitLedgerAutoNote = '';
+const flushProfitLedgerAuto = debounce(async ()=>{
+  const cases = [...profitLedgerAutoQueue.values()];
+  profitLedgerAutoQueue.clear();
+  if(!cases.length || !getLinkedFile(PROFIT_LEDGER_LINK_KEY)) return;
+  try{
+    const res = await writeProfitCasesToLinkedLedger(cases, { onlyExisting:true });
+    const ok = (res.results||[]).filter(r=>!r.error && !r.skipped);
+    if(ok.length) profitLedgerAutoNote = `${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 사급 건별 정산 파일 자동 갱신: ${ok.map(r=>`${r.customer}(${r.rowNum}행)`).join(', ')}`;
+  }catch(e){ profitLedgerAutoNote = '⚠ 사급 건별 정산 파일 자동 갱신 실패: ' + linkedFileErrorMessage(e).split('\n')[0]; }
+  const el = document.getElementById('profitLedgerAutoNote');
+  if(el){ el.textContent = profitLedgerAutoNote; el.style.color = /^⚠/.test(profitLedgerAutoNote) ? 'var(--neg)' : 'var(--muted)'; }
+}, 5000);
+function queueProfitLedgerAutoWrite(p){
+  if(!p || !p.id || !getLinkedFile(PROFIT_LEDGER_LINK_KEY)) return;
+  profitLedgerAutoQueue.set(p.id, p);
+  flushProfitLedgerAuto();
+}
+// 연결 줄(가로 목록·상세 화면 공용). getCases(): 버튼을 눌렀을 때 기록할 건들.
+function profitLedgerLinkHtml(writeLabel){
+  const link = getLinkedFile(PROFIT_LEDGER_LINK_KEY);
+  const b = (id, label, color, title) => `<button id="${id}" title="${escapeHtml(title)}" style="font-size:12px; padding:7px 12px; border-radius:7px; border:1px solid ${color}; background:transparent; color:${color}; cursor:pointer; font-weight:600; white-space:nowrap;">${label}</button>`;
+  return `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 10px; border-radius:8px; border:1px dashed var(--sky); margin-bottom:10px;">
+    <span style="font-size:12px; font-weight:600;">사급 건별 정산 PC 파일</span>
+    ${link ? `<span style="font-size:11.5px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:380px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}</span>
+      ${writeLabel ? b('profitLedgerLinkWriteBtn', writeLabel, '#2e9e5b', '같은 고객명의 행을 갱신하고, 없으면 마지막 고객 행 아래에 새 행을 만들어 기록합니다(엑셀에 열어 둔 채로도 됩니다). 기록 전 원본은 건드리지 않은 다른 칸·시트·수식 그대로 둡니다.') : ''}
+      ${b('profitLedgerLinkPickBtn', '다른 파일로 바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
+      ${b('profitLedgerUnlinkBtn', '✕ 해제', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
+      <span id="profitLedgerAutoNote" style="font-size:11px; color:${/^⚠/.test(profitLedgerAutoNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(profitLedgerAutoNote || '이윤정산 건을 고치면 파일에 이미 있는 고객 행은 자동으로 갱신됩니다.')}</span>`
+    : `${b('profitLedgerLinkPickBtn', '🔗 PC 엑셀 파일 연결', 'var(--sky)', 'W:\\9.회계\\1. 사업관련\\3. 사급 의 "사급 건별 정산 (2026년)_최종" 같은 정산데이터 파일을 연결합니다. 파일 선택 창은 엑셀 도우미가 띄웁니다.')}
+       <span style="font-size:11px; color:var(--muted);">연결하면 파일을 올리고 내려받지 않고 PC 파일에 바로 기록합니다(엑셀 도우미 필요).</span>`}
+  </div>`;
+}
+function bindProfitLedgerLinkButtons(getCases, rerender, onMessage){
+  const busy = async (btn, text, fn) => {
+    const label = btn.textContent; btn.textContent = text; btn.disabled = true;
+    try{ await fn(); } catch(e){ alert(linkedFileErrorMessage(e)); } finally{ btn.textContent = label; btn.disabled = false; }
+  };
+  const pick = document.getElementById('profitLedgerLinkPickBtn');
+  if(pick) pick.addEventListener('click', ()=>busy(pick, '파일 선택 창을 띄웠습니다…', async ()=>{
+    const link = await pickLinkedFile(PROFIT_LEDGER_LINK_KEY, '사급 건별 정산(정산데이터) 엑셀 파일 선택');
+    if(link) rerender();
+  }));
+  const unlink = document.getElementById('profitLedgerUnlinkBtn');
+  if(unlink) unlink.addEventListener('click', ()=>{
+    if(!confirm('사급 건별 정산 파일 연결을 해제할까요? (파일 자체는 그대로 남습니다)')) return;
+    unlinkFile(PROFIT_LEDGER_LINK_KEY); rerender();
+  });
+  const write = document.getElementById('profitLedgerLinkWriteBtn');
+  if(write) write.addEventListener('click', ()=>busy(write, '기록 중…', async ()=>{
+    const cases = getCases();
+    if(!cases.length){ alert('기록할 건을 먼저 골라주세요.'); return; }
+    const res = await writeProfitCasesToLinkedLedger(cases, { onlyExisting:false });
+    const msg = profitLedgerResultText(res);
+    if(onMessage) onMessage(msg); else alert(msg);
+    rerender();
+  }));
+}
 function expandLedgerNamedRange(wbDoc, name, newRowNum){
   // 같은 이름의 이름정의가 여러 개 있을 수 있다(예: "화성 15건" 시트 전용
   // localSheetId 범위 vs "단일갑지" 인쇄 시트들이 실제로 참조하는 워크북
@@ -6269,6 +6388,7 @@ function renderProfitMain(){
       updateProfitCalculations();
       debouncedSave();
       pushCaseEditsToImportRow('profit', p, (key === 'moduleModel' || key === 'structureNote') ? [key, 'depositPrice'] : [key]);
+      queueProfitLedgerAutoWrite(p);
       if(key === 'moduleModel' || key === 'module2Model' || key === 'inverterModel' || key === 'structureNote') renderProfitMain();
     };
     let markupDirty = false;
@@ -12742,7 +12862,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 15;
+const EXCEL_HELPER_VERSION = 16;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -19555,7 +19675,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '15'
+$Version = '16'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20036,6 +20156,105 @@ function Handle-SagupWrite($body){
   }
 }
 
+# ---- 사급 건별 정산(정산데이터 시트): 이윤정산 건을 고객 행에 써 넣는다 ----
+# 앱의 "기록하고 다운로드"와 같은 규칙: 4행 머리글 확인 → C열(고객명)이 같은 행을 찾아 갱신,
+# 없으면 마지막 고객 행 바로 아래 줄에 그 행을 복사해(서식·수식 그대로) 새 고객 행을 만들고
+# 정해진 수식 열은 정확한 수식으로 다시 써 넣는다. 같은 고객명이 여러 행이면 건너뛴다.
+# 새 행이 이름정의(정산데이터) 범위 밖이면 범위를 넓힌다(다른 시트 VLOOKUP이 새 행을 찾도록).
+function Handle-ProfitLedgerWrite($body){
+  $path = [string]$body.path
+  $xl = Get-Excel $true
+  $wb = Find-OpenWorkbook $xl $path
+  $openedHere = $false
+  if(-not $wb){
+    if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
+    $wb = Invoke-Retry { $xl.Workbooks.Open($path) }
+    $openedHere = $true
+  }
+  try {
+    if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
+    $sheetName = [string]$body.sheet
+    $ws = $null; foreach($s in $wb.Worksheets){ if([string]$s.Name -eq $sheetName){ $ws = $s } }
+    if(-not $ws){ throw """$sheetName"" 시트를 찾을 수 없습니다." }
+    $hr = [int]$body.headerRow
+    foreach($p in $body.headerChecks.psobject.Properties){
+      $txt = ([string]$ws.Range("$($p.Name)$hr").Text) -replace '\s',''
+      if($txt -and -not $txt.Contains([string]$p.Value)){ throw """$sheetName"" 시트의 열 구성이 예상과 달라 안전하게 처리할 수 없습니다 ($($p.Name)열: ""$txt""). 수동 확인이 필요합니다." }
+    }
+    $start = [int]$body.dataStart
+    $used = $ws.UsedRange
+    $last = [Math]::Max($start, [int]$used.Row + [int]$used.Rows.Count - 1)
+    # C열 고객명을 한 번에 읽어 둔다(행 번호 → 이름). 새 행을 만들면 여기에도 넣는다.
+    $names = @{}
+    $box = @{}
+    Invoke-Retry { $box.v = $ws.Range("C${start}:C${last}").Value2 } | Out-Null
+    for($r=$start; $r -le $last; $r++){
+      $v = if($start -eq $last){ $box.v } else { $box.v[($r - $start + 1), 1] }
+      $t = if($null -eq $v){ '' } else { ([string]$v).Trim() }
+      if($t){ $names[$r] = $t }
+    }
+    $templates = $body.formulaTemplates
+    $results = @(); $maxNew = 0; $changed = $false
+    foreach($it in @($body.items)){
+      $cust = ([string]$it.customer).Trim()
+      if(-not $cust){ $results += @{ id=[string]$it.id; customer=$cust; error='고객명이 비어 있습니다.' }; continue }
+      $hits = @($names.Keys | Where-Object { $names[$_] -eq $cust } | Sort-Object)
+      if($hits.Count -gt 1){ $results += @{ id=[string]$it.id; customer=$cust; error="같은 이름이 $($hits.Count)개 행($($hits -join ', ')행)에 있어 어느 행인지 정할 수 없습니다." }; continue }
+      $row = 0; $isNew = $false
+      if($hits.Count -eq 1){ $row = [int]$hits[0] }
+      elseif($it.onlyExisting){ $results += @{ id=[string]$it.id; customer=$cust; skipped=$true }; continue }
+      else {
+        $lastFilled = @($names.Keys | Sort-Object -Descending)[0]
+        if(-not $lastFilled){ $results += @{ id=[string]$it.id; customer=$cust; error='기존 고객 행을 찾지 못해 새 행의 서식을 복사할 수 없습니다.' }; continue }
+        $row = [int]$lastFilled + 1
+        # 번호(B열)만 미리 적어 둔 빈 행이면 그 번호는 남긴다.
+        $keepB = $null; try { $bf = [string]$ws.Range("B$row").Formula; if($bf.Trim()){ $keepB = $bf } } catch {}
+        Invoke-Retry { [void]$ws.Rows.Item([int]$lastFilled).Copy($ws.Rows.Item($row)) } | Out-Null
+        $xl.CutCopyMode = $false
+        if($null -ne $keepB){ Set-CellValue $ws.Range("B$row") $keepB }
+        Set-CellValue $ws.Range("C$row") $cust
+        foreach($tp in $templates.psobject.Properties){ Set-CellValue $ws.Range("$($tp.Name)$row") ('=' + ([string]$tp.Value).Replace('{n}', [string]$row)) }
+        $isNew = $true; $names[$row] = $cust
+        if($row -gt $maxNew){ $maxNew = $row }
+      }
+      foreach($cellSpec in @($it.cells)){
+        $cell = $ws.Range(([string]$cellSpec.col) + $row)
+        $v = $cellSpec.value
+        switch([string]$cellSpec.type){
+          'formula' { Set-CellValue $cell ('=' + [string]$v) }
+          'date' {
+            $d = [datetime]::MinValue
+            if([string]$v -and [datetime]::TryParseExact([string]$v, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$d)){ Set-CellValue $cell ($d.ToOADate()) }
+            else { Invoke-Retry { [void]$cell.ClearContents() } | Out-Null }
+          }
+          'number' { $n = 0.0; [void][double]::TryParse(((([string]$v) -replace ',','')), [ref]$n); Set-CellValue $cell $n }
+          default {
+            $sv = if($null -eq $v){ '' } else { [string]$v }
+            if($sv -eq ''){ Invoke-Retry { [void]$cell.ClearContents() } | Out-Null }
+            else { if($sv -match '^[=+\-@#]' -or $sv -match '^0\d+$'){ $sv = "'" + $sv }; Set-CellValue $cell $sv }
+          }
+        }
+      }
+      $changed = $true
+      $results += @{ id=[string]$it.id; customer=$cust; rowNum=$row; wasNewRow=$isNew }
+    }
+    if($maxNew -gt 0){
+      foreach($n in $wb.Names){
+        try {
+          if([string]$n.Name -ne $sheetName){ continue }
+          $ref = [string]$n.RefersTo
+          $m = [regex]::Match($ref, '^(.*\$[A-Za-z]+\$)(\d+)$')
+          if($m.Success -and [int]$m.Groups[2].Value -lt $maxNew){ $n.RefersTo = $m.Groups[1].Value + $maxNew }
+        } catch {}
+      }
+    }
+    if($changed){ Invoke-Retry { $wb.Save() } | Out-Null }
+    return @{ ok=$true; results=$results; wasOpen=(-not $openedHere) }
+  } finally {
+    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+  }
+}
+
 # ---- 통합본(여러 카드 블록이 한 시트에 있는 파일) 채우기 — 엑셀에서 직접 ----
 # 파일을 바이트로 읽지 않고 엑셀로 열어 칸에 바로 쓴다. 문서보안(DRM)으로 암호화된 파일도
 # 엑셀이 열 수 있으면 된다. 규칙은 앱의 통합본 갱신과 같다:
@@ -20420,6 +20639,7 @@ function Handle-Context($ctx){
       '/corpcard/write' { Handle-CorpCardWrite $body }
       '/cardmaster/write' { Handle-CardMasterWrite $body }
       '/sagup/write'      { Handle-SagupWrite $body }
+      '/profitledger/write' { Handle-ProfitLedgerWrite $body }
       '/filestat'         {
         # 파일의 마지막 저장 시각(바뀌었는지 보는 용도) — 파일을 열지 않고 정보만 본다.
         $p = [string]$body.path
