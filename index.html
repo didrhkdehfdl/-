@@ -5485,20 +5485,52 @@ function profitLedgerResultText(res){
 // 이윤정산 건을 고칠 때마다 부른다 — 5초 동안 모았다가, 이미 파일에 있는 고객 행만 조용히 갱신한다.
 const profitLedgerAutoQueue = new Map();
 let profitLedgerAutoNote = '';
+// 어느 탭에서 고쳤든 결과가 보이도록 화면 오른쪽 아래에 잠깐 띄운다.
+function showLedgerToast(msg, isErr){
+  let el = document.getElementById('ledgerToast');
+  if(!el){
+    el = document.createElement('div'); el.id = 'ledgerToast';
+    el.style.cssText = 'position:fixed; right:16px; bottom:16px; z-index:200; max-width:min(460px, calc(100vw - 32px)); padding:10px 14px; border-radius:8px; font-size:12.5px; line-height:1.5; box-shadow:0 4px 16px rgba(0,0,0,.25); white-space:pre-line; cursor:pointer;';
+    el.title = '클릭하면 닫힙니다';
+    el.addEventListener('click', ()=>{ el.style.display = 'none'; });
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.background = isErr ? '#5a1f1f' : '#1f3d2b';
+  el.style.color = '#fff';
+  el.style.display = 'block';
+  clearTimeout(el._t); el._t = setTimeout(()=>{ el.style.display = 'none'; }, isErr ? 15000 : 8000);
+}
+let profitLedgerUnlinkedWarned = false;
 const flushProfitLedgerAuto = debounce(async ()=>{
   const cases = [...profitLedgerAutoQueue.values()];
   profitLedgerAutoQueue.clear();
   if(!cases.length || !getLinkedFile(PROFIT_LEDGER_LINK_KEY)) return;
   try{
     const res = await writeProfitCasesToLinkedLedger(cases, { onlyExisting:true });
-    const ok = (res.results||[]).filter(r=>!r.error && !r.skipped);
-    if(ok.length) profitLedgerAutoNote = `${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 사급 건별 정산 파일 자동 갱신: ${ok.map(r=>`${r.customer}(${r.rowNum}행)`).join(', ')}`;
-  }catch(e){ profitLedgerAutoNote = '⚠ 사급 건별 정산 파일 자동 갱신 실패: ' + linkedFileErrorMessage(e).split('\n')[0]; }
+    const rs = res.results||[];
+    const ok = rs.filter(r=>!r.error && !r.skipped), skipped = rs.filter(r=>r.skipped), failed = rs.filter(r=>r.error);
+    const t = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+    const parts = [];
+    if(ok.length) parts.push(`사급 건별 정산 파일 자동 갱신: ${ok.map(r=>`${r.customer}(${r.rowNum}행)`).join(', ')}`);
+    if(skipped.length) parts.push(`파일에 고객 행이 없어 자동 갱신 안 함: ${skipped.map(r=>r.customer).join(', ')} — 이윤정산 그 건의 "💾 이 건 PC 파일에 기록"으로 행을 추가해 주세요.`);
+    if(failed.length) parts.push(`⚠ 건너뜀: ${failed.map(r=>`${r.customer}(${r.error})`).join(', ')}`);
+    profitLedgerAutoNote = `${t} ` + parts.join(' / ');
+    showLedgerToast(parts.join('\n'), !ok.length);
+  }catch(e){
+    profitLedgerAutoNote = '⚠ 사급 건별 정산 파일 자동 갱신 실패: ' + linkedFileErrorMessage(e).split('\n')[0];
+    showLedgerToast(profitLedgerAutoNote, true);
+  }
   const el = document.getElementById('profitLedgerAutoNote');
   if(el){ el.textContent = profitLedgerAutoNote; el.style.color = /^⚠/.test(profitLedgerAutoNote) ? 'var(--neg)' : 'var(--muted)'; }
 }, 5000);
 function queueProfitLedgerAutoWrite(p){
-  if(!p || !p.id || !getLinkedFile(PROFIT_LEDGER_LINK_KEY)) return;
+  if(!p || !p.id) return;
+  if(!getLinkedFile(PROFIT_LEDGER_LINK_KEY)){
+    // 이 PC(브라우저)에는 파일이 연결돼 있지 않다 — 연결은 PC마다 따로라서 한 번 알려준다.
+    if(!profitLedgerUnlinkedWarned){ profitLedgerUnlinkedWarned = true; showLedgerToast('이 PC에는 사급 건별 정산 파일이 연결돼 있지 않아 엑셀에 자동으로 쓰지 않았습니다.\n사업 이윤정산 탭 위쪽 "🔗 PC 엑셀 파일 연결"로 파일을 연결해 주세요.', true); }
+    return;
+  }
   profitLedgerAutoQueue.set(p.id, p);
   flushProfitLedgerAuto();
 }
@@ -13033,7 +13065,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 16;
+const EXCEL_HELPER_VERSION = 17;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -19957,7 +19989,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '16'
+$Version = '17'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20472,15 +20504,17 @@ function Handle-ProfitLedgerWrite($body){
     Invoke-Retry { $box.v = $ws.Range("C${start}:C${last}").Value2 } | Out-Null
     for($r=$start; $r -le $last; $r++){
       $v = if($start -eq $last){ $box.v } else { $box.v[($r - $start + 1), 1] }
-      $t = if($null -eq $v){ '' } else { ([string]$v).Trim() }
+      # 고객명은 띄어쓰기를 빼고 비교한다(예: "김 창식" = "김창식").
+      $t = if($null -eq $v){ '' } else { ([string]$v) -replace '\s','' }
       if($t){ $names[$r] = $t }
     }
     $templates = $body.formulaTemplates
     $results = @(); $maxNew = 0; $changed = $false
     foreach($it in @($body.items)){
       $cust = ([string]$it.customer).Trim()
+      $custKey = $cust -replace '\s',''
       if(-not $cust){ $results += @{ id=[string]$it.id; customer=$cust; error='고객명이 비어 있습니다.' }; continue }
-      $hits = @($names.Keys | Where-Object { $names[$_] -eq $cust } | Sort-Object)
+      $hits = @($names.Keys | Where-Object { $names[$_] -eq $custKey } | Sort-Object)
       if($hits.Count -gt 1){ $results += @{ id=[string]$it.id; customer=$cust; error="같은 이름이 $($hits.Count)개 행($($hits -join ', ')행)에 있어 어느 행인지 정할 수 없습니다." }; continue }
       $row = 0; $isNew = $false
       if($hits.Count -eq 1){ $row = [int]$hits[0] }
@@ -20496,7 +20530,7 @@ function Handle-ProfitLedgerWrite($body){
         if($null -ne $keepB){ Set-CellValue $ws.Range("B$row") $keepB }
         Set-CellValue $ws.Range("C$row") $cust
         foreach($tp in $templates.psobject.Properties){ Set-CellValue $ws.Range("$($tp.Name)$row") ('=' + ([string]$tp.Value).Replace('{n}', [string]$row)) }
-        $isNew = $true; $names[$row] = $cust
+        $isNew = $true; $names[$row] = $custKey
         if($row -gt $maxNew){ $maxNew = $row }
       }
       foreach($cellSpec in @($it.cells)){
