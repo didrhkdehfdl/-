@@ -17378,7 +17378,10 @@ async function syncCasesFromImportRows(rows){
       const row = relink(c);
       if(!row) continue;
       untouchForcedFields(c, 'profit', row.id);
-      if(syncProfitCaseFromRow(c, row) || before !== c.sourceRowId){ persistCase(c); anyChanged = true; }
+      const valuesChanged = syncProfitCaseFromRow(c, row);
+      if(valuesChanged || before !== c.sourceRowId){ persistCase(c); anyChanged = true; }
+      // 실적리스트 변경으로 이윤정산 값이 바뀌면 사급 건별 정산 PC 파일의 그 고객 행도 자동으로 갱신한다.
+      if(valuesChanged && typeof queueProfitLedgerAutoWrite === 'function') queueProfitLedgerAutoWrite(c);
     } else {
       let changed = false;
       (c.records||[]).forEach(rec=>{
