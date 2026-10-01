@@ -16483,6 +16483,7 @@ function renderUploadMode(){
       const prevVal = row[field];
       row[field] = isNumeric ? (parseFloat(String(inp.value).replace(/,/g,''))||0) : inp.value;
       recordImportEdit(row, field, prevVal, row[field], 'list');
+      markImportRowFieldForced(row.id, field);
       if(field === 'certDate') delete row.certDateAuto; // 사람이 직접 손댔으니 자동 채움 표시는 지운다
       // 여기서 직접 고친 값도 연결된 PC 엑셀 파일에 쓸 목록(caseOverrides)에 올린다 — 정산 쪽 수정과 같은 길로 파일에 쓴다.
       const markPending = (f, td) => {
@@ -16494,6 +16495,7 @@ function renderUploadMode(){
         const price = computePerfCompanyPrice(row);
         if(price !== null){
           recordImportEdit(row, 'companyPrice', row.companyPrice, price, 'list');
+          markImportRowFieldForced(row.id, 'companyPrice');
           row.companyPrice = price;
           const priceInp = tr.querySelector('[data-perf="companyPrice"]');
           if(priceInp) priceInp.value = price.toLocaleString('ko-KR');
@@ -16643,6 +16645,10 @@ function inverterPriceFor(model){
 }
 const debouncedSaveInverterMaster = debounce(()=>{
   saveWithGenericHistory(INVERTER_MASTER_KEY, JSON.stringify(inverterMaster));
+  // 단가가 바뀌면 실적리스트에서 만든 이윤정산 건의 인버터 단가도 다시 맞춘다(직접 고친 칸은 그대로).
+  if(typeof syncCasesFromImportRows === 'function'){
+    syncCasesFromImportRows(importState.rows).then(()=>syncCasesFromImportRows(importState.manualRows)).catch(()=>{});
+  }
 }, 500);
 
 // PERF_MODULE_MODELS, PROFIT_MODULE_PRICES, PERF_MODULE_BASE_PRICE,
@@ -16815,6 +16821,7 @@ function wirePerfRowEvents(){
       if(!row) return;
       const field = inp.dataset.perf;
       row[field] = isNumeric ? (parseFloat(String(inp.value).replace(/,/g,''))||0) : inp.value;
+      markImportRowFieldForced(row.id, field);
       if(field === 'certDate') delete row.certDateAuto; // 사람이 직접 손댔으니 자동 채움 표시는 지운다
       if(row.caseOverrides && field in row.caseOverrides){ delete row.caseOverrides[field]; const td = inp.closest('td'); if(td){ td.removeAttribute('style'); td.removeAttribute('title'); } }
       if(field === 'moduleModel' || field === 'structureType'){
@@ -17303,6 +17310,9 @@ function syncSalesRecordFromRow(rec, row){
 function syncProfitCaseFromRow(p, row){
   const fresh = buildProfitCaseFromRow(row);
   const touched = new Set(p.touchedFields||[]);
+  // 모델을 직접 고쳐 둔 건은 그 모델의 단가도 그대로 둔다(모델과 단가가 서로 안 맞게 섞이지 않게).
+  if(touched.has('inverterModel')){ touched.add('inverterBuy'); touched.add('inverterSell'); }
+  if(touched.has('moduleModel')){ touched.add('moduleBuy'); touched.add('moduleSell'); }
   let changed = false;
   PROFIT_ROW_SYNCED_FIELDS.forEach(key=>{
     if(touched.has(key)) return;
@@ -17317,9 +17327,46 @@ function syncProfitCaseFromRow(p, row){
 // 행에서 만들어둔 영업비 정산 레코드·사업 이윤정산 건을 찾아 자동으로
 // 최신값으로 갱신한다. 아직 한 번도 안 열어본 건은 caseCache에 없을 수
 // 있어서 필요하면 저장소에서 불러온 뒤 검사한다.
+// 실적리스트에서 사람이 직접 고친 항목은, 그 행으로 만든 정산 건에서 예전에 직접 고쳐 둔(touchedFields) 항목이라도
+// 이번엔 실적리스트 값으로 바꾼다 — 가장 최근에 고친 값이 이기게. (rowId → 고친 실적리스트 항목들)
+const importRowForcedFields = new Map();
+const ROW_FIELD_PROFIT_DEPENDENTS = { inverterModel:['inverterBuy','inverterSell'], moduleModel:['moduleBuy','moduleSell','depositPrice'],
+  capacity:['constructionCost','salesCost'], structureType:['structureBuy','structureSell'], companyPrice:['depositPrice','salesCost'],
+  totalAmount:['totalBusinessCost','customerDeposit','salesCost'], supplyAmount:['totalBusinessCost'], deposit:['customerDeposit','salesCost'],
+  extra:['salesDeduction','salesCost'], extraNote:['salesDeductionNote'] };
+function markImportRowFieldForced(rowId, field){
+  if(!rowId) return;
+  if(!importRowForcedFields.has(rowId)) importRowForcedFields.set(rowId, new Set());
+  importRowForcedFields.get(rowId).add(field);
+}
+function untouchForcedFields(obj, kind, rowId){
+  const forced = importRowForcedFields.get(rowId);
+  if(!forced || !obj.touchedFields || !obj.touchedFields.length) return;
+  const map = kind === 'profit' ? PROFIT_FIELD_TO_ROW : SALES_FIELD_TO_ROW;
+  const drop = new Set();
+  forced.forEach(rowField=>{
+    Object.keys(map).forEach(k=>{ if(map[k] === rowField || (map[k] === 'inverter' && (rowField === 'inverterModel' || rowField === 'inverterQty'))) drop.add(k); });
+    if(kind === 'profit') (ROW_FIELD_PROFIT_DEPENDENTS[rowField]||[]).forEach(k=>drop.add(k));
+    if(kind === 'sales' && rowField === 'moduleModel') drop.add('companyPrice');
+  });
+  obj.touchedFields = obj.touchedFields.filter(f=>!drop.has(f));
+}
 async function syncCasesFromImportRows(rows){
   if(!rows || !rows.length) return;
   const rowById = new Map(rows.map(r=>[r.id, r]));
+  // 연결(sourceRowId)이 끊긴 건은 고객명이 같은 행이 하나뿐일 때 그 행으로 다시 연결한다 — 예전에는 엑셀을
+  // 다시 불러올 때마다 행 번호표(id)가 새로 만들어져서, 그 전에 만든 건들이 실적리스트 변경을 못 따라왔다.
+  const keyName = v => String(v||'').replace(/\s+/g,'');
+  const byName = new Map();
+  rows.forEach(r=>{ const k = keyName(r.customer); if(!k) return; byName.set(k, byName.has(k) ? null : r); });
+  const relink = (obj) => {
+    if(obj.sourceRowId && rowById.get(obj.sourceRowId)) return rowById.get(obj.sourceRowId);
+    if(obj.sourceRowId && findImportRowById(obj.sourceRowId)) return null;   // 다른 목록(직접입력/업로드)의 행
+    const r = byName.get(keyName(obj.customer));
+    if(!r) return null;
+    obj.sourceRowId = r.id;
+    return r;
+  };
   let anyChanged = false;
   for(const entry of state.cases){
     const caseType = entry.caseType || 'sales';
@@ -17327,19 +17374,24 @@ async function syncCasesFromImportRows(rows){
     if(!c) continue;
     caseCache[entry.id] = c;
     if(caseType === 'profit'){
-      const row = c.sourceRowId && rowById.get(c.sourceRowId);
+      const before = c.sourceRowId;
+      const row = relink(c);
       if(!row) continue;
-      if(syncProfitCaseFromRow(c, row)){ persistCase(c); anyChanged = true; }
+      untouchForcedFields(c, 'profit', row.id);
+      if(syncProfitCaseFromRow(c, row) || before !== c.sourceRowId){ persistCase(c); anyChanged = true; }
     } else {
       let changed = false;
       (c.records||[]).forEach(rec=>{
-        const row = rec.sourceRowId && rowById.get(rec.sourceRowId);
+        const before = rec.sourceRowId;
+        const row = relink(rec);
         if(!row) return;
-        if(syncSalesRecordFromRow(rec, row)) changed = true;
+        untouchForcedFields(rec, 'sales', row.id);
+        if(syncSalesRecordFromRow(rec, row) || before !== rec.sourceRowId) changed = true;
       });
       if(changed){ persistCase(c); anyChanged = true; }
     }
   }
+  importRowForcedFields.clear();
   // 지금 열어서 보고 있는 건이 방금 갱신됐으면 화면도 새로고침해서 바로 보여준다.
   if(anyChanged && (state.activeTab==='sales' || state.activeTab==='profit')) renderMain();
 }
@@ -17572,6 +17624,7 @@ function revertImportEdit(row, e){
   const prev = row[f];
   row[f] = val;
   recordImportEdit(row, f, prev, val, 'revert');
+  markImportRowFieldForced(row.id, f);
   if((importState.rows||[]).includes(row)){
     row.caseOverrides = { ...(row.caseOverrides||{}), [f]: val };
     debouncedSaveImportRows(); debouncedSyncFromImportRows(); debouncedWriteImportOverrides();
