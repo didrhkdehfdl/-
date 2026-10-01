@@ -10176,6 +10176,26 @@ function cardParts(full){
   if(!m) return null;
   return { p1:m[1], p2:m[2], p3:m[3], p4:m[4] };
 }
+// 카드가 재발급돼 번호가 바뀐 경우 — card.numberHistory = [{fromMonth:1, cardNumber:예전}, {fromMonth:10, cardNumber:새}].
+// 그 달에 쓰던 번호(사용내역서·관리대장·통합본에 들어갈 번호)는 cardNumberForMonth로, 승인내역 대조처럼
+// 예전·새 번호 모두 이 카드로 봐야 하는 곳은 cardNumbersOf로 얻는다. card.cardNumber는 늘 최신 번호.
+function cardNumbersOf(card){
+  if(!card) return [];
+  const list = (card.numberHistory||[]).map(h=>h.cardNumber).concat([card.cardNumber]).filter(Boolean);
+  return [...new Set(list)];
+}
+function cardNumberForMonth(card, month){
+  if(!card) return '';
+  const hist = card.numberHistory;
+  if(!hist || !hist.length) return card.cardNumber;
+  const num = typeof month === 'number' ? month : monthNumFromLabel(month);
+  if(!num) return card.cardNumber;
+  const hit = hist.slice().sort((a,b)=>a.fromMonth-b.fromMonth).filter(h=>h.fromMonth <= num).pop();
+  return (hit && hit.cardNumber) || card.cardNumber;
+}
+function cardMatchesApproval(card, cardNoStr){
+  return cardNumbersOf(card).some(n=>{ const p = cardParts(n); return p && approvalRowMatchesCard(cardNoStr, p); });
+}
 // 카드사마다 승인내역에서 마스킹하는 자리가 다르다(3번째 그룹을 가리는 곳이
 // 많지만, 2번째 그룹을 "****"로 가리는 카드사도 있다) — 그래서 특정 자리가
 // 마스킹됐다고 가정하지 않고, 4자리 숫자로 온전히 보이는 그룹만 실제 카드
@@ -10704,20 +10724,23 @@ async function downloadCardMasterViaHelper(tmplId, onlyMonth, onStatus){
 // 내역이 없는 카드는 넣지 않는다(그 카드 블록은 건드리지 않음 — 다운로드용 갱신과 같은 규칙).
 // 새 블록을 만들 때 본뜬 카드의 번호를 새 카드 번호로 바꾸려고 카드 전체 목록도 함께 보낸다.
 function cardMasterAllCards(){
-  return corpCardState.cards.map(c=>{ const p = cardParts(c.cardNumber); return p ? { last4: p.p4, cardNumber: c.cardNumber } : null; }).filter(Boolean);
+  return corpCardState.cards.flatMap(c=>cardNumbersOf(c).map(n=>{ const p = cardParts(n); return p ? { last4: p.p4, cardNumber: n } : null; })).filter(Boolean);
 }
 function buildCardMasterWritePayload(onlyMonth){
   const byMonth = new Map();
   corpCardState.cards.forEach(card=>{
-    const parts = cardParts(card.cardNumber);
-    if(!parts) return;
+    if(!cardParts(card.cardNumber)) return;
     Object.entries(corpCardState.rowsByCard[card.id]||{}).forEach(([label, rows])=>{
       const num = monthNumFromLabel(label);
       if(!num || (onlyMonth && num !== onlyMonth)) return;
       const dated = (rows||[]).filter(r=>r.date);
       if(!dated.length) return;
+      // 그 달에 쓰던 카드번호의 블록에 넣는다(재발급 전 달은 예전 번호, 이후 달은 새 번호).
+      const monthNumber = cardNumberForMonth(card, num);
+      const parts = cardParts(monthNumber);
+      if(!parts) return;
       if(!byMonth.has(num)) byMonth.set(num, []);
-      byMonth.get(num).push({ last4: parts.p4, cardNumber: card.cardNumber, rows: dated.map(corpCardRowToBlock) });
+      byMonth.get(num).push({ last4: parts.p4, cardNumber: monthNumber, rows: dated.map(corpCardRowToBlock) });
     });
   });
   return [...byMonth.entries()].sort((a,b)=>a[0]-b[0]).map(([num, cards])=>({ num, cards }));
@@ -10796,7 +10819,7 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
     for(const card of corpCardState.cards){
       doneSteps++;
       if(onProgress) onProgress(doneSteps, totalSteps);
-      const parts = cardParts(card.cardNumber);
+      const parts = cardParts(cardNumberForMonth(card, mnum));
       if(!parts) continue;
       const matchMonth = await ensureCorpCardMonthExists(card, mnum);
       if(!matchMonth) continue;
@@ -12702,10 +12725,9 @@ function approvalEntriesForCard(cardId){
   if(hit) return hit;
   const card = corpCardState.cards.find(c=>c.id===cardId);
   if(!card) return [];
-  const parts = cardParts(card.cardNumber);
-  if(!parts) return [];
+  if(!cardParts(card.cardNumber)) return [];
   const list = corpCardState.approvalEntries
-    .filter(a=>approvalRowMatchesCard(a.cardNoStr, parts))
+    .filter(a=>cardMatchesApproval(card, a.cardNoStr))
     .slice()
     .sort((a,b)=> String(a.isoDate||'').localeCompare(String(b.isoDate||'')));
   approvalForCardCache.byCard.set(cardId, list);
@@ -12964,9 +12986,8 @@ function recomputeCorpCardMismatches(){
   const s = corpCardState;
   s.mismatchByCard = {};
   s.cards.forEach(card=>{
-    const parts = cardParts(card.cardNumber);
-    if(!parts) return;
-    const approvalForCard = s.approvalEntries.filter(a=>approvalRowMatchesCard(a.cardNoStr, parts));
+    if(!cardParts(card.cardNumber)) return;
+    const approvalForCard = s.approvalEntries.filter(a=>cardMatchesApproval(card, a.cardNoStr));
     if(!approvalForCard.length) return;
     // 승인내역을 아직 안 올린 달까지 통째로 "승인내역 없음"으로 빨갛게
     // 칠하면 안 되니, 실제로 승인내역이 있는 달(YYYY-MM)의 행만 대사
@@ -13116,7 +13137,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 18;
+const EXCEL_HELPER_VERSION = 19;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -13430,7 +13451,7 @@ function buildCorpCardUsageDocPage(items, card){
         </td>
       </tr>
     </table>
-    <div style="font-size:16px; margin-bottom:8px;">카드No : ${escapeHtml(card.cardNumber||'')}</div>
+    <div style="font-size:16px; margin-bottom:8px;">카드No : ${escapeHtml(cardNumberForMonth(card, first && first.date ? Number(String(first.date).slice(5,7)) : '')||'')}</div>
 
     <table style="border-collapse:collapse; width:100%; margin-bottom:0;">
       <tr>
@@ -14438,7 +14459,7 @@ function buildCorpCardMonthPrintHtml(card, month, rows){
   <div class="print-page doc-page corpcard-sheet-doc corpcard-usage-doc" style="color:#000; width:${CORP_CARD_SHEET_DOC_WIDTH}px; padding:12px;">
     <style>.corpcard-usage-doc table.print-table th, .corpcard-usage-doc table.print-table td{ border-color:#000; }</style>
     <div style="text-align:center; font-size:20px; font-weight:700; margin-bottom:6px;">법인카드 사용 관리대장</div>
-    <div style="font-size:12px; margin-bottom:10px;">카드번호: ${escapeHtml(card.cardNumber||'')} · ${escapeHtml(month)}</div>
+    <div style="font-size:12px; margin-bottom:10px;">카드번호: ${escapeHtml(cardNumberForMonth(card, month)||'')} · ${escapeHtml(month)}</div>
     <table class="print-table">
       <thead>
         <tr style="background:#fff;">
@@ -14468,7 +14489,16 @@ async function openCorpCardMonthPrintPreview(card, month, rows, onExported){
   if(tmpl && tmpl.buffer){
     try{
       const layout = await readCorpCardSheetLayout(tmpl.buffer, month);
-      if(layout) html = buildCorpCardSheetPrintHtml(layout, card, month, rows);
+      if(layout){
+        // 양식에 적힌 카드번호 칸(예전 번호)은 그 달에 쓰던 번호로 바꿔 그린다(재발급 뒤 달은 새 번호).
+        const want = cardNumberForMonth(card, month);
+        const known = new Set(cardNumbersOf(card).map(n=>String(n).replace(/\D/g,'')));
+        Object.values(layout.rows||{}).forEach(rw=>Object.values(rw.cells||{}).forEach(c=>{
+          const d = String(c.text||'').replace(/\D/g,'');
+          if(d.length >= 12 && known.has(d) && d !== String(want).replace(/\D/g,'')){ c.text = want; c.num = null; }
+        }));
+        html = buildCorpCardSheetPrintHtml(layout, card, month, rows);
+      }
     }catch(e){ console.error('양식 시트 모양을 읽지 못해 기본 표로 인쇄합니다', e); }
   }
   if(!html) html = buildCorpCardMonthPrintHtml(card, month, rows);
@@ -14576,7 +14606,7 @@ async function renderCorpCardMain(){
       </div>
     </div>
     ${!activeCard ? `<div class="empty-side">등록된 카드가 없습니다. "+ 카드 추가"로 카드별 관리대장 엑셀을 올려주세요.</div>` : !tmpl ? `<div class="empty-side">이 카드의 양식 파일을 다시 올려주세요.</div>` : `
-    <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">카드번호: ${escapeHtml(activeCard.cardNumber)}${isAdminUser ? ` <button id="corpCardEditNumberBtn" title="카드가 재발급돼 번호가 바뀌었을 때 고칩니다(카드 버튼에는 끝 4자리가 표시됩니다)." style="font-size:11px; padding:2px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--sky); cursor:pointer; margin-left:2px;">수정</button>` : ''} · 양식 파일: ${escapeHtml(tmpl.fileName)}</div>
+    <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">카드번호: ${escapeHtml(activeCard.cardNumber)}${(activeCard.numberHistory||[]).length > 1 ? ` <span title="달마다 그 달에 쓰던 번호로 관리대장·사용내역서·통합본이 만들어집니다.">(${activeCard.numberHistory.slice().sort((a,b)=>a.fromMonth-b.fromMonth).map(h=>`${h.fromMonth}월~ ${escapeHtml(String(h.cardNumber).slice(-4))}`).join(' → ')})</span>` : ''}${isAdminUser ? ` <button id="corpCardEditNumberBtn" title="카드가 재발급돼 번호가 바뀌었을 때 고칩니다(카드 버튼에는 끝 4자리가 표시됩니다)." style="font-size:11px; padding:2px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--sky); cursor:pointer; margin-left:2px;">수정</button>` : ''} · 양식 파일: ${escapeHtml(tmpl.fileName)}</div>
     ${(() => {
       const pending = unrecordedSummaryAll();
       if(!pending.length) return `<div style="font-size:12px; color:var(--pos); margin-bottom:12px;">✅ 모든 카드의 승인내역이 리스트에 다 적혀 있습니다. <span style="color:var(--muted);">(${escapeHtml(corpCardSummaryFromLabel())} 확인)</span></div>`;
@@ -14739,7 +14769,26 @@ async function renderCorpCardMain(){
     const formatted = digits.length === 16 ? digits.match(/.{4}/g).join('-') : String(input).trim();
     const dup = corpCardState.cards.find(c=>c.id!==card.id && String(c.cardNumber||'').replace(/\D/g,'') === digits);
     if(dup){ alert(`이미 등록된 카드번호입니다 (${dup.label||dup.cardNumber}).`); return; }
+    const fromInput = prompt('몇 월부터 새 번호로 쓰나요? (숫자만, 예: 10)\n그 전 달의 관리대장·사용내역서·통합본에는 예전 번호가 그대로 나옵니다.\n(처음부터 잘못 적힌 번호를 고치는 거면 1)', String(new Date().getMonth()+1));
+    if(fromInput === null) return;
+    const fromMonth = parseInt(String(fromInput).replace(/\D/g,''), 10);
+    if(!(fromMonth >= 1 && fromMonth <= 12)){ alert('1~12 사이의 월을 입력해주세요.'); return; }
     const oldLabel = card.label, oldLast4 = String(card.cardNumber||'').replace(/\D/g,'').slice(-4);
+    // 번호 이력: 처음 바꿀 때 지금 번호를 1월부터의 번호로 남기고, 새 번호는 fromMonth부터.
+    let prevNumber = card.cardNumber;
+    if(String(card.cardNumber||'').replace(/\D/g,'') === digits && !(card.numberHistory && card.numberHistory.length)){
+      // 이미 새 번호로 바꿔 둔 카드 — 그 전에 쓰던 번호를 물어 이력으로 남긴다.
+      const prevIn = prompt(`이 카드는 이미 ${formatted}(으)로 되어 있습니다.\n${fromMonth}월 전까지 쓰던 예전 카드번호를 입력해주세요 (예: 1234-5678-9012-0915)`, '');
+      if(prevIn === null) return;
+      const pd = String(prevIn).replace(/\D/g,'');
+      if(pd.length !== 16){ alert('예전 카드번호 16자리를 입력해주세요.'); return; }
+      prevNumber = pd.match(/.{4}/g).join('-');
+    }
+    let hist = (card.numberHistory && card.numberHistory.length) ? card.numberHistory.slice() : [{ fromMonth:1, cardNumber: prevNumber }];
+    hist = hist.filter(h=>h.fromMonth < fromMonth);
+    hist.push({ fromMonth, cardNumber: formatted });
+    card.numberHistory = fromMonth === 1 ? [] : hist;
+    if(!card.numberHistory.length) delete card.numberHistory;
     card.cardNumber = formatted;
     // 카드 버튼의 이름이 예전 끝 4자리 그대로였으면 새 끝 4자리로 바꾼다(직접 다른 이름을 붙여 둔 카드는 그대로).
     if(!oldLabel || oldLabel === oldLast4) card.label = digits.slice(-4);
@@ -15305,7 +15354,7 @@ async function exportCorpCardReportPdf(card, month, rows){
   if(excelHelperRunning && excelHelperVersion < 14) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
   const { columns, toValues } = corpCardHelperColumns();
   const res = await excelHelperFetch('/corpcard/reportpdf', { headers:{ 'Content-Type':'application/json' },
-    body: JSON.stringify({ path: link.path, cardNumber: card.cardNumber, columns, month: { name: month, rows: rows.map(toValues) } }) }, 5*60*1000);
+    body: JSON.stringify({ path: link.path, cardNumber: card.cardNumber, cardNumbers: cardNumbersOf(card), columns, month: { name: month, cardNumber: cardNumberForMonth(card, month), rows: rows.map(toValues) } }) }, 5*60*1000);
   if(!/octet-stream/.test(res.headers.get('Content-Type')||'')){ await excelHelperJson(res); throw new Error('PDF를 만들지 못했습니다.'); }
   const blob = new Blob([await res.arrayBuffer()], { type:'application/pdf' });
   const sheet = decodeURIComponent(res.headers.get('X-Report-Sheet')||'');
@@ -15331,8 +15380,8 @@ async function saveCorpCardToLinkedFile(card){
   const monthsWithData = Object.keys(rowsByMonth).filter(m => (rowsByMonth[m]||[]).length>0);
   if(!monthsWithData.length){ alert('입력된 내역이 없습니다.'); return; }
   const { columns, toValues } = corpCardHelperColumns();
-  const months = monthsWithData.map(name => ({ name, rows: rowsByMonth[name].map(toValues) }));
-  const res = await excelHelperCall('/corpcard/write', { path: link.path, cardNumber: card.cardNumber, columns, months }, 5*60*1000);
+  const months = monthsWithData.map(name => ({ name, cardNumber: cardNumberForMonth(card, name), rows: rowsByMonth[name].map(toValues) }));
+  const res = await excelHelperCall('/corpcard/write', { path: link.path, cardNumber: card.cardNumber, cardNumbers: cardNumbersOf(card), columns, months }, 5*60*1000);
   // 앱에 보관하는 양식도 방금 저장한 파일로 맞춰 둔다(인쇄 모양이 PC 파일과 같게).
   try{
     const file = await readLinkedFile(key);
@@ -15349,7 +15398,8 @@ async function exportCorpCardToExcel(cardId){
   const rowsByMonth = corpCardState.rowsByCard[cardId] || {};
   const monthsWithData = Object.keys(rowsByMonth).filter(m => (rowsByMonth[m]||[]).length>0);
   if(!monthsWithData.length){ alert('입력된 내역이 없습니다.'); return; }
-  const result = await patchCorpCardTemplate(tmpl.buffer, monthsWithData, rowsByMonth);
+  const card = corpCardState.cards.find(c=>c.id===cardId);
+  const result = await patchCorpCardTemplate(tmpl.buffer, monthsWithData, rowsByMonth, card);
   if(result.error){ alert('엑셀을 만들지 못했습니다: ' + result.error); return; }
   const url = URL.createObjectURL(result.blob);
   const a = document.createElement('a');
@@ -15423,7 +15473,7 @@ async function cloneCorpCardMonthSheet(zip, wbDoc, relsDoc, parser, serializer, 
   }
   return { ok:true };
 }
-async function patchCorpCardTemplate(masterArrayBuffer, months, rowsByMonth){
+async function patchCorpCardTemplate(masterArrayBuffer, months, rowsByMonth, card){
   await loadJSZipLib();
   const zip = await window.JSZip.loadAsync(masterArrayBuffer);
   const parser = new DOMParser();
@@ -15567,6 +15617,18 @@ async function patchCorpCardTemplate(masterArrayBuffer, months, rowsByMonth){
       });
     }
 
+    // 카드번호(B9)는 그 달에 쓰던 번호로 맞춘다 — 재발급 뒤 달의 시트는 새 번호가 적히게.
+    if(card && card.numberHistory && card.numberHistory.length){
+      const want = cardNumberForMonth(card, monthName);
+      const r9 = allRows.find(r => r.getAttribute('r') === '9');
+      const b9 = r9 ? findCell(r9, 'B') : null;
+      if(b9 && want && String(cellText(r9,'B')).replace(/\D/g,'') !== String(want).replace(/\D/g,'')){
+        while(b9.firstChild) b9.removeChild(b9.firstChild);
+        b9.setAttribute('t','inlineStr');
+        const isEl = sheetDoc.createElementNS(SS_NS,'is'); const tEl = sheetDoc.createElementNS(SS_NS,'t');
+        tEl.textContent = want; isEl.appendChild(tEl); b9.appendChild(isEl);
+      }
+    }
     const headerRows = allRows.filter(r => Number(r.getAttribute('r')) <= 11);
     headerRows.forEach(r => {
       Array.from(r.getElementsByTagName('c')).forEach(c => {
@@ -20058,7 +20120,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '18'
+$Version = '19'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20215,7 +20277,9 @@ function Handle-CorpCardWrite($body){
     $first = ($monthSheets | Sort-Object num)[0].ws
     $fileCard = (([string]$first.Range('B9').Text) -replace '\D','')
     $wantCard = (([string]$body.cardNumber) -replace '\D','')
-    if($wantCard -and $fileCard -ne $wantCard){ throw "파일의 카드번호($($first.Range('B9').Text))가 이 카드($($body.cardNumber))와 달라서 저장하지 않았습니다." }
+    # 재발급으로 번호가 바뀐 카드는 예전 번호가 적힌 파일도 같은 카드로 본다.
+    $okCards = @($wantCard); foreach($cn in @($body.cardNumbers)){ if($cn){ $okCards += (([string]$cn) -replace '\D','') } }
+    if($wantCard -and $okCards -notcontains $fileCard){ throw "파일의 카드번호($($first.Range('B9').Text))가 이 카드($($body.cardNumber))와 달라서 저장하지 않았습니다." }
 
     Invoke-Retry { $xl.ScreenUpdating = $false } | Out-Null
     $cols = @($body.columns)
@@ -20235,6 +20299,10 @@ function Handle-CorpCardWrite($body){
         $want = $src.ws.Index + 1; $ws = $null; foreach($t in $wb.Worksheets){ if($t.Index -eq $want){ $ws = $t } }
         $ws.Name = $name
         $monthSheets += [pscustomobject]@{ ws=$ws; num=$target }
+      }
+      # 그 달에 쓰던 카드번호를 B9에 맞춘다(재발급 뒤 달은 새 번호).
+      if($m.cardNumber){
+        try { if((([string]$ws.Range('B9').Text) -replace '\D','') -ne (([string]$m.cardNumber) -replace '\D','')){ Set-CellValue $ws.Range('B9') ([string]$m.cardNumber) } } catch {}
       }
       # "총 사용금액 합계" 행 찾기(B열, 14행부터)
       $total = $null
@@ -20346,7 +20414,7 @@ function Handle-CorpCardReportPdf($body){
   try {
     # 1) 복사본의 그 달 시트에 내역 넣기(없는 달이면 이전 달 시트를 복사해 만든다)
     $step = '복사본에 이달 내역 넣기'
-    [void](Handle-CorpCardWrite ([pscustomobject]@{ path=$tmp; cardNumber=$body.cardNumber; columns=$body.columns; months=@($body.month) }))
+    [void](Handle-CorpCardWrite ([pscustomobject]@{ path=$tmp; cardNumber=$body.cardNumber; cardNumbers=$body.cardNumbers; columns=$body.columns; months=@($body.month) }))
     # (쓰기가 끝나면 엑셀이 닫혔을 수 있으니 다시 잡는다)
     $step = '복사본 열기'
     $xl = Get-Excel $true
