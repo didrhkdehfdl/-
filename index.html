@@ -3309,6 +3309,8 @@ const caseCache = {};
 // background (fire-and-forget). The UI never waits on the storage write.
 function persistCase(c){
   caseCache[c.id] = c;
+  // 이윤정산 건이 저장될 때마다(새로 만들 때 포함) 사급 건별 정산 PC 파일에도 자동으로 쓴다(5초 모아서).
+  if(c && c.caseType === 'profit' && String(c.customer||'').trim() && typeof queueProfitLedgerAutoWrite === 'function') queueProfitLedgerAutoWrite(c);
   const idx = state.cases.findIndex(x=>x.id===c.id);
   const entry = indexEntry(c);
   if(idx>=0) state.cases[idx] = entry; else state.cases.push(entry);
@@ -5481,10 +5483,12 @@ async function writeProfitCasesToLinkedLedger(cases, opts){
   await ensureSalesCasesLoaded();
   const templates = {};
   Object.keys(LEDGER_FORMULA_TEMPLATES).forEach(col => { templates[col] = LEDGER_FORMULA_TEMPLATES[col]('{n}'); });
-  const items = cases.map(p => ({ id: p.id, customer: p.customer || '', onlyExisting: !!(opts && opts.onlyExisting),
+  const items = cases.map(p => ({ id: p.id, customer: p.customer || '', prevCustomer: p.ledgerCustomer || '', onlyExisting: !!(opts && opts.onlyExisting),
     cells: profitLedgerCellsFor(p, findMatchingSalesRecord(p.customer)) }));
   const res = await excelHelperCall('/profitledger/write', { path: link.path, sheet: PROFIT_LEDGER_SHEET, headerRow: 4, dataStart: 6,
     headerChecks: { C:'고객명', L:'총사업비', AP:'회사입금가' }, formulaTemplates: templates, items }, 5*60*1000);
+  // 파일에 쓴 고객명을 기억해 둔다 — 나중에 고객명을 고치면 그 행을 새 이름으로 고쳐 쓰게(새 행을 또 만들지 않게).
+  (res.results||[]).forEach(r=>{ if(!r.error && !r.skipped){ const c = cases.find(x=>x.id===r.id); if(c) c.ledgerCustomer = c.customer || ''; } });
   // 방금 앱이 쓴 저장 때문에 "파일이 바뀌었다"며 다시 읽지 않게 저장 시각을 기억한다.
   if((res.results||[]).some(r=>!r.error && !r.skipped)) await rememberProfitLedgerMtime();
   return res;
@@ -5517,17 +5521,24 @@ function showLedgerToast(msg, isErr){
   clearTimeout(el._t); el._t = setTimeout(()=>{ el.style.display = 'none'; }, isErr ? 15000 : 8000);
 }
 let profitLedgerUnlinkedWarned = false;
+let profitLedgerAutoBusy = false;
 const flushProfitLedgerAuto = debounce(async ()=>{
-  const cases = [...profitLedgerAutoQueue.values()];
+  // 앞 기록이 아직 끝나지 않았으면(새 행을 두 번 만들지 않게) 끝난 뒤 다시 한다.
+  if(profitLedgerAutoBusy){ flushProfitLedgerAuto(); return; }
+  const cases = [...profitLedgerAutoQueue.values()].filter(p=>String(p.customer||'').trim());
   profitLedgerAutoQueue.clear();
   if(!cases.length || !getLinkedFile(PROFIT_LEDGER_LINK_KEY)) return;
+  profitLedgerAutoBusy = true;
   try{
-    const res = await writeProfitCasesToLinkedLedger(cases, { onlyExisting:true });
+    // 파일에 없는 고객은 마지막 고객 행 아래에 새 행으로 추가한다.
+    const res = await writeProfitCasesToLinkedLedger(cases, { onlyExisting:false });
     const rs = res.results||[];
     const ok = rs.filter(r=>!r.error && !r.skipped), skipped = rs.filter(r=>r.skipped), failed = rs.filter(r=>r.error);
     const t = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
     const parts = [];
-    if(ok.length) parts.push(`사급 건별 정산 파일 자동 갱신: ${ok.map(r=>`${r.customer}(${r.rowNum}행)`).join(', ')}`);
+    const added = ok.filter(r=>r.wasNewRow), updated = ok.filter(r=>!r.wasNewRow);
+    if(updated.length) parts.push(`사급 건별 정산 파일 자동 갱신: ${updated.map(r=>`${r.customer}(${r.rowNum}행)`).join(', ')}`);
+    if(added.length) parts.push(`사급 건별 정산 파일에 새 고객 추가: ${added.map(r=>`${r.customer}(${r.rowNum}행)`).join(', ')}`);
     if(skipped.length) parts.push(`파일에 고객 행이 없어 자동 갱신 안 함: ${skipped.map(r=>r.customer).join(', ')} — 이윤정산 그 건의 "💾 이 건 PC 파일에 기록"으로 행을 추가해 주세요.`);
     if(failed.length) parts.push(`⚠ 건너뜀: ${failed.map(r=>`${r.customer}(${r.error})`).join(', ')}`);
     profitLedgerAutoNote = `${t} ` + parts.join(' / ');
@@ -5535,7 +5546,7 @@ const flushProfitLedgerAuto = debounce(async ()=>{
   }catch(e){
     profitLedgerAutoNote = '⚠ 사급 건별 정산 파일 자동 갱신 실패: ' + linkedFileErrorMessage(e).split('\n')[0];
     showLedgerToast(profitLedgerAutoNote, true);
-  }
+  }finally{ profitLedgerAutoBusy = false; }
   const el = document.getElementById('profitLedgerAutoNote');
   if(el){ el.textContent = profitLedgerAutoNote; el.style.color = /^⚠/.test(profitLedgerAutoNote) ? 'var(--neg)' : 'var(--muted)'; }
 }, 5000);
@@ -5559,7 +5570,7 @@ function profitLedgerLinkHtml(writeLabel){
       ${writeLabel ? b('profitLedgerLinkWriteBtn', writeLabel, '#2e9e5b', '같은 고객명의 행을 갱신하고, 없으면 마지막 고객 행 아래에 새 행을 만들어 기록합니다(엑셀에 열어 둔 채로도 됩니다). 기록 전 원본은 건드리지 않은 다른 칸·시트·수식 그대로 둡니다.') : ''}
       ${b('profitLedgerLinkPickBtn', '다른 파일로 바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
       ${b('profitLedgerUnlinkBtn', '✕ 해제', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
-      <span id="profitLedgerAutoNote" style="font-size:11px; color:${/^⚠/.test(profitLedgerAutoNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(profitLedgerAutoNote || '양방향 자동 연동: 이윤정산을 고치면 파일의 고객 행이, 파일에서 고치고 저장하면 이윤정산이 자동으로 바뀝니다(1분마다 확인).')}</span>`
+      <span id="profitLedgerAutoNote" style="font-size:11px; color:${/^⚠/.test(profitLedgerAutoNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(profitLedgerAutoNote || '양방향 자동 연동: 이윤정산을 고치거나 새로 만들면 파일의 고객 행이 갱신·추가되고, 파일에서 고치고 저장하면 이윤정산이 자동으로 바뀝니다(1분마다 확인).')}</span>`
     : `${b('profitLedgerLinkPickBtn', '🔗 PC 엑셀 파일 연결', 'var(--sky)', 'W:\\9.회계\\1. 사업관련\\3. 사급 의 "사급 건별 정산 (2026년)_최종" 같은 정산데이터 파일을 연결합니다. 파일 선택 창은 엑셀 도우미가 띄웁니다.')}
        <span style="font-size:11px; color:var(--muted);">연결하면 파일을 올리고 내려받지 않고 PC 파일에 바로 기록합니다(엑셀 도우미 필요).</span>`}
   </div>`;
@@ -13137,7 +13148,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 19;
+const EXCEL_HELPER_VERSION = 20;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20120,7 +20131,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '19'
+$Version = '20'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20653,6 +20664,12 @@ function Handle-ProfitLedgerWrite($body){
       $custKey = $cust -replace '\s',''
       if(-not $cust){ $results += @{ id=[string]$it.id; customer=$cust; error='고객명이 비어 있습니다.' }; continue }
       $hits = @($names.Keys | Where-Object { $names[$_] -eq $custKey } | Sort-Object)
+      # 고객명을 고친 건이면(앱이 지난번에 쓴 이름 prevCustomer) 그 이름의 행을 새 이름으로 고쳐 쓴다 — 새 행을 또 만들지 않게.
+      $prevKey = ([string]$it.prevCustomer) -replace '\s',''
+      if($hits.Count -eq 0 -and $prevKey -and $prevKey -ne $custKey){
+        $ph = @($names.Keys | Where-Object { $names[$_] -eq $prevKey } | Sort-Object)
+        if($ph.Count -eq 1){ $hits = $ph; $names[[int]$ph[0]] = $custKey }
+      }
       if($hits.Count -gt 1){ $results += @{ id=[string]$it.id; customer=$cust; error="같은 이름이 $($hits.Count)개 행($($hits -join ', ')행)에 있어 어느 행인지 정할 수 없습니다." }; continue }
       $row = 0; $isNew = $false
       if($hits.Count -eq 1){ $row = [int]$hits[0] }
