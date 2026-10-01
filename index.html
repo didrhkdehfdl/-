@@ -1281,11 +1281,11 @@ function computeProfitCase(p){
   // 그 값을 그대로 쓴다(자동 적용은 값이 전혀 없을 때만).
   let effStructureBuy = Number(p.structureBuy)||0;
   let effStructureSell = Number(p.structureSell)||0;
-  let effStructureQty = Number(p.structureQty)||0;
+  let effStructureQty = roundStructureQty(p.structureQty);
   if(/부착형/.test(p.structureNote||'') && !effStructureBuy && !effStructureSell){
     effStructureBuy = 187495;
     effStructureSell = 220000;
-    if(!effStructureQty) effStructureQty = kw>0 ? kw/3 : 0;
+    if(!effStructureQty) effStructureQty = roundStructureQty(kw>0 ? kw/3 : 0);
   }
   const structureNaturalAmount = effStructureSell * effStructureQty;
   // 구조물 투입비용 상한: 3kw당 50만원 (3kw→50만, 6kw→100만, 9kw→150만 ...).
@@ -5136,11 +5136,18 @@ async function exportProfitListToExcel(cases){
 // 구조물 분류(structureNote)에 "부착형"이 포함되어 있으면, 3kw당 구매가
 // 187,495원 / 판매가 220,000원을 자동으로 적용하고, 수량도 용량 기준
 // (capacityKw/3)으로 맞춘다. 슬라브형 등 다른 표기는 건드리지 않는다.
+// 구조물 수량은 개수라 정수로 맞춘다 — 용량÷3(예: 3.2kW → 1.0666…)을 반올림하고, 용량이 있으면 최소 1개.
+// 예전에 소수로 저장된 건도 계산·엑셀 기록 때 이 값으로 바뀐다.
+function roundStructureQty(v){
+  const n = Number(v)||0;
+  if(n <= 0) return 0;
+  return Number.isInteger(n) ? n : Math.max(1, Math.round(n));
+}
 function applyAttachedStructurePricing(p){
   if(/부착형/.test(p.structureNote||'')){
     p.structureBuy = 187495;
     p.structureSell = 220000;
-    p.structureQty = (Number(p.capacityKw)||0) / 3;
+    p.structureQty = roundStructureQty((Number(p.capacityKw)||0) / 3);
     return true;
   }
   return false;
@@ -5441,7 +5448,7 @@ function profitLedgerCellsFor(profitCase, salesMatch){
     K: Number(profitCase.capacityKw)||0, L: Math.round((Number(profitCase.totalBusinessCost)||0)*1.1), O: '사무실',
     P: lv.moduleModel, Q: Number(profitCase.moduleQty)||0, R: lv.moduleBuy, S: lv.moduleSell,
     U: profitCase.inverterModel || '', V: Number(profitCase.inverterQty)||0, W: Number(profitCase.inverterBuy)||0, X: Number(profitCase.inverterSell)||0,
-    Z: profitCase.structureNote || '', AA: Number(profitCase.structureQty)||0, AB: Number(profitCase.structureBuy)||0, AC: structureSell,
+    Z: profitCase.structureNote || '', AA: roundStructureQty(profitCase.structureQty), AB: Number(profitCase.structureBuy)||0, AC: structureSell,
     AE: Number(profitCase.etcMaterial)||0, AG: Number(profitCase.structureReviewCost)||0, AH: Number(profitCase.designSupervisionCost)||0,
     AI: Number(profitCase.inspectionFeeCost)||0, AJ: Number(profitCase.constructionCost)||0, AK: Number(profitCase.etcAgencyCost)||0,
     AP: lv.companyPrice, AQ: lv.salesDeduction, AS: lv.salesDeductionNote, AU: Number(profitCase.maintenanceCost)||0,
@@ -5930,7 +5937,7 @@ async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch
     W: Number(profitCase.inverterBuy)||0,
     X: Number(profitCase.inverterSell)||0,
     Z: profitCase.structureNote || '',
-    AA: Number(profitCase.structureQty)||0,
+    AA: roundStructureQty(profitCase.structureQty),
     AB: Number(profitCase.structureBuy)||0,
     AC: structureSell,
     AE: Number(profitCase.etcMaterial)||0,
@@ -6186,7 +6193,7 @@ async function writeProfitCasesToLedger(masterArrayBuffer, items){
       W: Number(profitCase.inverterBuy)||0,
       X: Number(profitCase.inverterSell)||0,
       Z: profitCase.structureNote || '',
-      AA: Number(profitCase.structureQty)||0,
+      AA: roundStructureQty(profitCase.structureQty),
       AB: Number(profitCase.structureBuy)||0,
       AC: structureSell,
       AE: Number(profitCase.etcMaterial)||0,
@@ -6364,7 +6371,7 @@ function renderProfitMain(){
             <td style="padding:6px;"><input data-pf="structureNote" value="${escapeHtml(p.structureNote)}" placeholder="평슬라브*4[...]" style="width:100%;"></td>
             <td style="padding:6px;">${pfMoney("structureBuy", p.structureBuy, 'class="num" style="width:100%;"')}</td>
             <td style="padding:6px;">${pfMoney("structureSell", p.structureSell, 'class="num" style="width:100%;"')}</td>
-            <td style="padding:6px;"><input data-pf="structureQty" type="number" value="${pf(p.structureQty)}" class="num" style="width:70px;"></td>
+            <td style="padding:6px;"><input data-pf="structureQty" type="number" step="1" value="${pf(roundStructureQty(p.structureQty))}" class="num" style="width:70px;"></td>
             <td class="calc-cell" id="pf-structureAmount">${fmtWon(r.structureAmount)}</td>
             <td class="calc-cell" id="pf-structureProfit">${fmtWon(r.structureProfit)}</td>
           </tr>
