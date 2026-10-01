@@ -14576,7 +14576,7 @@ async function renderCorpCardMain(){
       </div>
     </div>
     ${!activeCard ? `<div class="empty-side">등록된 카드가 없습니다. "+ 카드 추가"로 카드별 관리대장 엑셀을 올려주세요.</div>` : !tmpl ? `<div class="empty-side">이 카드의 양식 파일을 다시 올려주세요.</div>` : `
-    <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">카드번호: ${escapeHtml(activeCard.cardNumber)} · 양식 파일: ${escapeHtml(tmpl.fileName)}</div>
+    <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">카드번호: ${escapeHtml(activeCard.cardNumber)}${isAdminUser ? ` <button id="corpCardEditNumberBtn" title="카드가 재발급돼 번호가 바뀌었을 때 고칩니다(카드 버튼에는 끝 4자리가 표시됩니다)." style="font-size:11px; padding:2px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--sky); cursor:pointer; margin-left:2px;">수정</button>` : ''} · 양식 파일: ${escapeHtml(tmpl.fileName)}</div>
     ${(() => {
       const pending = unrecordedSummaryAll();
       if(!pending.length) return `<div style="font-size:12px; color:var(--pos); margin-bottom:12px;">✅ 모든 카드의 승인내역이 리스트에 다 적혀 있습니다. <span style="color:var(--muted);">(${escapeHtml(corpCardSummaryFromLabel())} 확인)</span></div>`;
@@ -14728,6 +14728,24 @@ async function renderCorpCardMain(){
     `}
   `;
 
+  const editNumBtn = document.getElementById('corpCardEditNumberBtn');
+  if(editNumBtn) editNumBtn.addEventListener('click', async ()=>{
+    const card = corpCardState.cards.find(c=>c.id===corpCardState.activeCardId);
+    if(!card) return;
+    const input = prompt(`새 카드번호를 입력해주세요 (지금: ${card.cardNumber})\n예: 4140-0332-7010-9907`, card.cardNumber);
+    if(input === null) return;
+    const digits = String(input).replace(/\D/g,'');
+    if(digits.length < 12 || digits.length > 19){ alert('카드번호 숫자 자리수가 맞지 않습니다. 다시 확인해주세요.'); return; }
+    const formatted = digits.length === 16 ? digits.match(/.{4}/g).join('-') : String(input).trim();
+    const dup = corpCardState.cards.find(c=>c.id!==card.id && String(c.cardNumber||'').replace(/\D/g,'') === digits);
+    if(dup){ alert(`이미 등록된 카드번호입니다 (${dup.label||dup.cardNumber}).`); return; }
+    const oldLabel = card.label, oldLast4 = String(card.cardNumber||'').replace(/\D/g,'').slice(-4);
+    card.cardNumber = formatted;
+    // 카드 버튼의 이름이 예전 끝 4자리 그대로였으면 새 끝 4자리로 바꾼다(직접 다른 이름을 붙여 둔 카드는 그대로).
+    if(!oldLabel || oldLabel === oldLast4) card.label = digits.slice(-4);
+    await saveCorpCardList();
+    renderCorpCardMain();
+  });
   main.querySelectorAll('.corpcard-tab-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       await flushCorpCardSave(); // 카드를 옮기기 전에 지금 카드 내용을 저장
