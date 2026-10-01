@@ -5436,6 +5436,14 @@ const LEDGER_FORMULA_TEMPLATES = {
 // "기록하고 다운로드"와 같은 칸·같은 규칙으로 쓰되, 파일을 올리고 받는 대신 연결된 PC 파일(문서보안 파일 포함)에 직접 쓴다.
 // 이윤정산 건을 고치면(이미 파일에 있는 고객이면) 몇 초 뒤 자동으로 그 행도 갱신한다.
 const PROFIT_LEDGER_LINK_KEY = 'profitledger';
+// 정산데이터 비고(AS열)는 항목마다 줄을 나눠 적는다 — "A, B, C" → "A,\nB,\nC".
+// "330,000"처럼 숫자 사이 쉼표에서는 나누지 않고, 이미 줄이 나뉜 글은 그대로 둔다.
+function formatLedgerNote(text){
+  const t = String(text==null ? '' : text).trim();
+  if(!t || t.includes('\n')) return t;
+  const parts = t.split(/,(?:\s+|(?=[^\d\s]))/).map(x=>x.trim()).filter(Boolean);
+  return parts.length > 1 ? parts.map((x,i)=> i < parts.length-1 ? x+',' : x).join('\n') : t;
+}
 function profitLedgerCellsFor(profitCase, salesMatch){
   const rec = salesMatch ? salesMatch.record : null;
   const salesCase = salesMatch ? salesMatch.salesCase : null;
@@ -5451,7 +5459,7 @@ function profitLedgerCellsFor(profitCase, salesMatch){
     Z: profitCase.structureNote || '', AA: roundStructureQty(profitCase.structureQty), AB: Number(profitCase.structureBuy)||0, AC: structureSell,
     AE: Number(profitCase.etcMaterial)||0, AG: Number(profitCase.structureReviewCost)||0, AH: Number(profitCase.designSupervisionCost)||0,
     AI: Number(profitCase.inspectionFeeCost)||0, AJ: Number(profitCase.constructionCost)||0, AK: Number(profitCase.etcAgencyCost)||0,
-    AP: lv.companyPrice, AQ: lv.salesDeduction, AS: lv.salesDeductionNote, AU: Number(profitCase.maintenanceCost)||0,
+    AP: lv.companyPrice, AQ: lv.salesDeduction, AS: formatLedgerNote(lv.salesDeductionNote), AU: Number(profitCase.maintenanceCost)||0,
   };
   const numericCols = new Set(['K','L','Q','R','S','V','W','X','AA','AB','AC','AE','AG','AH','AI','AJ','AK','AP','AQ','AU']);
   const formulas = {};
@@ -5469,7 +5477,7 @@ async function writeProfitCasesToLinkedLedger(cases, opts){
   if(!link) throw new Error('사급 건별 정산 PC 엑셀 파일이 연결돼 있지 않습니다.');
   await checkExcelHelper();
   if(!excelHelperRunning) throw new Error('엑셀 도우미가 실행되어 있지 않습니다. 카드관리 탭에서 받은 excel-helper.cmd를 실행한 뒤 다시 해주세요.');
-  if(excelHelperVersion < 16) throw new Error('실행 중인 엑셀 도우미가 예전 버전입니다. 알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
+  if(excelHelperVersion < 18) throw new Error('실행 중인 엑셀 도우미가 예전 버전입니다. 알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
   await ensureSalesCasesLoaded();
   const templates = {};
   Object.keys(LEDGER_FORMULA_TEMPLATES).forEach(col => { templates[col] = LEDGER_FORMULA_TEMPLATES[col]('{n}'); });
@@ -5598,7 +5606,7 @@ const PROFIT_LEDGER_READ_MAP = [
   ['AQ','salesDeduction','number'], ['AS','salesDeductionNote','text'], ['AU','maintenanceCost','number'],
 ];
 const PROFIT_LEDGER_SNAPSHOT_KEY = 'profit-ledger-snapshot-v1';
-const PROFIT_LEDGER_QTYFIX_KEY = 'profit-ledger-qtyfix-v1';
+const PROFIT_LEDGER_QTYFIX_KEY = 'profit-ledger-qtyfix-v2';
 function normLedgerVal(v, type){
   if(v === null || v === undefined) v = '';
   if(type === 'number' || type === 'vat'){ const n = Number(String(v).replace(/,/g,'')); return v === '' || isNaN(n) ? '' : String(Math.round(n*100)/100); }
@@ -5608,7 +5616,7 @@ let profitLedgerSyncTimer = null, profitLedgerLastCheck = 0, profitLedgerSyncBus
 async function rememberProfitLedgerMtime(){
   try{
     const link = getLinkedFile(PROFIT_LEDGER_LINK_KEY);
-    if(!link || excelHelperVersion < 16) return;
+    if(!link || excelHelperVersion < 18) return;
     const r = await excelHelperCall('/filestat', { path: link.path }, 15000);
     if(r && r.mtime) setLinkedFile(PROFIT_LEDGER_LINK_KEY, { ...getLinkedFile(PROFIT_LEDGER_LINK_KEY), lastMtime: String(r.mtime) });
   }catch(e){}
@@ -5632,7 +5640,7 @@ async function syncProfitCasesFromLedgerFile(force){
   profitLedgerSyncBusy = true; profitLedgerLastCheck = Date.now();
   try{
     await checkExcelHelper();
-    if(!excelHelperRunning || excelHelperVersion < 16) return;
+    if(!excelHelperRunning || excelHelperVersion < 18) return;
     const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
     const mtime = st && st.mtime ? String(st.mtime) : '';
     let qtyFixDone = false; try{ qtyFixDone = localStorage.getItem(PROFIT_LEDGER_QTYFIX_KEY) === link.path; }catch(e){}
@@ -5652,13 +5660,26 @@ async function syncProfitCasesFromLedgerFile(force){
     }
     // 구조물 수량(AA열)이 소수로 적힌 행(예전에 용량÷3 그대로 기록된 행)은 반올림한 정수로 고쳐 쓴다.
     const qtyFix = [];
+    // 비고(AS열)가 "A, B, C"처럼 한 줄로 적힌 행은 항목마다 줄을 나눠 고쳐 쓴다.
     for(let i=5; i<rows.length; i++){
       const cust = String((rows[i]||[])[idx('C')] ?? '').trim();
+      if(!cust) continue;
+      const values = {};
       const aa = (rows[i]||[])[idx('AA')];
-      if(!cust || typeof aa !== 'number' || Number.isInteger(aa)) continue;
-      const fixed = roundStructureQty(aa);
-      qtyFix.push({ id: 'aa'+(i+1), row: i+1, customerKey: cust.replace(/\s+/g,''), date: '', values: { AA: { col: idx('AA')+1, type:'number', value: fixed } } });
-      if(fresh[cust] && !fresh[cust].__dup) fresh[cust].AA = normLedgerVal(fixed, 'number');
+      if(typeof aa === 'number' && !Number.isInteger(aa)){
+        const fixed = roundStructureQty(aa);
+        values.AA = { col: idx('AA')+1, type:'number', value: fixed };
+        if(fresh[cust] && !fresh[cust].__dup) fresh[cust].AA = normLedgerVal(fixed, 'number');
+      }
+      const as = (rows[i]||[])[idx('AS')];
+      if(typeof as === 'string' && as.trim()){
+        const nf = formatLedgerNote(as);
+        if(nf !== as.trim()){
+          values.AS = { col: idx('AS')+1, type:'text', value: nf };
+          if(fresh[cust] && !fresh[cust].__dup) fresh[cust].AS = normLedgerVal(nf, 'text');
+        }
+      }
+      if(Object.keys(values).length) qtyFix.push({ id: 'fix'+(i+1), row: i+1, customerKey: cust.replace(/\s+/g,''), date: '', values });
     }
     let qtyFixed = 0;
     if(qtyFix.length){
@@ -5706,8 +5727,8 @@ async function syncProfitCasesFromLedgerFile(force){
     setLinkedFile(PROFIT_LEDGER_LINK_KEY, { ...getLinkedFile(PROFIT_LEDGER_LINK_KEY), lastMtime: mtime });
     if(qtyFixed){
       await rememberProfitLedgerMtime();   // 방금 고쳐 쓴 저장 때문에 다시 읽지 않게
-      applied.push(`구조물 수량 소수 → 정수 ${qtyFixed}행`);
-      showLedgerToast(`사급 건별 정산 파일에서 구조물 수량이 소수로 적힌 ${qtyFixed}행을 정수(반올림)로 고쳤습니다.`, false);
+      applied.push(`형식 정리 ${qtyFixed}행`);
+      showLedgerToast(`사급 건별 정산 파일 ${qtyFixed}행을 정리했습니다(구조물 수량 소수 → 정수, 비고 항목별 줄바꿈).`, false);
     }
     const t = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
     profitLedgerAutoNote = !snap || snap.path !== link.path ? `${t} 사급 건별 정산 파일을 읽어 기준을 잡았습니다(이제부터 파일에서 고친 칸이 자동 반영됩니다).`
@@ -5974,7 +5995,7 @@ async function writeProfitCaseToLedger(masterArrayBuffer, profitCase, salesMatch
     // 들어가야 한다 — 그대로 넣으면 부호가 두 번 반영돼 영업비가 부풀려진다.
     AP: lv.companyPrice,
     AQ: lv.salesDeduction,
-    AS: lv.salesDeductionNote,
+    AS: formatLedgerNote(lv.salesDeductionNote),
     AU: Number(profitCase.maintenanceCost)||0,
   };
   const dateCols = new Set(['E']);
@@ -6230,7 +6251,7 @@ async function writeProfitCasesToLedger(masterArrayBuffer, items){
       // 들어가야 한다 — 그대로 넣으면 부호가 두 번 반영돼 영업비가 부풀려진다.
       AP: lv.companyPrice,
       AQ: lv.salesDeduction,
-      AS: lv.salesDeductionNote,
+      AS: formatLedgerNote(lv.salesDeductionNote),
       AU: Number(profitCase.maintenanceCost)||0,
     };
     const formulaOverrides = {};
@@ -13095,7 +13116,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 17;
+const EXCEL_HELPER_VERSION = 18;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20019,7 +20040,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '17'
+$Version = '18'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20488,6 +20509,7 @@ function Handle-SagupWrite($body){
           $sv = [string]$v
           if($sv -match '^0\d+$' -or $sv -match '^[=+\-@]'){ $sv = "'" + $sv }
           Set-CellValue $cell $sv
+          if($sv.Contains("`n")){ try { $cell.WrapText = $true; [void]$cell.EntireRow.AutoFit() } catch {} }
         }
       }
       $written += [string]$it.id
@@ -20577,7 +20599,12 @@ function Handle-ProfitLedgerWrite($body){
           default {
             $sv = if($null -eq $v){ '' } else { [string]$v }
             if($sv -eq ''){ Invoke-Retry { [void]$cell.ClearContents() } | Out-Null }
-            else { if($sv -match '^[=+\-@#]' -or $sv -match '^0\d+$'){ $sv = "'" + $sv }; Set-CellValue $cell $sv }
+            else {
+              if($sv -match '^[=+\-@#]' -or $sv -match '^0\d+$'){ $sv = "'" + $sv }
+              Set-CellValue $cell $sv
+              # 여러 줄 글(비고 등)은 칸 안에서 줄이 바뀌어 보이게 하고 그 행 높이를 맞춘다.
+              if($sv.Contains("`n")){ try { $cell.WrapText = $true; [void]$cell.EntireRow.AutoFit() } catch {} }
+            }
           }
         }
       }
