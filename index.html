@@ -5598,6 +5598,7 @@ const PROFIT_LEDGER_READ_MAP = [
   ['AQ','salesDeduction','number'], ['AS','salesDeductionNote','text'], ['AU','maintenanceCost','number'],
 ];
 const PROFIT_LEDGER_SNAPSHOT_KEY = 'profit-ledger-snapshot-v1';
+const PROFIT_LEDGER_QTYFIX_KEY = 'profit-ledger-qtyfix-v1';
 function normLedgerVal(v, type){
   if(v === null || v === undefined) v = '';
   if(type === 'number' || type === 'vat'){ const n = Number(String(v).replace(/,/g,'')); return v === '' || isNaN(n) ? '' : String(Math.round(n*100)/100); }
@@ -5634,7 +5635,8 @@ async function syncProfitCasesFromLedgerFile(force){
     if(!excelHelperRunning || excelHelperVersion < 16) return;
     const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
     const mtime = st && st.mtime ? String(st.mtime) : '';
-    if(!mtime || mtime === link.lastMtime) return;
+    let qtyFixDone = false; try{ qtyFixDone = localStorage.getItem(PROFIT_LEDGER_QTYFIX_KEY) === link.path; }catch(e){}
+    if(!mtime || (mtime === link.lastMtime && qtyFixDone)) return;
     const r = await excelHelperCall('/readvalues', { path: link.path, sheet: PROFIT_LEDGER_SHEET }, 5*60*1000);
     if(r.sheet !== PROFIT_LEDGER_SHEET) throw new Error(`"${PROFIT_LEDGER_SHEET}" 시트를 찾지 못했습니다.`);
     const rows = r.rows || [];
@@ -5648,6 +5650,22 @@ async function syncProfitCasesFromLedgerFile(force){
       PROFIT_LEDGER_READ_MAP.forEach(([col,,type]) => { vals[col] = normLedgerVal((rows[i]||[])[idx(col)], type); });
       fresh[cust] = vals;
     }
+    // 구조물 수량(AA열)이 소수로 적힌 행(예전에 용량÷3 그대로 기록된 행)은 반올림한 정수로 고쳐 쓴다.
+    const qtyFix = [];
+    for(let i=5; i<rows.length; i++){
+      const cust = String((rows[i]||[])[idx('C')] ?? '').trim();
+      const aa = (rows[i]||[])[idx('AA')];
+      if(!cust || typeof aa !== 'number' || Number.isInteger(aa)) continue;
+      const fixed = roundStructureQty(aa);
+      qtyFix.push({ id: 'aa'+(i+1), row: i+1, customerKey: cust.replace(/\s+/g,''), date: '', values: { AA: { col: idx('AA')+1, type:'number', value: fixed } } });
+      if(fresh[cust] && !fresh[cust].__dup) fresh[cust].AA = normLedgerVal(fixed, 'number');
+    }
+    let qtyFixed = 0;
+    if(qtyFix.length){
+      const wr = await excelHelperCall('/sagup/write', { path: link.path, sheet: PROFIT_LEDGER_SHEET, customerCol: idx('C')+1, dateCol: 0, headerRow: 5, items: qtyFix }, 5*60*1000);
+      qtyFixed = (wr.written||[]).length;
+    }
+    try{ localStorage.setItem(PROFIT_LEDGER_QTYFIX_KEY, link.path); }catch(e){}
     let snap = null;
     try{ snap = JSON.parse(localStorage.getItem(PROFIT_LEDGER_SNAPSHOT_KEY) || 'null'); }catch(e){}
     const applied = [];
@@ -5686,6 +5704,11 @@ async function syncProfitCasesFromLedgerFile(force){
     }
     try{ localStorage.setItem(PROFIT_LEDGER_SNAPSHOT_KEY, JSON.stringify({ path: link.path, rows: fresh })); }catch(e){}
     setLinkedFile(PROFIT_LEDGER_LINK_KEY, { ...getLinkedFile(PROFIT_LEDGER_LINK_KEY), lastMtime: mtime });
+    if(qtyFixed){
+      await rememberProfitLedgerMtime();   // 방금 고쳐 쓴 저장 때문에 다시 읽지 않게
+      applied.push(`구조물 수량 소수 → 정수 ${qtyFixed}행`);
+      showLedgerToast(`사급 건별 정산 파일에서 구조물 수량이 소수로 적힌 ${qtyFixed}행을 정수(반올림)로 고쳤습니다.`, false);
+    }
     const t = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
     profitLedgerAutoNote = !snap || snap.path !== link.path ? `${t} 사급 건별 정산 파일을 읽어 기준을 잡았습니다(이제부터 파일에서 고친 칸이 자동 반영됩니다).`
       : applied.length ? `${t} 파일에서 고친 내용 반영: ${applied.join(', ')}` : `${t} 파일 확인 — 이윤정산에 반영할 변경 없음`;
