@@ -3287,8 +3287,57 @@ async function propagateInspectionDateToPerfList(item){
   manualRows.forEach(row => { if(addCertDateIfMissing(row, item.extractedDate)) manualChanged = true; });
   if(importChanged) debouncedSaveImportRows();
   if(manualChanged) debouncedSavePerfRows();
+  // 덧붙인 뒤 필증일자를 점검일 하나로 맞춘다(아래 syncCertDatesFromInspection).
+  syncCertDatesFromInspection();
   if(state.activeTab === 'import') renderImportMain();
 }
+// 실적리스트 필증일자를 사용전점검 확인증의 점검일로 자동으로 맞춘다.
+// - 같은 고객명의 확인증이 1건이면 그 점검일로 바꾼다.
+// - 여러 건이면(동명이인·발전소 여러 개) 지금 필증일자에 그중 하나가 이미 있으면 그대로 두고,
+//   없으면 필증일자와 가장 가까운 점검일로 바꾼다. 필증일자가 비어 있으면 어느 것인지 몰라 건드리지 않는다.
+// 바뀐 칸은 수정 이력(출처: 사용전점검)에 남고, 업로드분은 PC 실적리스트 엑셀에도 써 넣는다.
+function certDateTargetFor(row){
+  const items = findMatchingInspectionItemsByCustomer(row.customer).filter(it=>/^\d{4}-\d{2}-\d{2}$/.test(it.extractedDate||''));
+  const dates = [...new Set(items.map(it=>it.extractedDate))].sort();
+  if(!dates.length) return '';
+  const existing = String(row.certDate||'').split('\n').map(s=>normalizeDateString(s.trim())).filter(Boolean);
+  if(dates.length === 1) return existing.length === 1 && existing[0] === dates[0] ? '' : dates[0];
+  if(existing.some(d=>dates.includes(d))){
+    // 여러 줄 중 점검일과 맞는 줄만 남긴다.
+    const keep = existing.filter(d=>dates.includes(d));
+    return keep.length === existing.length ? '' : keep.join('\n');
+  }
+  const base = existing.map(d=>Date.parse(d)).find(t=>!isNaN(t));
+  if(base == null) return '';
+  return dates.slice().sort((x,y)=>Math.abs(Date.parse(x)-base)-Math.abs(Date.parse(y)-base))[0];
+}
+let certDateSyncRunning = false;
+async function syncCertDatesFromInspection(){
+  if(certDateSyncRunning) return 0;
+  certDateSyncRunning = true;
+  try{
+    await ensureInspectionLoaded();
+    if(!(inspectionState.items||[]).length) return 0;
+    let upChanged = 0, manChanged = 0;
+    const apply = (row, isUpload) => {
+      if(!row || !String(row.customer||'').trim()) return;
+      const target = certDateTargetFor(row);
+      if(!target || target === row.certDate) return;
+      recordImportEdit(row, 'certDate', row.certDate, target, 'inspection');
+      row.certDate = target;
+      delete row.certDateAuto;
+      if(isUpload){ row.caseOverrides = { ...(row.caseOverrides||{}), certDate: target }; upChanged++; }
+      else manChanged++;
+    };
+    (importState.rows||[]).forEach(r=>apply(r, true));
+    (importState.manualRows||[]).forEach(r=>apply(r, false));
+    if(upChanged){ debouncedSaveImportRows(); debouncedSyncFromImportRows(); debouncedWriteImportOverrides(); }
+    if(manChanged){ debouncedSavePerfRows(); debouncedSyncFromManualRows(); }
+    if((upChanged || manChanged) && state.activeTab === 'import' && !document.querySelector('#main input:focus, #main textarea:focus')) renderImportMain();
+    return upChanged + manChanged;
+  }finally{ certDateSyncRunning = false; }
+}
+const debouncedSyncCertDates = debounce(()=>{ syncCertDatesFromInspection().catch(e=>console.warn(e)); }, 800);
 
 function indexEntry(c){
   if(c.caseType === 'profit'){
@@ -11287,6 +11336,7 @@ function buildCashReceiptWorkbook(items){
 }
 
 function renderInvoicePrepMain(){
+  debouncedSyncCertDates(); // 필증일자 ← 사용전점검 점검일 자동 맞춤
   const main = document.getElementById('main');
   const s = invoicePrepState;
   const sourceHasRows = s.source==='om' ? !!(omListState.rows && omListState.rows.length) : !!(importState.rows && importState.rows.length);
@@ -16503,6 +16553,7 @@ async function renderVehicleMain(){
 
 function renderImportMain(){
   const main = document.getElementById('main');
+  debouncedSyncCertDates(); // 필증일자 ← 사용전점검 점검일 자동 맞춤
   // 체크박스 하나 누를 때마다 표 전체를 다시 그리는데, innerHTML을 통째로
   // 바꾸면 브라우저가 스크롤 위치를 되돌려버린다. 실제로 스크롤되는 건
   // window가 아니라 표를 감싼 .table-wrap-frozen(overflow-y:auto) 박스라서,
@@ -17738,7 +17789,7 @@ const debouncedWriteImportOverrides = debounce(()=>{ writeImportOverridesToExcel
 // ---- 실적리스트 칸 표시 ----
 // · 노란 바탕: 앱에서 고쳤는데 아직 PC 엑셀 파일에 못 쓴 칸(caseOverrides) — 파일에 쓰면 사라진다.
 // · 왼쪽 파란 줄: 앱에서 고친 적이 있는 칸(editHistory) — 파일에 써도 남는다(원래 값·고친 사람·시각을 칸에 마우스를 올리면 보여준다).
-const IMPORT_EDIT_SOURCE_LABEL = { list:'실적리스트', sales:'영업비 정산', profit:'사업 이윤정산', revert:'되돌리기' };
+const IMPORT_EDIT_SOURCE_LABEL = { list:'실적리스트', sales:'영업비 정산', profit:'사업 이윤정산', revert:'되돌리기', inspection:'사용전점검' };
 function recordImportEdit(row, field, prevVal, newVal, source){
   if(!row) return;
   const norm = v => v==null ? '' : String(v);
