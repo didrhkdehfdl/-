@@ -11197,11 +11197,22 @@ function buildInvoicePrepResults(){
     // 세금계산서 "작성일자"는 사용전점검 탭의 점검년월일을 우선 쓴다 — 발행
     // 기준일이 곧 점검일이기 때문. 매칭되는 점검 확인증이 없으면 기존처럼
     // 실적리스트의 필증일자(O&M은 오늘 날짜)로 넘어간다.
-    const inspectionDate = findInspectionDateForCustomer(row.customer);
+    let inspectionDate = findInspectionDateForCustomer(row.customer);
+    // 같은 이름으로 점검 확인증이 여러 건 잡히면(동명이인·발전소 여러 개) 가장 이른 날짜를 쓰는데, 엉뚱한 건일 수
+    // 있어 개수를 함께 알려준다. 점검일과 실적리스트 필증일자가 다르면 화면에서 둘 다 보여주고 고르게 한다.
+    const inspectionCount = findMatchingInspectionItemsByCustomer(row.customer).filter(it=>it.extractedDate).length;
+    const certDate = isOM ? '' : normalizeDateString(firstDateOf(normRow.certDate));
+    if(inspectionCount > 1 && /^\d{4}-\d{2}-\d{2}$/.test(certDate)){
+      // 같은 이름이 여러 건이면 가장 이른 날짜 대신 실적리스트 필증일자와 가장 가까운 점검일을 쓴다(동명이인의 옛 점검일 방지).
+      const t = Date.parse(certDate);
+      const ds = findMatchingInspectionItemsByCustomer(row.customer).map(it=>it.extractedDate).filter(Boolean);
+      inspectionDate = ds.slice().sort((x,y)=>Math.abs(Date.parse(x)-t)-Math.abs(Date.parse(y)-t))[0] || inspectionDate;
+    }
     return {
       id: row.id, row: normRow, plan, companyId: company ? company.id : null,
       writeDate: inspectionDate || firstDateOf(normRow.certDate) || '',
       writeDateSource: inspectionDate ? 'inspection' : (firstDateOf(normRow.certDate) ? 'certDate' : ''),
+      inspectionDate, inspectionCount, certDate,
     };
   });
 }
@@ -11381,8 +11392,13 @@ function renderInvoicePrepMain(){
               <td style="padding:6px; white-space:nowrap;">
                 <input class="invoice-writedate" data-id="${r.id}" value="${escapeHtml(r.writeDate||'')}" placeholder="YYYY-MM-DD" style="width:104px; font-size:11.5px; padding:4px 5px; text-align:center; border-radius:5px; border:1px solid ${r.writeDate?'var(--line)':'var(--neg)'}; background:var(--panel-2); color:var(--text);">
                 <div style="font-size:10px; margin-top:2px; color:${r.writeDateSource==='inspection'?'var(--pos)':'var(--muted)'};">
-                  ${r.writeDateSource==='inspection' ? '사용전점검 점검일' : r.writeDateSource==='certDate' ? '필증일자' : r.writeDateSource==='manual' ? '직접 입력' : '점검 기록 없음'}
+                  ${r.writeDateSource==='inspection' ? `사용전점검 점검일${r.inspectionCount > 1 ? ` <span style="color:var(--neg);" title="같은 이름의 점검 확인증이 ${r.inspectionCount}건이라 가장 이른 날짜를 넣었습니다. 다른 사람(동명이인) 것일 수 있으니 확인해주세요.">(같은 이름 ${r.inspectionCount}건)</span>` : ''}` : r.writeDateSource==='certDate' ? '필증일자' : r.writeDateSource==='manual' ? '직접 입력' : '점검 기록 없음'}
                 </div>
+                ${(r.inspectionDate && r.certDate && r.inspectionDate !== r.certDate) ? `
+                <div style="font-size:10px; margin-top:3px; color:var(--neg); white-space:nowrap;">⚠ 날짜가 다름:
+                  <button class="invoice-date-pick" data-id="${r.id}" data-date="${escapeHtml(r.inspectionDate)}" data-src="inspection" style="font-size:10px; padding:1px 5px; border-radius:4px; border:1px solid ${r.writeDate===r.inspectionDate?'var(--pos)':'var(--line)'}; background:transparent; color:var(--text); cursor:pointer;" title="사용전점검 확인증의 점검일">점검 ${escapeHtml(r.inspectionDate)}</button>
+                  <button class="invoice-date-pick" data-id="${r.id}" data-date="${escapeHtml(r.certDate)}" data-src="certDate" style="font-size:10px; padding:1px 5px; border-radius:4px; border:1px solid ${r.writeDate===r.certDate?'var(--pos)':'var(--line)'}; background:transparent; color:var(--text); cursor:pointer;" title="실적리스트의 필증일자">필증 ${escapeHtml(r.certDate)}</button>
+                </div>` : ''}
               </td>
               <td style="padding:6px;">
                 ${r.plan.type==='skip' ? '건너뜀' : `
@@ -11491,6 +11507,13 @@ function renderInvoicePrepMain(){
       renderInvoicePrepMain();
     });
   });
+  main.querySelectorAll('.invoice-date-pick').forEach(btn=>btn.addEventListener('click', ()=>{
+    const r = s.results.find(x=>x.id===btn.dataset.id);
+    if(!r) return;
+    r.writeDate = btn.dataset.date;
+    r.writeDateSource = btn.dataset.src;
+    renderInvoicePrepMain();
+  }));
   main.querySelectorAll('.invoice-writedate').forEach(inp=>{
     inp.addEventListener('change', ()=>{
       const r = s.results.find(x=>x.id===inp.dataset.id);
