@@ -13681,7 +13681,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 28;
+const EXCEL_HELPER_VERSION = 29;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20692,7 +20692,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '28'
+$Version = '29'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20728,7 +20728,7 @@ function Pump-Requests {
     $global:pending = $global:listener.GetContextAsync()
     if(-not $c){ continue }
     $p = $c.Request.Url.AbsolutePath.TrimEnd('/')
-    if($c.Request.HttpMethod -eq 'OPTIONS' -or $p -eq '/progress' -or $p -eq '/ping'){ $global:inPump = $true; try { Handle-Context $c } finally { $global:inPump = $false } } else { [void]$global:queued.Add($c) }
+    if($c.Request.HttpMethod -eq 'OPTIONS' -or $p -eq '/progress' -or $p -eq '/ping' -or $p -eq '/filestat' -or $p -eq '/shutdown'){ $global:inPump = $true; try { Handle-Context $c } finally { $global:inPump = $false } } else { [void]$global:queued.Add($c) }
   }
 }
 function Set-Progress([double]$done, [double]$total, [string]$text){
@@ -20744,6 +20744,23 @@ function Get-Excel([bool]$create){
   $xl.Visible = $false
   $xl.DisplayAlerts = $false
   return $xl
+}
+# 파일 열기 — 열 때 뜨는 확인 창(외부 링크 업데이트, 경고 등)이 화면에 안 보이는 엑셀에서 떠서 도우미가
+# 하염없이 기다리는 일이 없게, 링크는 업데이트하지 않고 확인 창은 잠시 끈 채로 연다(사용자의 엑셀이어도 열고 나면 되돌린다).
+function Open-Workbook($xl, [string]$path, [bool]$readOnly){
+  Log "파일 여는 중: $path"
+  $prevAlerts = $true; $prevAsk = $true
+  try { $prevAlerts = $xl.DisplayAlerts } catch {}
+  try { $prevAsk = $xl.AskToUpdateLinks } catch {}
+  try { $xl.DisplayAlerts = $false } catch {}
+  try { $xl.AskToUpdateLinks = $false } catch {}
+  try {
+    if($readOnly){ return (Invoke-Retry { $xl.Workbooks.Open($path, 0, $true) }) }
+    return (Invoke-Retry { $xl.Workbooks.Open($path, 0) })
+  } finally {
+    try { $xl.DisplayAlerts = $prevAlerts } catch {}
+    try { $xl.AskToUpdateLinks = $prevAsk } catch {}
+  }
 }
 function Find-OpenWorkbook($xl, [string]$path){
   if(-not $xl){ return $null }
@@ -20843,10 +20860,10 @@ function Handle-WriteFile([string]$path, [byte[]]$bytes){
   $backup = Backup-File $path
   try { [IO.File]::WriteAllBytes($path, $bytes) }
   catch {
-    if($reopen){ try { [void]$xl.Workbooks.Open($reopen) } catch {} }
+    if($reopen){ try { [void](Open-Workbook $xl $reopen $false) } catch {} }
     throw "파일에 쓸 수 없습니다(다른 사람이 이 파일을 열고 있을 수 있습니다): $($_.Exception.Message)"
   }
-  if($reopen){ Invoke-Retry { [void]$xl.Workbooks.Open($reopen) } | Out-Null }
+  if($reopen){ [void](Open-Workbook $xl $reopen $false) }
   return @{ ok=$true; reopened=[bool]$reopen; backup=$backup }
 }
 
@@ -20876,7 +20893,7 @@ function Handle-CorpCardWrite($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Invoke-Retry { $xl.Workbooks.Open($path) }
+    $wb = Open-Workbook $xl $path $false
     $openedHere = $true
   }
   $prevScreen = $xl.ScreenUpdating
@@ -21033,7 +21050,7 @@ function Handle-CorpCardReportPdf($body){
     # (쓰기가 끝나면 엑셀이 닫혔을 수 있으니 다시 잡는다)
     $step = '복사본 열기'
     $xl = Get-Excel $true
-    $wb = Invoke-Retry { $xl.Workbooks.Open($tmp) }
+    $wb = Open-Workbook $xl $tmp $false
     $sheets = @(); foreach($s in $wb.Worksheets){ $sheets += $s }
     $reports = @($sheets | Where-Object { $_.Name -match '보고용' } | ForEach-Object {
       $n = if($_.Name -match '(\d{1,2})\s*월'){ [int]$Matches[1] } else { $null }
@@ -21164,7 +21181,7 @@ function Handle-SagupWrite($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Invoke-Retry { $xl.Workbooks.Open($path) }
+    $wb = Open-Workbook $xl $path $false
     $openedHere = $true
   }
   try {
@@ -21252,7 +21269,7 @@ function Handle-OMListWrite($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Invoke-Retry { $xl.Workbooks.Open($path) }
+    $wb = Open-Workbook $xl $path $false
     $openedHere = $true
   }
   try {
@@ -21330,7 +21347,7 @@ function Handle-ProfitLedgerWrite($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Invoke-Retry { $xl.Workbooks.Open($path) }
+    $wb = Open-Workbook $xl $path $false
     $openedHere = $true
   }
   try {
@@ -21520,7 +21537,7 @@ function Handle-CardMasterWrite($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Invoke-Retry { $xl.Workbooks.Open($path) }
+    $wb = Open-Workbook $xl $path $false
     $openedHere = $true
   }
   try {
@@ -21705,7 +21722,7 @@ function Handle-CardMasterRead($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Invoke-Retry { $xl.Workbooks.Open($path, 0, $true) }
+    $wb = Open-Workbook $xl $path $true
     $openedHere = $true
   }
   try {
@@ -21736,7 +21753,7 @@ function Handle-ReadValues($body){
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
     # 읽기 전용으로 연다 — 다른 사람이 쓰고 있어도 되고, 파일은 바뀌지 않는다.
-    $wb = Invoke-Retry { $xl.Workbooks.Open($path, 0, $true) }
+    $wb = Open-Workbook $xl $path $true
     $openedHere = $true
   }
   try {
