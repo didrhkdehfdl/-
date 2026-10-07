@@ -13681,7 +13681,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 27;
+const EXCEL_HELPER_VERSION = 28;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -13699,6 +13699,12 @@ async function excelHelperFetch(route, init, timeoutMs){
   try{
     res = await fetch(EXCEL_HELPER_URL + route, { method:'POST', ...init, signal: ctrl.signal });
   }catch(e){
+    if(ctrl.signal.aborted){
+      // 도우미는 떠 있는데 다른 작업(큰 파일 읽기 등) 중이라 답이 늦은 경우 — 꺼진 것으로 보지 않는다.
+      const err = new Error('엑셀 도우미가 다른 작업 중이라 응답이 늦습니다. 잠시 뒤 다시 해주세요.\n(계속 이러면 알림 영역 도우미 아이콘이 있는지, 엑셀에 저장·경고 창이 떠 있지 않은지 확인해주세요.)');
+      err.helperBusy = true;
+      throw err;
+    }
     excelHelperRunning = false;
     const err = new Error('엑셀 도우미가 실행되어 있지 않습니다.\n카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 받은 excel-helper.cmd 파일을 더블클릭해 실행한 뒤 다시 눌러주세요.\n(처음 연결할 때 브라우저가 "이 기기의 다른 앱에 접근" 허용을 물으면 허용을 눌러주세요.)');
     err.helperDown = true;
@@ -13733,7 +13739,7 @@ function watchExcelHelperProgress(onText){
   return ()=>{ stopped = true; clearInterval(timer); };
 }
 async function checkExcelHelper(){
-  try{ const r = await excelHelperCall('/ping', {}, 2500); excelHelperVersion = Number(r.version||0); }catch(e){}
+  try{ const r = await excelHelperCall('/ping', {}, 8000); excelHelperVersion = Number(r.version||0); }catch(e){}
   return excelHelperRunning;
 }
 // 파일 선택 창은 도우미가 PC 화면에 띄운다(브라우저 뒤에 뜨면 작업표시줄에서 찾아주세요).
@@ -20686,12 +20692,28 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '27'
+$Version = '28'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-function Log($m){ Write-Host ("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $m) }
+# 창이 숨겨져 있어 기록은 %TEMP%\ExcelHelper\helper.log 파일에도 남긴다(문제 확인용).
+$LogDir = Join-Path ([IO.Path]::GetTempPath()) 'ExcelHelper'
+try { [void](New-Item -ItemType Directory -Force -Path $LogDir) } catch {}
+$LogFile = Join-Path $LogDir 'helper.log'
+try { if((Test-Path $LogFile) -and (Get-Item $LogFile).Length -gt 2MB){ Remove-Item $LogFile -Force } } catch {}
+function Log($m){
+  $line = "[{0}] {1}" -f (Get-Date -Format 'MM-dd HH:mm:ss'), $m
+  Write-Host $line
+  try { Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8 } catch {}
+}
+# 시작하다 예상 못 한 오류로 멈추면 조용히 꺼지지 않고 이유를 창으로 알려준다.
+trap {
+  $em = "$($_.Exception.Message) (줄 $($_.InvocationInfo.ScriptLineNumber))"
+  Log "멈춤: $em"
+  try { [void][System.Windows.Forms.MessageBox]::Show("엑셀 도우미가 오류로 멈췄습니다.`n`n$em`n`n기록: $LogFile", '엑셀 도우미') } catch {}
+  exit 1
+}
 # 오래 걸리는 작업의 진행률 — 앱이 /progress로 물어본다. 도우미는 요청을 하나씩 처리하므로,
 # 작업 중간중간 Pump-Requests로 들어온 /progress(와 그 사전 확인 OPTIONS)에만 바로 답하고
 # 다른 요청은 줄 세워 두었다가 작업이 끝난 뒤 처리한다.
@@ -20706,7 +20728,7 @@ function Pump-Requests {
     $global:pending = $global:listener.GetContextAsync()
     if(-not $c){ continue }
     $p = $c.Request.Url.AbsolutePath.TrimEnd('/')
-    if($c.Request.HttpMethod -eq 'OPTIONS' -or $p -eq '/progress'){ Handle-Context $c } else { [void]$global:queued.Add($c) }
+    if($c.Request.HttpMethod -eq 'OPTIONS' -or $p -eq '/progress' -or $p -eq '/ping'){ $global:inPump = $true; try { Handle-Context $c } finally { $global:inPump = $false } } else { [void]$global:queued.Add($c) }
   }
 }
 function Set-Progress([double]$done, [double]$total, [string]$text){
@@ -20754,6 +20776,8 @@ function Invoke-Retry([scriptblock]$fn){
 }
 
 function Handle-Ping($body){
+  # 다른 작업 중(진행률 확인 사이)에는 엑셀을 건드리지 않고 살아 있다는 것만 알려준다.
+  if($global:inPump){ return @{ ok=$true; version=$Version; busy=$true; excelRunning=$true; openWorkbooks=@() } }
   $xl = Get-Excel $false
   $open = @()
   if($xl){ foreach($wb in $xl.Workbooks){ $open += $wb.FullName } }
@@ -21659,6 +21683,7 @@ function Add-SheetValuesJson([Text.StringBuilder]$sb, $ws){
     Invoke-Retry { $rgo = $rg.psobject.BaseObject; $box.v = $rgo.GetType().InvokeMember('Value', [Reflection.BindingFlags]::GetProperty, $null, $rgo, $null) } | Out-Null
     $vals = $box.v
     for($r=1; $r -le $lastRow; $r++){
+      if(($r % 200) -eq 0){ Pump-Requests }
       if($r -gt 1){ [void]$sb.Append(',') }
       [void]$sb.Append('[')
       for($c=1; $c -le $lastCol; $c++){
@@ -21918,7 +21943,7 @@ $tray.add_MouseUp({ param($s, $e)
 })
 $tray.Visible = $true
 $tray.ShowBalloonTip(5000, '엑셀 도우미 실행 중', "$(if($replaced){ '예전 도우미를 끄고 새 버전(v' + $Version + ')으로 바꿨습니다.' } else { '업무프로그램에서 PC 엑셀 파일에 저장·불러오기를 할 수 있습니다.' })`n끌 때는 이 아이콘을 클릭 → 종료.", [System.Windows.Forms.ToolTipIcon]::Info)
-Log "엑셀 도우미 시작 ($AllowedOrigin)"
+Log "엑셀 도우미 v$Version 시작 ($AllowedOrigin)$(if($replaced){ " — 예전 도우미 $replaced 개를 끄고 바꿈" })"
 
 try {
   $global:pending = $listener.GetContextAsync()
