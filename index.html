@@ -12250,8 +12250,9 @@ async function renderOMListMain(){
     <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
       "독립채산제(AS,타부서지원)" 엑셀의 "2026년도 데이터" 시트를 그대로 올려서 표로 관리하고, 같은 구성으로 다시 엑셀로 내보낼 수 있습니다.
     </p>
+    ${omListLinkHtml()}
     <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
-      <input type="file" id="omListFile" accept=".xlsx,.xls" style="font-size:13px; color:var(--muted);">
+      <input type="file" id="omListFile" accept=".xlsx,.xls" style="font-size:13px; color:var(--muted);" title="연결한 PC 파일 대신 파일을 직접 올려 전체를 바꿀 때">
       <input id="omListSearch" placeholder="고객명/발전소명/요청자 검색" value="${escapeHtml(s.search)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; min-width:200px;">
       <button id="omListAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
       <button id="omListExportBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
@@ -12296,6 +12297,8 @@ async function renderOMListMain(){
   `;
 
   document.getElementById('omListFile').addEventListener('change', handleOMListFile);
+  bindOMListLinkButtons();
+  if(getLinkedFile(OM_LINK_KEY) && Date.now() - omLastOpenCheck > 20000){ omLastOpenCheck = Date.now(); setTimeout(()=>checkOMFileChanged(), 800); }
   document.getElementById('omListSearch').addEventListener('input', (e)=>{ omListState.search = e.target.value; omListState.page = 1; renderOMListMain(); });
   const sortTh = main.querySelector('th[data-sort-field="receivedDate"]');
   if(sortTh) sortTh.addEventListener('click', ()=>{
@@ -12320,6 +12323,7 @@ async function renderOMListMain(){
     omListState.sortDir = 'desc';
     omListState.page = 1;
     await saveOMListRows();
+    queueOMAdd(row);
     renderOMListMain();
   });
   document.getElementById('omListExportBtn').addEventListener('click', async ()=>{
@@ -12353,11 +12357,14 @@ async function renderOMListMain(){
         row[field] = el.value.trim();
       }
       await saveOMListRows();
+      queueOMUpdate(row, field);
     });
   });
   main.querySelectorAll('.om-del-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      if(!confirm('이 행을 삭제할까요?')) return;
+      if(!confirm(getLinkedFile(OM_LINK_KEY) ? '이 행을 삭제할까요? (연결된 PC 파일에서도 그 행이 지워집니다)' : '이 행을 삭제할까요?')) return;
+      const delRow = omListState.rows.find(r=>r.id===btn.dataset.id);
+      if(delRow) queueOMDelete(delRow);
       omListState.rows = omListState.rows.filter(r=>r.id!==btn.dataset.id);
       await saveOMListRows();
       renderOMListMain();
@@ -12370,6 +12377,215 @@ async function renderOMListMain(){
       if(savedScrollLeft !== undefined) wrap.scrollLeft = savedScrollLeft;
     }
   }
+}
+
+// ---------- O&M 리스트 ↔ PC 엑셀 파일(W:\6.O&M "독립채산제(AS,타부서지원)") 양방향 연동 ----------
+// 연결하면 파일의 최신 "YYYY년도 데이터" 시트를 읽어 O&M 리스트를 파일 내용으로 맞추고(행마다 파일 행 번호
+// xlRow와 고객명·접수일자 xlKey를 기억), 앱에서 칸을 고치거나 행을 추가·삭제하면 2초 뒤 엑셀 도우미로 파일에
+// 바로 쓴다. O&M 탭을 보는 동안 1분마다 파일 저장 시각을 확인해 바뀌었으면 다시 읽는다. 아직 파일에 못 쓴
+// 수정(도우미가 꺼져 있던 경우 등)은 이 PC에만 기억해 두었다가, 다시 읽은 내용 위에 덮어 보여주고 다음에 쓴다.
+const OM_LINK_KEY = 'omlist';
+const OM_PENDING_KEY = 'om-pending-v1';
+const OM_DATA_START = 4;
+let omPending = (()=>{ try{ return JSON.parse(localStorage.getItem(OM_PENDING_KEY)||'null') || { upd:{}, add:[], del:[] }; }catch(e){ return { upd:{}, add:[], del:[] }; } })();
+function saveOMPending(){ try{ localStorage.setItem(OM_PENDING_KEY, JSON.stringify(omPending)); }catch(e){} }
+function omHasPending(){ return Object.keys(omPending.upd).length || omPending.add.length || omPending.del.length; }
+let omSyncNote = '';
+function setOMSyncNote(text, isErr){
+  omSyncNote = text;
+  const el = document.getElementById('omSyncNote');
+  if(el){ el.textContent = text; el.style.color = isErr ? 'var(--neg)' : 'var(--muted)'; }
+}
+function pickOMSheetName(names){
+  const years = (names||[]).map(n => ({ n, year: parseInt((String(n).match(/(\d{4}).*데이터/)||[])[1], 10) })).filter(x => !isNaN(x.year));
+  return (years.length ? years.sort((a,b)=>b.year-a.year)[0].n : null) || (names||[]).find(n=>String(n).includes('데이터')) || (names||[])[0];
+}
+const omFieldCol = f => colLetterToIndex(OM_LIST_COL_LETTERS[OM_LIST_COLUMNS.findIndex(([x])=>x===f)]) + 1;
+const omRowKey = (customer, date) => `${String(customer||'').replace(/\s/g,'')}|${date||''}`;
+function omFieldType(f){ return (f==='receivedDate' || f==='processedDate' || f==='invoiceDate') ? 'date' : OM_LIST_NUMBER_FIELDS.includes(f) ? 'number' : 'text'; }
+// /readvalues의 행 목록(A1부터) → O&M 행 목록
+function parseOMRowsFromValues(aoa){
+  const idxs = OM_LIST_COL_LETTERS.map(colLetterToIndex);
+  const rows = [];
+  (aoa||[]).forEach((arr, i)=>{
+    if(i < OM_DATA_START - 1) return;
+    const hasData = idxs.some(k => String(arr[k]==null?'':arr[k]).trim());
+    if(!hasData) return;
+    const row = { id: rid(), xlRow: i + 1 };
+    OM_LIST_COLUMNS.forEach(([f], k)=>{
+      const raw = arr[idxs[k]];
+      if(OM_LIST_NUMBER_FIELDS.includes(f)) row[f] = parseExcelNumber(raw);
+      else if(omFieldType(f) === 'date') row[f] = excelDateToIso(raw);
+      else row[f] = raw!==undefined && raw!==null ? String(raw).trim() : '';
+    });
+    row.xlKey = omRowKey(row.customer, row.receivedDate);
+    rows.push(row);
+  });
+  return rows;
+}
+// 파일에서 읽은 행들로 O&M 리스트를 바꾼다. 같은 자리(xlRow·고객명·접수일자가 같은) 행은 id를 유지하고,
+// 아직 파일에 못 쓴 수정·새 행·삭제는 그대로 얹는다.
+function applyOMFileRows(fileRows){
+  const old = omListState.rows || [];
+  const byKey = new Map();
+  old.forEach(r=>{ if(r.xlRow) byKey.set(r.xlRow+'#'+r.xlKey, r); });
+  const delIds = new Set(omPending.del.map(d=>d.id));
+  const out = [];
+  fileRows.forEach(fr=>{
+    const prev = byKey.get(fr.xlRow+'#'+fr.xlKey);
+    if(prev) fr.id = prev.id;
+    if(delIds.has(fr.id)) return;
+    const upd = omPending.upd[fr.id];
+    if(upd) Object.assign(fr, upd.values);
+    out.push(fr);
+  });
+  const addIds = new Set(omPending.add);
+  old.forEach(r=>{ if(addIds.has(r.id)) out.push(r); });
+  omListState.rows = out;
+}
+let omSyncBusy = false;
+async function loadOMListFromLinkedFile(opts){
+  const link = getLinkedFile(OM_LINK_KEY);
+  if(!link) return false;
+  await checkExcelHelper();
+  if(!excelHelperRunning) throw new Error('엑셀 도우미가 실행되어 있지 않습니다. 카드관리 탭에서 받은 excel-helper.cmd를 실행한 뒤 다시 해주세요.');
+  const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
+  let res = await excelHelperCall('/readvalues', { path: link.path, sheet: link.sheet || '' }, 3*60*1000);
+  const want = pickOMSheetName(res.sheetNames);
+  if(want && want !== res.sheet) res = await excelHelperCall('/readvalues', { path: link.path, sheet: want }, 3*60*1000);
+  const rows = parseOMRowsFromValues(res.rows);
+  if(!rows.length) throw new Error(`"${res.sheet}" 시트에서 데이터를 찾지 못했습니다.`);
+  if(opts && opts.confirmReplace && (omListState.rows||[]).length &&
+     !confirm(`O&M 리스트(${omListState.rows.length}건)를 연결한 파일 "${res.sheet}" 시트의 ${rows.length}건으로 맞춥니다.\n앞으로는 파일과 자동으로 주고받습니다. 계속할까요?`)) return false;
+  setLinkedFile(OM_LINK_KEY, { ...link, sheet: res.sheet, mtime: st.mtime });
+  applyOMFileRows(rows);
+  omListState.fileName = link.name;
+  await saveOMListRows();
+  setOMSyncNote(`${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 파일에서 불러옴 (${res.sheet} · ${rows.length}건)`);
+  return true;
+}
+function queueOMUpdate(row, field){
+  if(!getLinkedFile(OM_LINK_KEY)) return;
+  if(omPending.add.includes(row.id)){ saveOMPending(); flushOMWrites(); return; }   // 새 행은 통째로 쓴다
+  const u = omPending.upd[row.id] || { row: row.xlRow||0, key: row.xlKey||'', label: row.customer||row.plantName||'', values:{} };
+  u.values[field] = row[field];
+  omPending.upd[row.id] = u;
+  saveOMPending(); flushOMWrites();
+}
+function queueOMAdd(row){ if(!getLinkedFile(OM_LINK_KEY)) return; omPending.add.push(row.id); saveOMPending(); flushOMWrites(); }
+function queueOMDelete(row){
+  if(!getLinkedFile(OM_LINK_KEY)) return;
+  if(omPending.add.includes(row.id)){ omPending.add = omPending.add.filter(x=>x!==row.id); saveOMPending(); return; }
+  delete omPending.upd[row.id];
+  if(row.xlRow) omPending.del.push({ id: row.id, row: row.xlRow, key: row.xlKey||'', label: row.customer||row.plantName||'' });
+  saveOMPending(); flushOMWrites();
+}
+const flushOMWrites = debounce(()=>{ writeOMPendingToFile().catch(()=>{}); }, 2000);
+async function writeOMPendingToFile(){
+  const link = getLinkedFile(OM_LINK_KEY);
+  if(!link || !omHasPending()) return;
+  if(omSyncBusy){ setTimeout(flushOMWrites, 1500); return; }
+  omSyncBusy = true;
+  try{
+    await checkExcelHelper();
+    if(!excelHelperRunning || excelHelperVersion < 26){
+      setOMSyncNote(`⚠ 파일에 아직 못 씀(${excelHelperRunning ? '엑셀 도우미가 예전 버전' : '엑셀 도우미가 꺼져 있음'}) — 도우미를 켜면 다음 수정 때 같이 씁니다.`, true);
+      return;
+    }
+    if(!link.sheet){ await loadOMListFromLinkedFile(); }
+    const spec = (f, v) => ({ col: omFieldCol(f), type: omFieldType(f), value: v==null ? '' : v });
+    const sent = JSON.parse(JSON.stringify(omPending));
+    const updates = Object.entries(sent.upd).map(([id, u])=>{
+      const values = {}; Object.entries(u.values).forEach(([f,v])=>{ values[f] = spec(f, v); });
+      return { id, row: u.row, key: u.key, label: u.label, values };
+    }).filter(u=>u.row);
+    const appends = sent.add.map(id=>{
+      const r = omListState.rows.find(x=>x.id===id); if(!r) return null;
+      const values = {}; OM_LIST_COLUMNS.forEach(([f])=>{ if(f !== 'no' && r[f] !== '' && r[f] != null) values[f] = spec(f, r[f]); });
+      return { id, values };
+    }).filter(Boolean);
+    const dataCols = OM_LIST_COL_LETTERS.filter((l,i)=>OM_LIST_COLUMNS[i][0] !== 'no').map(l=>colLetterToIndex(l)+1);
+    const res = await excelHelperCall('/omlist/write', { path: link.path, sheet: getLinkedFile(OM_LINK_KEY).sheet, dataStart: OM_DATA_START,
+      customerCol: omFieldCol('customer'), dateCol: omFieldCol('receivedDate'), dataCols, updates, appends, deletes: sent.del }, 5*60*1000);
+    // 보낸 것 중 그 사이 또 바뀌지 않은 것만 지운다.
+    (res.written||[]).forEach(id=>{
+      const now = omPending.upd[id], was = sent.upd[id];
+      if(now && JSON.stringify(now.values) === JSON.stringify(was.values)) delete omPending.upd[id];
+    });
+    const addedIds = Object.keys(res.added||{});
+    omPending.add = omPending.add.filter(id=>!addedIds.includes(id));
+    omPending.del = omPending.del.filter(d=>!(res.deleted||[]).includes(d.id));
+    // 찾지 못한 행은 계속 붙잡고 있지 않는다(파일에서 이미 지워졌거나 고객명·접수일자가 바뀐 경우).
+    if((res.notFound||[]).length){
+      const nf = new Set(res.notFound);
+      Object.keys(omPending.upd).forEach(id=>{ if(sent.upd[id] && nf.has(sent.upd[id].label)) delete omPending.upd[id]; });
+      omPending.del = omPending.del.filter(d=>!nf.has(d.label));
+    }
+    saveOMPending();
+    // 행 번호·No.를 파일과 맞추려고 다시 읽는다(앱이 쓴 저장이라 자동 확인에서 또 읽지 않게 시각도 기억).
+    await loadOMListFromLinkedFile();
+    const n = (res.written||[]).length + addedIds.length + (res.deleted||[]).length;
+    setOMSyncNote(`${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 파일에 ${n}건 반영${(res.notFound||[]).length ? ` · 파일에서 못 찾은 행: ${res.notFound.join(', ')}` : ''}`, !!(res.notFound||[]).length);
+    if(state.activeTab === 'omList' && !document.querySelector('#main input:focus, #main textarea:focus, #main select:focus')) renderOMListMain();
+  }catch(e){
+    setOMSyncNote('⚠ 파일에 못 씀: ' + linkedFileErrorMessage(e).split('\n')[0], true);
+    showLedgerToast('O&M 리스트를 PC 파일에 쓰지 못했습니다:\n' + linkedFileErrorMessage(e), true);
+  }finally{ omSyncBusy = false; }
+}
+async function checkOMFileChanged(){
+  const link = getLinkedFile(OM_LINK_KEY);
+  if(!link || omSyncBusy || !omListState.loaded) return;
+  try{
+    await checkExcelHelper();
+    if(!excelHelperRunning) return;
+    const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
+    if(st.mtime === link.mtime) return;
+    if(omHasPending()){ await writeOMPendingToFile(); return; }   // 쓰면서 다시 읽는다
+    omSyncBusy = true;
+    try{ await loadOMListFromLinkedFile(); } finally{ omSyncBusy = false; }
+    showLedgerToast('O&M 리스트: PC 파일에서 고친 내용을 불러왔습니다.');
+    if(state.activeTab === 'omList' && !document.querySelector('#main input:focus, #main textarea:focus, #main select:focus')) renderOMListMain();
+  }catch(e){ console.warn('O&M 파일 확인 실패', e); }
+}
+setInterval(()=>{ if(state.activeTab === 'omList' && document.visibilityState === 'visible') checkOMFileChanged(); }, 60000);
+let omLastOpenCheck = 0;
+function omListLinkHtml(){
+  const link = getLinkedFile(OM_LINK_KEY);
+  const b = (id, label, color, title) => `<button id="${id}" title="${escapeHtml(title)}" style="font-size:12px; padding:7px 12px; border-radius:7px; border:1px solid ${color}; background:transparent; color:${color}; cursor:pointer; font-weight:600; white-space:nowrap;">${label}</button>`;
+  return `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 10px; border-radius:8px; border:1px dashed var(--sky); margin-bottom:10px;">
+    <span style="font-size:12px; font-weight:600;">PC 엑셀 파일</span>
+    ${link ? `<span style="font-size:11.5px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:380px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}${link.sheet ? ` · ${escapeHtml(link.sheet)}` : ''}</span>
+      ${b('omLinkLoadBtn', '🔄 파일에서 다시 불러오기', '#2e9e5b', '파일의 지금 내용으로 O&M 리스트를 맞춥니다(아직 파일에 못 쓴 수정은 그대로 둡니다).')}
+      ${b('omLinkPickBtn', '다른 파일로 바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
+      ${b('omUnlinkBtn', '✕ 해제', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
+      <span id="omSyncNote" style="font-size:11px; color:${/^⚠/.test(omSyncNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(omSyncNote || '양방향 자동 연동: 여기서 고치거나 행을 추가·삭제하면 파일에 바로 쓰고, 파일에서 고치고 저장하면 1분 안에 여기에 반영됩니다.')}</span>`
+    : `${b('omLinkPickBtn', '🔗 PC 엑셀 파일 연결', 'var(--sky)', 'W:\\6.O&M 의 "독립채산제(AS,타부서지원)" 파일을 연결합니다. 파일 선택 창은 엑셀 도우미가 띄웁니다.')}
+       <span style="font-size:11px; color:var(--muted);">연결하면 파일을 올리고 내려받지 않고 PC 파일과 바로 주고받습니다(엑셀 도우미 필요).</span>`}
+  </div>`;
+}
+function bindOMListLinkButtons(){
+  const busy = async (btn, text, fn) => {
+    const label = btn.textContent; btn.textContent = text; btn.disabled = true;
+    try{ await fn(); } catch(e){ alert(linkedFileErrorMessage(e)); } finally{ btn.textContent = label; btn.disabled = false; }
+  };
+  const pick = document.getElementById('omLinkPickBtn');
+  if(pick) pick.addEventListener('click', ()=>busy(pick, '파일 선택 창을 띄웠습니다…', async ()=>{
+    const link = await pickLinkedFile(OM_LINK_KEY, '독립채산제(AS,타부서지원) 엑셀 파일 선택');
+    if(!link) return;
+    omPending = { upd:{}, add:[], del:[] }; saveOMPending();
+    if(!await loadOMListFromLinkedFile({ confirmReplace:true })){ unlinkFile(OM_LINK_KEY); }
+    renderOMListMain();
+  }));
+  const load = document.getElementById('omLinkLoadBtn');
+  if(load) load.addEventListener('click', ()=>busy(load, '불러오는 중…', async ()=>{
+    if(omHasPending()) await writeOMPendingToFile(); else await loadOMListFromLinkedFile();
+    renderOMListMain();
+  }));
+  const unlink = document.getElementById('omUnlinkBtn');
+  if(unlink) unlink.addEventListener('click', ()=>{
+    if(!confirm('O&M 리스트와 PC 엑셀 파일의 연결을 해제할까요? (파일 자체는 그대로 남습니다)')) return;
+    unlinkFile(OM_LINK_KEY); omPending = { upd:{}, add:[], del:[] }; saveOMPending(); renderOMListMain();
+  });
 }
 
 // ---------- 법인카드 (카드별 "법인카드 사용 관리대장" 엑셀을 그대로 관리) ----------
@@ -13465,7 +13681,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 25;
+const EXCEL_HELPER_VERSION = 26;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20464,7 +20680,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '25'
+$Version = '26'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20969,6 +21185,101 @@ function Handle-SagupWrite($body){
     }
     if($written.Count){ Invoke-Retry { $wb.Save() } | Out-Null }
     return @{ ok=$true; written=$written; notFound=$notFound; rows=$rowsOut; wasOpen=(-not $openedHere) }
+  } finally {
+    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+  }
+}
+
+# ---- O&M 리스트("독립채산제(AS,타부서지원)" 데이터 시트): 앱에서 고친 칸·새 행·지운 행을 파일에 반영 ----
+# 행은 앱이 마지막으로 읽은 행 번호로 찾되, 그 행의 고객명·접수일자가 앱이 기억한 값과 다르면(그 사이
+# 행이 끼워졌거나 지워진 경우) 데이터 행 전체에서 같은 고객명+접수일자 행을 찾는다(여럿이면 원래 자리에 가까운 행).
+# 새 행은 마지막 데이터 행을 서식·수식째 복사해 바로 아래에 만든 뒤 칸을 채운다. 지울 행은 아래쪽부터 지운다.
+function Write-OMCell($cell, $spec){
+  $v = $spec.value
+  if($null -eq $v -or [string]$v -eq ''){ Invoke-Retry { [void]$cell.ClearContents() } | Out-Null; return }
+  $t = [string]$spec.type
+  if($t -eq 'date'){
+    $d = [datetime]::MinValue
+    if([datetime]::TryParseExact([string]$v, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$d)){ Set-CellValue $cell ($d.ToOADate()) }
+    else { Set-CellValue $cell ([string]$v) }
+  } elseif($t -eq 'number'){
+    $n = 0.0
+    if([double]::TryParse((([string]$v) -replace ',',''), [ref]$n)){ Set-CellValue $cell $n } else { Set-CellValue $cell ([string]$v) }
+  } else {
+    $sv = [string]$v
+    if($sv -match '^0\d+$' -or $sv -match '^[=+\-@]'){ $sv = "'" + $sv }
+    Set-CellValue $cell $sv
+    if($sv.Contains("`n")){ try { $cell.WrapText = $true } catch {} }
+  }
+}
+function Handle-OMListWrite($body){
+  $path = [string]$body.path
+  $xl = Get-Excel $true
+  $wb = Find-OpenWorkbook $xl $path
+  $openedHere = $false
+  if(-not $wb){
+    if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
+    $wb = Invoke-Retry { $xl.Workbooks.Open($path) }
+    $openedHere = $true
+  }
+  try {
+    if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
+    $ws = $null; foreach($sh in $wb.Worksheets){ if([string]$sh.Name -eq [string]$body.sheet){ $ws = $sh } }
+    if(-not $ws){ throw """$($body.sheet)"" 시트를 찾지 못했습니다." }
+    $start = [int]$body.dataStart; $cc = [int]$body.customerCol; $dc = [int]$body.dateCol
+    $used = $ws.UsedRange
+    $lastRow = [Math]::Max($start, $used.Row + $used.Rows.Count - 1)
+    $keyOf = { param($r) ((([string]$ws.Cells.Item($r, $cc).Text) -replace '\s','') + '|' + (Get-CellDateText $ws.Cells.Item($r, $dc))) }
+    $findRow = {
+      param($want, [string]$key)
+      if($want -ge $start -and (& $keyOf $want) -eq $key){ return $want }
+      $best = 0
+      for($k=$start; $k -le $lastRow; $k++){
+        if((& $keyOf $k) -ne $key){ continue }
+        if(-not $best -or [Math]::Abs($k - $want) -lt [Math]::Abs($best - $want)){ $best = $k }
+      }
+      return $best
+    }
+    $written = @(); $notFound = @(); $deleted = @(); $added = @{}
+    foreach($it in @($body.updates)){
+      $r = & $findRow ([int]$it.row) ([string]$it.key)
+      if(-not $r){ $notFound += [string]$it.label; continue }
+      foreach($p in $it.values.psobject.Properties){ Write-OMCell ($ws.Cells.Item($r, [int]$p.Value.col)) $p.Value }
+      $written += [string]$it.id
+    }
+    # 마지막 데이터 행(데이터 열 중 하나라도 값이 있는 마지막 행)
+    $dataCols = @($body.dataCols | ForEach-Object { [int]$_ })
+    $lastData = $start - 1
+    for($k=$lastRow; $k -ge $start; $k--){
+      $has = $false
+      foreach($c in $dataCols){ $t = [string]$ws.Cells.Item($k, $c).Text; if($t.Trim()){ $has = $true; break } }
+      if($has){ $lastData = $k; break }
+    }
+    foreach($it in @($body.appends)){
+      $src = [Math]::Max($start, $lastData)
+      $at = $lastData + 1
+      if($at -le $src){ $at = $src + 1 }
+      if($lastData -ge $start){
+        Invoke-Retry { [void]$ws.Rows.Item($src).Copy($ws.Rows.Item($at)) } | Out-Null
+        try { $xl.CutCopyMode = $false } catch {}
+        foreach($c in $dataCols){ Invoke-Retry { [void]$ws.Cells.Item($at, $c).ClearContents() } | Out-Null }
+      }
+      foreach($p in $it.values.psobject.Properties){ Write-OMCell ($ws.Cells.Item($at, [int]$p.Value.col)) $p.Value }
+      $added[[string]$it.id] = $at
+      $lastData = $at; if($at -gt $lastRow){ $lastRow = $at }
+    }
+    $delRows = @()
+    foreach($it in @($body.deletes)){
+      $r = & $findRow ([int]$it.row) ([string]$it.key)
+      if(-not $r){ $notFound += [string]$it.label; continue }
+      $delRows += [pscustomobject]@{ r=$r; id=[string]$it.id }
+    }
+    foreach($d in ($delRows | Sort-Object r -Descending -Unique)){
+      Invoke-Retry { [void]$ws.Rows.Item($d.r).Delete() } | Out-Null
+      $deleted += $d.id
+    }
+    if($written.Count -or $added.Count -or $deleted.Count){ Invoke-Retry { $wb.Save() } | Out-Null }
+    return @{ ok=$true; written=$written; added=$added; deleted=$deleted; notFound=$notFound; wasOpen=(-not $openedHere) }
   } finally {
     if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
   }
@@ -21504,6 +21815,7 @@ function Handle-Context($ctx){
       '/cardmaster/write' { Handle-CardMasterWrite $body }
       '/sagup/write'      { Handle-SagupWrite $body }
       '/profitledger/write' { Handle-ProfitLedgerWrite $body }
+      '/omlist/write'     { Handle-OMListWrite $body }
       '/filestat'         {
         # 파일의 마지막 저장 시각(바뀌었는지 보는 용도) — 파일을 열지 않고 정보만 본다.
         $p = [string]$body.path
