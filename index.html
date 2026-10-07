@@ -10687,6 +10687,7 @@ function cardMasterLinkHtml(t){
       ${btn('cardmaster-link-save', '💾 최신 데이터로 PC 파일 갱신', '#2e9e5b', '연결된 PC 파일의 지금 내용을 바탕으로 카드 블록만 법인카드 탭의 최신 내역으로 채워 그 파일에 저장합니다. 엑셀에 열려 있으면 잠깐 닫았다 다시 엽니다. 덮어쓰기 전 원본은 이 PC에 자동 백업됩니다.')}
       ${btn('cardmaster-link-pick', '바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
       ${btn('cardmaster-link-unlink', '✕', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
+      <span class="cardmaster-auto-note" style="font-size:11px; color:${/^⚠/.test(cardMasterAutoNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(cardMasterAutoNote || '실시간 연동: 법인카드 내역을 고치면 15초 뒤 바뀐 달만 이 파일에 자동으로 채워 저장합니다.')}</span>
     </span>`;
 }
 function bindCardMasterLinkButtons(rerender){
@@ -10729,6 +10730,7 @@ function bindCardMasterLinkButtons(rerender){
       let r;
       try{ r = await excelHelperCall('/cardmaster/write', { path: getLinkedFile(key).path, months, allCards: cardMasterAllCards() }, 10*60*1000); }
       finally{ stopProgress(); }
+      rememberCardMasterWritten(t.id, months);
       alert(`${r.applied ? `${r.applied}개 카드 블록을 채워 "${getLinkedFile(key).name}" 파일에 저장했습니다.` : '채운 카드 블록이 없습니다.'}${r.wasOpen ? '\n(엑셀에 열려 있던 파일에 바로 넣고 저장했습니다)' : ''}\n\n${cardMasterWriteResultLines(r).join('\n\n')}`);
     }catch(e){
       alert(linkedFileErrorMessage(e));
@@ -10812,6 +10814,96 @@ function buildCardMasterWritePayload(onlyMonth){
   });
   return [...byMonth.entries()].sort((a,b)=>a[0]-b[0]).map(([num, cards])=>({ num, cards }));
 }
+// ---- 통합본 PC 파일 자동 갱신(실시간 연동) ----
+// 법인카드 탭에서 내역을 고쳐 저장하면 15초 뒤(이어서 고치면 마지막 저장 15초 뒤) 연결된 통합본 PC 파일의
+// 바뀐 달 시트만 엑셀 도우미로 채워 저장한다. 달마다 마지막으로 파일에 쓴 내용의 요약(서명)을 이 PC에 기억해
+// 두고 지금 내용과 비교해 바뀐 달만 쓴다. 지난번에 썼던 카드가 그 달 내역이 모두 지워졌으면 그 블록을 비운다.
+const CARD_MASTER_SNAP_KEY = 'cardmaster-snap-v1';
+function cardMasterSnapAll(){ try{ return JSON.parse(localStorage.getItem(CARD_MASTER_SNAP_KEY)||'{}')||{}; }catch(e){ return {}; } }
+function cardMasterSnapSave(all){ try{ localStorage.setItem(CARD_MASTER_SNAP_KEY, JSON.stringify(all)); }catch(e){} }
+function cardMasterMonthSig(m){
+  const str = JSON.stringify(m.cards.map(c=>[c.last4, c.rows]));
+  let h = 0; for(let i=0;i<str.length;i++){ h = (h*31 + str.charCodeAt(i)) | 0; }
+  return `${str.length}:${h}`;
+}
+// 파일에 쓴 달들의 서명을 기억한다(직접 누른 "PC 파일 갱신"도 여기를 거친다).
+function rememberCardMasterWritten(tmplId, months){
+  const all = cardMasterSnapAll();
+  const snap = all[tmplId] || {};
+  months.forEach(m=>{ snap[m.num] = { sig: cardMasterMonthSig(m), cards: m.cards.filter(c=>c.rows.length).map(c=>c.last4) }; });
+  all[tmplId] = snap; cardMasterSnapSave(all);
+}
+const cardMasterAutoDirty = new Set();   // 직접 고친 달(번호)
+let cardMasterAutoBusy = false, cardMasterAutoAgain = false;
+let cardMasterAutoNote = '';
+function setCardMasterAutoNote(text, isErr){
+  cardMasterAutoNote = text;
+  document.querySelectorAll('.cardmaster-auto-note').forEach(el=>{ el.textContent = text; el.style.color = isErr ? 'var(--neg)' : 'var(--muted)'; });
+}
+function queueCardMasterAutoWrite(){
+  const n = monthNumFromLabel(corpCardState.activeMonth);
+  if(n) cardMasterAutoDirty.add(n);
+  flushCardMasterAutoWrite();
+}
+const flushCardMasterAutoWrite = debounce(async ()=>{
+  if(cardMasterAutoBusy){ cardMasterAutoAgain = true; return; }
+  await ensureCardMasterLoaded();
+  const targets = corpCardMasterTemplates.filter(t=>getLinkedFile(cardMasterLinkKey(t.id)));
+  if(!targets.length){ cardMasterAutoDirty.clear(); return; }
+  cardMasterAutoBusy = true;
+  const dirtyNow = new Set(cardMasterAutoDirty); cardMasterAutoDirty.clear();
+  try{
+    await checkExcelHelper();
+    if(!excelHelperRunning || excelHelperVersion < EXCEL_HELPER_VERSION){
+      dirtyNow.forEach(n=>cardMasterAutoDirty.add(n));   // 도우미를 켠 뒤 다음 저장 때 같이 쓴다
+      setCardMasterAutoNote(`⚠ 통합본 PC 파일 자동 갱신 대기 중 — 엑셀 도우미(v${EXCEL_HELPER_VERSION})가 ${excelHelperRunning ? '예전 버전입니다' : '꺼져 있습니다'}`, true);
+      return;
+    }
+    await flushCorpCardSave({ silent:true });
+    const full = buildCardMasterWritePayload(null);
+    const allCards = cardMasterAllCards();
+    for(const t of targets){
+      const link = getLinkedFile(cardMasterLinkKey(t.id));
+      const snap = (cardMasterSnapAll()[t.id]) || {};
+      const firstTime = !Object.keys(snap).length;
+      const byNum = new Map(full.map(m=>[m.num, m]));
+      const nums = new Set(dirtyNow);
+      // 기억해 둔 달과 지금 내용이 다르면(다른 화면에서 한꺼번에 바뀐 경우 등) 그 달도 쓴다.
+      Object.keys(snap).forEach(k=>{ const n = Number(k); const m = byNum.get(n) || { num:n, cards:[] }; if(cardMasterMonthSig(m) !== snap[k].sig) nums.add(n); });
+      // 직접 고친 달이라도 마지막으로 쓴 내용과 똑같으면 다시 쓰지 않는다.
+      [...nums].forEach(n=>{ if(snap[n] && cardMasterMonthSig(byNum.get(n) || { num:n, cards:[] }) === snap[n].sig) nums.delete(n); });
+      const months = [...nums].sort((a,b)=>a-b).map(n=>{
+        const m = byNum.get(n) || { num:n, cards:[] };
+        // 지난번에 채웠던 카드인데 이번 달 내역이 모두 지워졌으면 빈 목록을 보내 블록을 비운다.
+        const had = (snap[n] && snap[n].cards) || [];
+        const cards = m.cards.slice();
+        had.forEach(l4=>{ if(!cards.some(c=>c.last4===l4)) cards.push({ last4:l4, cardNumber:'', rows:[] }); });
+        return { num:n, cards };
+      }).filter(m=>m.cards.length);
+      if(!months.length) continue;
+      const label = months.map(m=>m.num+'월').join('·');
+      setCardMasterAutoNote(`통합본 PC 파일에 ${label} 자동 갱신 중… 0%`);
+      const stop = watchExcelHelperProgress(txt => setCardMasterAutoNote(`통합본 PC 파일에 ${label} 자동 갱신 중… ${txt}`));
+      let r;
+      try{ r = await excelHelperCall('/cardmaster/write', { path: link.path, months, allCards }, 10*60*1000); }
+      finally{ stop(); }
+      rememberCardMasterWritten(t.id, months.map(m=>byNum.get(m.num) || { num:m.num, cards:[] }));
+      // 처음 자동 갱신할 때는 나머지 달은 이미 파일과 같다고 보고 기준만 잡는다(전체 달을 매번 다시 쓰지 않게).
+      if(firstTime) rememberCardMasterWritten(t.id, full.filter(m=>!nums.has(m.num)));
+      const time = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+      const problems = (r.skipped||[]).length + (r.noBlock||[]).length;
+      setCardMasterAutoNote(`${time} 통합본 PC 파일 ${label} 자동 갱신${problems ? ` · 넣지 못한 곳 ${problems}건` : ''}`, !!problems);
+      showLedgerToast(`"${link.name}" ${label} 자동 갱신 완료${problems ? `\n\n${cardMasterWriteResultLines(r).join('\n\n')}` : ''}`, !!problems);
+    }
+  }catch(e){
+    dirtyNow.forEach(n=>cardMasterAutoDirty.add(n));
+    setCardMasterAutoNote('⚠ 통합본 PC 파일 자동 갱신 실패: ' + linkedFileErrorMessage(e).split('\n')[0], true);
+    showLedgerToast('통합본 PC 파일 자동 갱신 실패:\n' + linkedFileErrorMessage(e), true);
+  }finally{
+    cardMasterAutoBusy = false;
+    if(cardMasterAutoAgain){ cardMasterAutoAgain = false; flushCardMasterAutoWrite(); }
+  }
+}, 15000);
 async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
   const tmpl = corpCardMasterTemplates.find(t=>t.id===tmplId);
   if(!tmpl) return;
@@ -13216,6 +13308,8 @@ function saveCorpCardRows(cardId){
   corpCardSaveQueue = corpCardSaveQueue.catch(()=>{}).then(
     () => saveWithGenericHistory('corp-card-rows:'+cardId, JSON.stringify(corpCardState.rowsByCard[cardId]||{}))
   );
+  // 연결된 통합본 PC 파일에도 자동으로 쓴다(15초 모아서, 바뀐 달만).
+  if(typeof queueCardMasterAutoWrite === 'function') queueCardMasterAutoWrite();
   return corpCardSaveQueue;
 }
 // ---- 내 PC의 엑셀 파일 연결 (엑셀 도우미 · COM) ----
