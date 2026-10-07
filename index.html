@@ -5528,7 +5528,7 @@ async function writeProfitCasesToLinkedLedger(cases, opts){
   if(!link) throw new Error('사급 건별 정산 PC 엑셀 파일이 연결돼 있지 않습니다.');
   await checkExcelHelper();
   if(!excelHelperRunning) throw new Error('엑셀 도우미가 실행되어 있지 않습니다. 카드관리 탭에서 받은 excel-helper.cmd를 실행한 뒤 다시 해주세요.');
-  if(excelHelperVersion < 18) throw new Error('실행 중인 엑셀 도우미가 예전 버전입니다. 알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
+  if(excelHelperVersion < 18) throw new Error('실행 중인 엑셀 도우미가 예전 버전입니다. 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).');
   await ensureSalesCasesLoaded();
   const templates = {};
   Object.keys(LEDGER_FORMULA_TEMPLATES).forEach(col => { templates[col] = LEDGER_FORMULA_TEMPLATES[col]('{n}'); });
@@ -10716,7 +10716,7 @@ function bindCardMasterLinkButtons(rerender){
       // 문서보안(DRM)으로 암호화된 파일도 엑셀이 열 수 있으면 되고, 엑셀에 열려 있어도 그대로 된다.
       const ping = await excelHelperCall('/ping', {}, 5000);
       if(Number(ping.version||0) < EXCEL_HELPER_VERSION){
-        alert('엑셀 도우미가 예전 버전입니다. 알림 영역의 도우미 아이콘을 오른쪽 클릭 → 종료한 뒤, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
+        alert('엑셀 도우미가 예전 버전입니다. 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).');
         return;
       }
       await flushCorpCardSave({ silent:true });
@@ -13681,7 +13681,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 26;
+const EXCEL_HELPER_VERSION = 27;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -13799,13 +13799,19 @@ function excelHelperStatusHtml(){
   return `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; margin-bottom:10px;">
       <span style="font-weight:700; color:${running?'#2e9e5b':'var(--muted)'};">${running===null ? '⏳ 엑셀 도우미 확인 중…' : (running ? '🟢 엑셀 도우미 실행 중' : '⚪ 엑셀 도우미가 꺼져 있습니다')}</span>
       <button class="excel-helper-recheck" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">다시 확인</button>
+      ${running && excelHelperVersion >= 27 ? `<button class="excel-helper-stop" title="PC에서 실행 중인 엑셀 도우미를 끕니다(하던 작업은 마치고 꺼짐)." style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">⏻ 도우미 끄기</button>` : ''}
       <button class="excel-helper-download" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">⬇ 엑셀 도우미 내려받기</button>
-      ${running && excelHelperVersion && excelHelperVersion < EXCEL_HELPER_VERSION ? `<span style="font-size:12px; color:var(--neg); font-weight:700;">⚠ 실행 중인 도우미가 예전 버전입니다 — 알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.</span>` : ''}
-      ${running ? '' : `<span style="font-size:11.5px; color:var(--muted);">받은 <b>excel-helper.cmd</b>를 더블클릭하면 창 없이 실행되고, 작업표시줄 오른쪽 아래 알림 영역에 엑셀 아이콘이 생깁니다(끌 때는 아이콘 오른쪽 클릭 → 종료). 처음 실행 때 "Windows의 PC 보호" 창이 뜨면 "추가 정보 → 실행"을 눌러주세요.</span>`}
+      ${running && excelHelperVersion && excelHelperVersion < EXCEL_HELPER_VERSION ? `<span style="font-size:12px; color:var(--neg); font-weight:700;">⚠ 실행 중인 도우미가 예전 버전입니다 — "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).</span>` : ''}
+      ${running ? '' : `<span style="font-size:11.5px; color:var(--muted);">받은 <b>excel-helper.cmd</b>를 더블클릭하면 창 없이 실행되고, 작업표시줄 오른쪽 아래 알림 영역에 엑셀 아이콘이 생깁니다(끌 때는 아이콘 클릭 → 종료). 처음 실행 때 "Windows의 PC 보호" 창이 뜨면 "추가 정보 → 실행"을 눌러주세요.</span>`}
     </div>`;
 }
 function bindExcelHelperStatus(rerender){
   document.querySelectorAll('.excel-helper-download').forEach(b=>b.addEventListener('click', downloadExcelHelper));
+  document.querySelectorAll('.excel-helper-stop').forEach(b=>b.addEventListener('click', async ()=>{
+    if(!confirm('PC에서 실행 중인 엑셀 도우미를 끌까요? (엑셀 파일 연동이 멈춥니다. 다시 쓰려면 excel-helper.cmd를 실행하세요)')) return;
+    try{ await excelHelperCall('/shutdown', {}, 5000); }catch(e){}
+    setTimeout(async ()=>{ excelHelperRunning = null; await checkExcelHelper(); rerender(); }, 1500);
+  }));
   document.querySelectorAll('.excel-helper-recheck').forEach(b=>b.addEventListener('click', async ()=>{ excelHelperRunning = null; rerender(); await checkExcelHelper(); rerender(); }));
   if(excelHelperRunning === null){ checkExcelHelper().then(()=>rerender()); }
 }
@@ -15910,7 +15916,7 @@ async function exportCorpCardReportPdf(card, month, rows){
   const link = getLinkedFile(corpCardLinkKey(card.id));
   if(!link) throw new Error('연결된 파일이 없습니다.');
   await checkExcelHelper();
-  if(excelHelperRunning && excelHelperVersion < 14) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.');
+  if(excelHelperRunning && excelHelperVersion < 14) throw new Error('실행 중인 엑셀 도우미가 예전 버전이라 보고용 탭 PDF를 만들 수 없습니다.\n카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).');
   const { columns, toValues } = corpCardHelperColumns();
   const res = await excelHelperFetch('/corpcard/reportpdf', { headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({ path: link.path, cardNumber: card.cardNumber, cardNumbers: cardNumbersOf(card), columns, month: { name: month, cardNumber: cardNumberForMonth(card, month), rows: rows.map(toValues) } }) }, 5*60*1000);
@@ -17630,7 +17636,7 @@ function bindImportLinkedFileButtons(){
     try{ await loadImportWorkbookFile(await readLinkedFile(IMPORT_LINK_KEY)); }
     catch(e){
       if(e.helperDown) throw e;
-      throw new Error(linkedFileErrorMessage(e) + '\n\n실행 중인 엑셀 도우미가 예전 버전입니다. 알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행하면 이런 파일도 불러올 수 있습니다.');
+      throw new Error(linkedFileErrorMessage(e) + '\n\n실행 중인 엑셀 도우미가 예전 버전입니다. 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행하면 이런 파일도 불러올 수 있습니다.');
     }
   };
   const linkBtn = document.getElementById('importLinkFileBtn');
@@ -18201,7 +18207,7 @@ async function writeImportOverridesToExcel(opts){
   try{
     await checkExcelHelper();
     if(!excelHelperRunning){ if(!silent) throw new Error('엑셀 도우미가 실행되어 있지 않습니다. 카드관리 탭에서 받은 excel-helper.cmd를 실행한 뒤 다시 눌러주세요.'); return; }
-    if(excelHelperVersion < 11){ if(!silent) throw new Error('실행 중인 엑셀 도우미가 예전 버전입니다. 알림 영역 도우미 아이콘 오른쪽 클릭 → 종료 후, 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.'); return; }
+    if(excelHelperVersion < 11){ if(!silent) throw new Error('실행 중인 엑셀 도우미가 예전 버전입니다. 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).'); return; }
     const items = [];
     pending.forEach(r=>{
       const values = {};
@@ -20680,7 +20686,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '26'
+$Version = '27'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20693,6 +20699,7 @@ $global:progress = @{ active=$false; pct=0; text='' }
 $global:pending = $null
 $global:queued = New-Object System.Collections.ArrayList
 function Pump-Requests {
+  try { [System.Windows.Forms.Application]::DoEvents() } catch {}
   while($global:pending -and $global:pending.IsCompleted){
     $c = $null
     try { $c = $global:pending.Result } catch {}
@@ -20736,7 +20743,9 @@ function Invoke-Retry([scriptblock]$fn){
     catch {
       $msg = "$($_.Exception.Message)"
       if($msg -match '0x80010001' -or $msg -match 'RPC_E_CALL_REJECTED' -or $msg -match '0x8001010A' -or $msg -match '0x800AC472' -or $msg -match 'VBA_E_IGNORE'){
-        Start-Sleep -Milliseconds 500; continue
+        # 기다리는 동안에도 알림 영역 아이콘(오른쪽 클릭 메뉴)이 반응하도록 화면 일을 처리한다.
+        for($w=0; $w -lt 10; $w++){ try { [System.Windows.Forms.Application]::DoEvents() } catch {}; Start-Sleep -Milliseconds 50 }
+        continue
       }
       throw
     }
@@ -21791,6 +21800,11 @@ function Handle-Context($ctx){
       $ctx.Response.Headers.Add('X-Report-Note', [Uri]::EscapeDataString($r.note))
       Send-Bytes $ctx $r.bytes $r.name $false; return
     }
+    if($route -eq '/shutdown'){
+      # 앱의 "도우미 끄기" 버튼 — 지금 하던 일을 마치고 끈다.
+      $global:helperRunning = $false
+      Send-Json $ctx @{ ok=$true } 200; return
+    }
     if($route -eq '/progress'){
       Send-Json $ctx @{ ok=$true; active=[bool]$global:progress.active; pct=[int]$global:progress.pct; text=[string]$global:progress.text } 200; return
     }
@@ -21855,8 +21869,29 @@ function Send-Bytes($ctx, [byte[]]$bytes, [string]$name, [bool]$wasOpen){
 $global:listener = New-Object System.Net.HttpListener
 $listener = $global:listener
 $listener.Prefixes.Add("http://localhost:$Port/")
-try { $listener.Start() } catch {
-  [void][System.Windows.Forms.MessageBox]::Show("엑셀 도우미가 이미 실행 중입니다.`n(작업표시줄 오른쪽 아래 알림 영역의 아이콘을 확인하세요. 예전 검은 창이 열려 있으면 그 창을 닫고 다시 실행해주세요.)`n`n$($_.Exception.Message)", '엑셀 도우미')
+# 이미 다른(예전) 도우미가 떠 있으면 그 도우미를 끄고 이 도우미로 바꾼다 — 새 버전을 받아 실행하기만 하면 되게.
+# 끄는 대상은 이 도우미 파일(excel-helper.cmd)로 실행된 PowerShell뿐이다(명령줄에 EXCEL_HELPER_PATH가 있는 것).
+function Stop-OldHelpers {
+  $n = 0
+  try {
+    $procs = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
+      Where-Object { $_.ProcessId -ne $PID -and [string]$_.CommandLine -match 'EXCEL_HELPER_PATH' }
+    foreach($p in $procs){ try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $n++ } catch {} }
+  } catch {}
+  return $n
+}
+$started = $false; $replaced = 0
+for($try=0; $try -lt 6 -and -not $started; $try++){
+  try { $listener.Start(); $started = $true }
+  catch {
+    if($try -eq 0){ $replaced = Stop-OldHelpers }
+    $listener = New-Object System.Net.HttpListener; $global:listener = $listener
+    $listener.Prefixes.Add("http://localhost:$Port/")
+    Start-Sleep -Milliseconds 700
+  }
+}
+if(-not $started){
+  [void][System.Windows.Forms.MessageBox]::Show("엑셀 도우미를 시작하지 못했습니다(이미 실행 중인 도우미를 끄지 못함).`n작업 관리자 → 세부 정보에서 powershell.exe를 끝낸 뒤 다시 실행해주세요.", '엑셀 도우미')
   exit 1
 }
 
@@ -21875,8 +21910,14 @@ $quit = New-Object System.Windows.Forms.ToolStripMenuItem('종료')
 $quit.add_Click({ $global:helperRunning = $false })
 [void]$menu.Items.Add($quit)
 $tray.ContextMenuStrip = $menu
+# 왼쪽 클릭으로도 메뉴가 뜨게 한다(오른쪽 클릭이 잘 안 먹는 PC가 있다).
+$tray.add_MouseUp({ param($s, $e)
+  if($e.Button -eq [System.Windows.Forms.MouseButtons]::Left){
+    try { [System.Windows.Forms.NotifyIcon].GetMethod('ShowContextMenu', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($tray, $null) } catch {}
+  }
+})
 $tray.Visible = $true
-$tray.ShowBalloonTip(5000, '엑셀 도우미 실행 중', "업무프로그램에서 PC 엑셀 파일에 저장·불러오기를 할 수 있습니다.`n끌 때는 이 아이콘을 오른쪽 클릭 → 종료.", [System.Windows.Forms.ToolTipIcon]::Info)
+$tray.ShowBalloonTip(5000, '엑셀 도우미 실행 중', "$(if($replaced){ '예전 도우미를 끄고 새 버전(v' + $Version + ')으로 바꿨습니다.' } else { '업무프로그램에서 PC 엑셀 파일에 저장·불러오기를 할 수 있습니다.' })`n끌 때는 이 아이콘을 클릭 → 종료.", [System.Windows.Forms.ToolTipIcon]::Info)
 Log "엑셀 도우미 시작 ($AllowedOrigin)"
 
 try {
