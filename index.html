@@ -10724,7 +10724,11 @@ function bindCardMasterLinkButtons(rerender){
         alert(`법인카드 탭에서 ${onlyMonth ? onlyMonth+'월 ' : ''}내역(날짜가 적힌 행)을 찾지 못했습니다.`);
         return;
       }
-      const r = await excelHelperCall('/cardmaster/write', { path: getLinkedFile(key).path, months, allCards: cardMasterAllCards() }, 10*60*1000);
+      btn.textContent = '엑셀에서 채우는 중… 0%';
+      const stopProgress = watchExcelHelperProgress(t => { btn.textContent = `엑셀에서 채우는 중… ${t}`; });
+      let r;
+      try{ r = await excelHelperCall('/cardmaster/write', { path: getLinkedFile(key).path, months, allCards: cardMasterAllCards() }, 10*60*1000); }
+      finally{ stopProgress(); }
       alert(`${r.applied ? `${r.applied}개 카드 블록을 채워 "${getLinkedFile(key).name}" 파일에 저장했습니다.` : '채운 카드 블록이 없습니다.'}${r.wasOpen ? '\n(엑셀에 열려 있던 파일에 바로 넣고 저장했습니다)' : ''}\n\n${cardMasterWriteResultLines(r).join('\n\n')}`);
     }catch(e){
       alert(linkedFileErrorMessage(e));
@@ -10765,7 +10769,10 @@ async function downloadCardMasterViaHelper(tmplId, onlyMonth, onStatus){
   if(onStatus) onStatus('엑셀에서 채우는 중…');
   const put = await excelHelperJson(await excelHelperFetch('/tempfile', { headers:{ 'Content-Type':'application/octet-stream', 'X-File-Name': encodeURIComponent(fileName) }, body: buf }));
   try{
-    const r = await excelHelperCall('/cardmaster/write', { path: put.path, months, allCards: cardMasterAllCards() }, 10*60*1000);
+    const stopProgress = onStatus ? watchExcelHelperProgress(t => onStatus(`엑셀에서 채우는 중… ${t}`)) : ()=>{};
+    let r;
+    try{ r = await excelHelperCall('/cardmaster/write', { path: put.path, months, allCards: cardMasterAllCards() }, 10*60*1000); }
+    finally{ stopProgress(); }
     const res = await excelHelperFetch('/read', { headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ path: put.path }) });
     if(!/octet-stream/.test(res.headers.get('Content-Type')||'')){ await excelHelperJson(res); throw new Error('채운 파일을 읽지 못했습니다.'); }
     const out = await res.arrayBuffer();
@@ -13221,7 +13228,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 21;
+const EXCEL_HELPER_VERSION = 22;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -13257,6 +13264,20 @@ async function excelHelperCall(route, body, timeoutMs){
   const data = await res.json().catch(()=>({ ok:false, error:'도우미 응답을 읽지 못했습니다.' }));
   if(!data.ok && !data.cancelled) throw new Error(data.error || '엑셀 도우미 작업이 실패했습니다.');
   return data;
+}
+// 도우미가 오래 걸리는 작업을 하는 동안 진행률(%)을 1초마다 물어 onText로 알려준다. 돌려주는 함수를 부르면 멈춘다.
+function watchExcelHelperProgress(onText){
+  let stopped = false, busy = false;
+  const timer = setInterval(async ()=>{
+    if(stopped || busy) return;
+    busy = true;
+    try{
+      const p = await excelHelperCall('/progress', {}, 3000);
+      if(!stopped && p.active) onText(`${p.pct}%${p.text ? ' · '+p.text : ''}`);
+    }catch(e){}
+    finally{ busy = false; }
+  }, 1000);
+  return ()=>{ stopped = true; clearInterval(timer); };
 }
 async function checkExcelHelper(){
   try{ const r = await excelHelperCall('/ping', {}, 2500); excelHelperVersion = Number(r.version||0); }catch(e){}
@@ -20205,12 +20226,33 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '21'
+$Version = '22'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 function Log($m){ Write-Host ("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $m) }
+# 오래 걸리는 작업의 진행률 — 앱이 /progress로 물어본다. 도우미는 요청을 하나씩 처리하므로,
+# 작업 중간중간 Pump-Requests로 들어온 /progress(와 그 사전 확인 OPTIONS)에만 바로 답하고
+# 다른 요청은 줄 세워 두었다가 작업이 끝난 뒤 처리한다.
+$global:progress = @{ active=$false; pct=0; text='' }
+$global:pending = $null
+$global:queued = New-Object System.Collections.ArrayList
+function Pump-Requests {
+  while($global:pending -and $global:pending.IsCompleted){
+    $c = $null
+    try { $c = $global:pending.Result } catch {}
+    $global:pending = $global:listener.GetContextAsync()
+    if(-not $c){ continue }
+    $p = $c.Request.Url.AbsolutePath.TrimEnd('/')
+    if($c.Request.HttpMethod -eq 'OPTIONS' -or $p -eq '/progress'){ Handle-Context $c } else { [void]$global:queued.Add($c) }
+  }
+}
+function Set-Progress([double]$done, [double]$total, [string]$text){
+  $pct = if($total -gt 0){ [Math]::Floor([Math]::Min([double]1, $done / $total) * 100) } else { 0 }
+  $global:progress = @{ active=$true; pct=[int]$pct; text=$text }
+  Pump-Requests
+}
 
 function Get-Excel([bool]$create){
   try { return [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application') } catch {}
@@ -20924,6 +20966,10 @@ function Handle-CardMasterWrite($body){
     $report = @(); $created = @(); $skipped = @(); $noBlock = @(); $newBlocks = @(); $applied = 0
     $cardsByLast4 = @{}
     foreach($ac in @($body.allCards)){ if($ac.last4){ $cardsByLast4[[string]$ac.last4] = [string]$ac.cardNumber } }
+    # 진행률: 채울 행 수 기준(카드마다 최소 1), 마지막 저장 몫으로 5%를 남겨 둔다.
+    $pgTotal = 0; foreach($pm in @($body.months)){ foreach($pc in @($pm.cards)){ $pgTotal += [Math]::Max(1, @($pc.rows).Count) } }
+    $pgTotal = [Math]::Ceiling($pgTotal / 0.95); $pgDone = 0
+    Set-Progress 0 $pgTotal '준비 중'
     foreach($m in @($body.months)){
       $num = [int]$m.num
       # 이 달 시트 찾기 — 이름이 딱 "N월"/"N 월"인 시트를 먼저, 없으면 "N월"이 들어간 시트
@@ -20958,6 +21004,8 @@ function Handle-CardMasterWrite($body){
       foreach($c in @($m.cards)){
         $last4 = [string]$c.last4
         $rows = @($c.rows)
+        $pgBase = $pgDone; $pgDone += [Math]::Max(1, $rows.Count)
+        Set-Progress $pgBase $pgTotal "${num}월 카드 $last4"
         if(-not $blocks.ContainsKey($last4) -and $blocks.Count -gt 0 -and $rows.Count -gt 0){
           # 이 카드 블록이 없으면 첫 카드 틀(머리글·블록·소계)을 본떠 새로 만든다.
           $made = New-CardBlockUnit $ws $blocks $last4 ([string]$c.cardNumber) $cardsByLast4 $xl $rows.Count
@@ -21008,6 +21056,7 @@ function Handle-CardMasterWrite($body){
               }
             }
             Invoke-Retry { $ws.Range("B${r}:Q${r}").Value2 = $arr } | Out-Null
+            if(($i % 5) -eq 4){ Set-Progress ($pgBase + $i + 1) $pgTotal "${num}월 카드 $last4" }
           } else {
             Invoke-Retry { [void]$ws.Range("B${r}:Q${r}").ClearContents() } | Out-Null
           }
@@ -21017,6 +21066,7 @@ function Handle-CardMasterWrite($body){
       }
     }
     # 저장 전에 계산 방식을 되돌려 합계가 다시 계산된 상태로 저장되게 한다.
+    Set-Progress 95 100 '합계 계산·저장 중'
     if($null -ne $prevCalc){ try { Invoke-Retry { $xl.Calculation = $prevCalc } | Out-Null; $prevCalc = $null } catch {} }
     if($applied -gt 0 -or $created.Count -gt 0){ Invoke-Retry { $wb.Save() } | Out-Null }
     return @{ ok=$true; applied=$applied; report=$report; created=$created; skipped=$skipped; noBlock=$noBlock; newBlocks=$newBlocks; wasOpen=(-not $openedHere) }
@@ -21179,6 +21229,9 @@ function Handle-Context($ctx){
       $ctx.Response.Headers.Add('X-Report-Note', [Uri]::EscapeDataString($r.note))
       Send-Bytes $ctx $r.bytes $r.name $false; return
     }
+    if($route -eq '/progress'){
+      Send-Json $ctx @{ ok=$true; active=[bool]$global:progress.active; pct=[int]$global:progress.pct; text=[string]$global:progress.text } 200; return
+    }
     if($route -eq '/readvalues'){
       Log "$route $($body.path) $($body.sheet)"
       Send-JsonText $ctx (Handle-ReadValues $body); return
@@ -21232,7 +21285,8 @@ function Send-Bytes($ctx, [byte[]]$bytes, [string]$name, [bool]$wasOpen){
   $ctx.Response.OutputStream.Close()
 }
 
-$listener = New-Object System.Net.HttpListener
+$global:listener = New-Object System.Net.HttpListener
+$listener = $global:listener
 $listener.Prefixes.Add("http://localhost:$Port/")
 try { $listener.Start() } catch {
   [void][System.Windows.Forms.MessageBox]::Show("엑셀 도우미가 이미 실행 중입니다.`n(작업표시줄 오른쪽 아래 알림 영역의 아이콘을 확인하세요. 예전 검은 창이 열려 있으면 그 창을 닫고 다시 실행해주세요.)`n`n$($_.Exception.Message)", '엑셀 도우미')
@@ -21259,13 +21313,17 @@ $tray.ShowBalloonTip(5000, '엑셀 도우미 실행 중', "업무프로그램에
 Log "엑셀 도우미 시작 ($AllowedOrigin)"
 
 try {
-  $pending = $listener.GetContextAsync()
+  $global:pending = $listener.GetContextAsync()
   while($global:helperRunning){
     [System.Windows.Forms.Application]::DoEvents()
-    if($pending.Wait(50)){
-      $ctx = $pending.Result
-      $pending = $listener.GetContextAsync()
-      Handle-Context $ctx
+    if($global:queued.Count){
+      $ctx = $global:queued[0]; $global:queued.RemoveAt(0)
+      Handle-Context $ctx; continue
+    }
+    if($global:pending.Wait(50)){
+      $ctx = $global:pending.Result
+      $global:pending = $listener.GetContextAsync()
+      try { Handle-Context $ctx } finally { $global:progress = @{ active=$false; pct=0; text='' } }
     }
   }
 } finally {
