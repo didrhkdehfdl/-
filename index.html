@@ -10687,7 +10687,7 @@ function cardMasterLinkHtml(t){
       ${btn('cardmaster-link-save', '💾 최신 데이터로 PC 파일 갱신', '#2e9e5b', '연결된 PC 파일의 지금 내용을 바탕으로 카드 블록만 법인카드 탭의 최신 내역으로 채워 그 파일에 저장합니다. 엑셀에 열려 있으면 잠깐 닫았다 다시 엽니다. 덮어쓰기 전 원본은 이 PC에 자동 백업됩니다.')}
       ${btn('cardmaster-link-pick', '바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
       ${btn('cardmaster-link-unlink', '✕', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
-      <span class="cardmaster-auto-note" style="font-size:11px; color:${/^⚠/.test(cardMasterAutoNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(cardMasterAutoNote || '실시간 연동: 법인카드 내역을 고치면 15초 뒤 바뀐 달만 이 파일에 자동으로 채워 저장합니다.')}</span>
+      <span class="cardmaster-auto-note" style="font-size:11px; color:${/^⚠/.test(cardMasterAutoNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(cardMasterAutoNote || '양방향 실시간 연동: 법인카드 내역을 고치면 15초 뒤 바뀐 달만 이 파일에 채워 저장하고, 파일에서 고치고 저장하면 법인카드 탭에 자동 반영됩니다(1분마다 확인).')}</span>
     </span>`;
 }
 function bindCardMasterLinkButtons(rerender){
@@ -10731,6 +10731,7 @@ function bindCardMasterLinkButtons(rerender){
       try{ r = await excelHelperCall('/cardmaster/write', { path: getLinkedFile(key).path, months, allCards: cardMasterAllCards() }, 10*60*1000); }
       finally{ stopProgress(); }
       rememberCardMasterWritten(t.id, months);
+      await rebaseCardMasterFile(t.id);
       alert(`${r.applied ? `${r.applied}개 카드 블록을 채워 "${getLinkedFile(key).name}" 파일에 저장했습니다.` : '채운 카드 블록이 없습니다.'}${r.wasOpen ? '\n(엑셀에 열려 있던 파일에 바로 넣고 저장했습니다)' : ''}\n\n${cardMasterWriteResultLines(r).join('\n\n')}`);
     }catch(e){
       alert(linkedFileErrorMessage(e));
@@ -10888,6 +10889,7 @@ const flushCardMasterAutoWrite = debounce(async ()=>{
       try{ r = await excelHelperCall('/cardmaster/write', { path: link.path, months, allCards }, 10*60*1000); }
       finally{ stop(); }
       rememberCardMasterWritten(t.id, months.map(m=>byNum.get(m.num) || { num:m.num, cards:[] }));
+      await rebaseCardMasterFile(t.id);   // 방금 쓴 내용을 "파일에서 고친 것"으로 착각하지 않게 기준을 다시 잡는다
       // 처음 자동 갱신할 때는 나머지 달은 이미 파일과 같다고 보고 기준만 잡는다(전체 달을 매번 다시 쓰지 않게).
       if(firstTime) rememberCardMasterWritten(t.id, full.filter(m=>!nums.has(m.num)));
       const time = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
@@ -10904,6 +10906,141 @@ const flushCardMasterAutoWrite = debounce(async ()=>{
     if(cardMasterAutoAgain){ cardMasterAutoAgain = false; flushCardMasterAutoWrite(); }
   }
 }, 15000);
+// ---- 통합본 PC 파일 → 법인카드 탭 자동 반영 ----
+// 법인카드·카드관리 탭을 보는 동안 1분마다(탭을 열 때는 바로) 파일 저장 시각을 보고, 바뀌었으면 월 시트들을
+// 읽어 카드 블록(R열 끝 4자리)별 내역을 지난번에 읽은 내용과 비교한다. "파일에서 바뀐 카드·달"만 법인카드 탭의
+// 그 카드 그 달 내역으로 넣는다 — 그래서 처음엔 기준만 잡고, 앱에서 고쳐 파일에 쓴 값이 되돌아오지도 않는다.
+// 앱이 파일에 쓴 직후에는 파일을 다시 읽어 기준을 새로 잡는다.
+const CARD_MASTER_FILESNAP_KEY = 'cardmaster-filesnap-v1';
+function cardMasterFileSnapAll(){ try{ return JSON.parse(localStorage.getItem(CARD_MASTER_FILESNAP_KEY)||'{}')||{}; }catch(e){ return {}; } }
+function cardMasterFileSnapSet(tmplId, v){ const all = cardMasterFileSnapAll(); all[tmplId] = v; try{ localStorage.setItem(CARD_MASTER_FILESNAP_KEY, JSON.stringify(all)); }catch(e){} }
+// B~Q 16칸 → 비교·반영용 14칸(공급가액·부가세는 금액에서 계산되는 칸이라 뺀다)
+function cardMasterNormBlock(v){
+  const t = x => x==null ? '' : String(x).trim();
+  return [Number(v[0])||0, t(v[1]), t(v[2]), t(v[3]), t(v[4]), t(v[5]), t(v[6]), t(v[7]), t(v[8]), t(v[9]), Number(v[12])||0, t(v[13]), t(v[14]), t(v[15])];
+}
+// 파일의 월 시트들 → Map("월|끝4자리" → 14칸 행 목록). 날짜(일)나 금액이 있는 행만 내역으로 본다.
+function parseCardMasterFileSheets(sheets){
+  const map = new Map();
+  (sheets||[]).forEach(sh=>{
+    const num = monthNumFromLabel(sh.name);
+    if(!num) return;
+    (sh.rows||[]).forEach(r=>{
+      const rv = r[17];
+      const l4 = typeof rv === 'number' ? String(Math.round(rv)).padStart(4,'0') : String(rv==null?'':rv).trim();
+      if(!/^\d{4}$/.test(l4)) return;
+      const key = num+'|'+l4;
+      if(!map.has(key)) map.set(key, []);
+      const vals = r.slice(1, 17);
+      if((Number(vals[0])||0) > 0 || (Number(vals[12])||0) !== 0) map.get(key).push(cardMasterNormBlock(vals));
+    });
+  });
+  return map;
+}
+function cardForMasterKey(num, l4){
+  return corpCardState.cards.find(c=>{ const p = cardParts(cardNumberForMonth(c, num)); return p && p.p4 === l4; });
+}
+function corpCardMonthLabel(card, num){
+  return Object.keys(corpCardState.rowsByCard[card.id]||{}).find(l=>monthNumFromLabel(l)===num) || '';
+}
+function appCardMonthNorm(card, num){
+  const label = corpCardMonthLabel(card, num);
+  return ((corpCardState.rowsByCard[card.id]||{})[label]||[]).filter(r=>r.date).map(r=>cardMasterNormBlock(corpCardRowToBlock(r)));
+}
+async function applyCardMasterRowsToCard(card, num, normRows){
+  let label = corpCardMonthLabel(card, num);
+  if(!label){
+    cardMasterSuppressAuto = true;
+    try{ label = await ensureCorpCardMonthExists(card, num); } finally{ cardMasterSuppressAuto = false; }
+    if(!label){ const any = Object.keys(corpCardState.rowsByCard[card.id]||{})[0]||''; label = /\d\s+월/.test(any) ? `${num} 월` : `${num}월`; }
+  }
+  corpCardState.rowsByCard[card.id] = corpCardState.rowsByCard[card.id] || {};
+  const existing = corpCardState.rowsByCard[card.id][label] || [];
+  const dated = existing.filter(r=>r.date), undated = existing.filter(r=>!r.date);
+  const anyDate = dated[0] || Object.values(corpCardState.rowsByCard[card.id]).flat().find(r=>r && r.date);
+  const year = anyDate ? String(anyDate.date).slice(0,4) : String(new Date().getFullYear());
+  const F = ['dept','name','corp','bizCategory','project','plantName','place','workDetail','expenseType'];
+  const rows = normRows.map((n,i)=>{
+    const row = dated[i] ? { ...dated[i] } : { ...newCorpCardRow(), id: rid() };
+    if(n[0] >= 1 && n[0] <= 31) row.date = `${year}-${String(num).padStart(2,'0')}-${String(n[0]).padStart(2,'0')}`;
+    F.forEach((f,k)=>{ row[f] = n[k+1]; });
+    row.amount = n[10]; row.hipass = n[11]; row.carNo = n[12]; row.note = n[13];
+    return row;
+  });
+  corpCardState.rowsByCard[card.id][label] = rows.concat(undated);
+  return { label, before: dated.length, after: rows.length };
+}
+let cardMasterSuppressAuto = false;
+let cardMasterFileBusy = false, cardMasterFileLastCheck = 0;
+// 파일을 다시 읽어 기준만 새로 잡는다(앱이 파일에 쓴 직후).
+async function rebaseCardMasterFile(tmplId){
+  const link = getLinkedFile(cardMasterLinkKey(tmplId));
+  if(!link) return;
+  try{
+    const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
+    const res = await excelHelperCall('/cardmaster/read', { path: link.path }, 3*60*1000);
+    const sigs = {};
+    parseCardMasterFileSheets(res.sheets).forEach((v,k)=>{ sigs[k] = JSON.stringify(v); });
+    cardMasterFileSnapSet(tmplId, { mtime: st.mtime, sigs });
+  }catch(e){ console.warn('통합본 기준 다시 잡기 실패', e); }
+}
+async function checkCardMasterFileChanges(force){
+  if(cardMasterFileBusy || cardMasterAutoBusy) return;
+  if(!force && Date.now() - cardMasterFileLastCheck < 20000) return;
+  cardMasterFileLastCheck = Date.now();
+  await ensureCardMasterLoaded();
+  const targets = corpCardMasterTemplates.filter(t=>getLinkedFile(cardMasterLinkKey(t.id)));
+  if(!targets.length || !corpCardState.loaded) return;
+  cardMasterFileBusy = true;
+  try{
+    await checkExcelHelper();
+    if(!excelHelperRunning || excelHelperVersion < 23) return;
+    for(const t of targets){
+      const link = getLinkedFile(cardMasterLinkKey(t.id));
+      const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
+      const snap = cardMasterFileSnapAll()[t.id];
+      if(snap && snap.mtime === st.mtime) continue;
+      const res = await excelHelperCall('/cardmaster/read', { path: link.path }, 3*60*1000);
+      const fileMap = parseCardMasterFileSheets(res.sheets);
+      const sigs = {};
+      fileMap.forEach((v,k)=>{ sigs[k] = JSON.stringify(v); });
+      if(!snap || !snap.sigs){ cardMasterFileSnapSet(t.id, { mtime: st.mtime, sigs }); continue; }   // 처음: 기준만
+      const changes = [], touchedCards = new Set(), touchedMonths = new Set();
+      const keys = new Set([...Object.keys(sigs), ...Object.keys(snap.sigs)]);
+      for(const key of keys){
+        const fsig = sigs[key] || '[]';
+        if(fsig === (snap.sigs[key] || '[]')) continue;          // 파일에서 안 바뀜
+        const [numS, l4] = key.split('|'); const num = Number(numS);
+        const card = cardForMasterKey(num, l4);
+        if(!card) continue;
+        if(JSON.stringify(appCardMonthNorm(card, num)) === fsig) continue;   // 이미 같음
+        const r = await applyCardMasterRowsToCard(card, num, fileMap.get(key) || []);
+        changes.push(`${num}월 카드 ${l4}: ${r.before}건 → ${r.after}건`);
+        touchedCards.add(card.id); touchedMonths.add(num);
+      }
+      cardMasterFileSnapSet(t.id, { mtime: st.mtime, sigs });
+      if(!changes.length) continue;
+      cardMasterSuppressAuto = true;
+      try{ for(const id of touchedCards) await saveCorpCardRows(id); }
+      finally{ cardMasterSuppressAuto = false; }
+      // 방금 파일에서 가져온 달은 파일과 같으니 자동 갱신이 다시 쓰지 않게 기억해 둔다.
+      rememberCardMasterWritten(t.id, buildCardMasterWritePayload(null).filter(m=>touchedMonths.has(m.num)));
+      if(typeof recomputeCorpCardMismatches === 'function') recomputeCorpCardMismatches();
+      setCardMasterAutoNote(`${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 통합본 파일에서 고친 내용 반영 (${changes.length}곳)`);
+      showLedgerToast(`"${link.name}"에서 고친 내용을 법인카드 탭에 반영했습니다.\n${changes.join('\n')}`);
+      const typing = document.querySelector('#main input:focus, #main textarea:focus, #main select:focus');
+      if(!typing){
+        if(state.activeTab === 'corpCard') renderCorpCardMain();
+        else if(state.activeTab === 'cardrecon') renderCardReconMain();
+      }
+    }
+  }catch(e){
+    console.warn('통합본 파일 확인 실패', e);
+  }finally{ cardMasterFileBusy = false; }
+}
+setInterval(()=>{
+  if((state.activeTab === 'corpCard' || state.activeTab === 'cardrecon') && document.visibilityState === 'visible') checkCardMasterFileChanges(true).catch(()=>{});
+}, 60000);
 async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
   const tmpl = corpCardMasterTemplates.find(t=>t.id===tmplId);
   if(!tmpl) return;
@@ -11030,6 +11167,7 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
   }
 }
 async function renderCardReconMain(){
+  setTimeout(()=>checkCardMasterFileChanges(false).catch(()=>{}), 1500);
   const main = document.getElementById('main');
   await ensureCardMasterLoaded();
   await ensureCorpCardLoaded();
@@ -13309,7 +13447,7 @@ function saveCorpCardRows(cardId){
     () => saveWithGenericHistory('corp-card-rows:'+cardId, JSON.stringify(corpCardState.rowsByCard[cardId]||{}))
   );
   // 연결된 통합본 PC 파일에도 자동으로 쓴다(15초 모아서, 바뀐 달만).
-  if(typeof queueCardMasterAutoWrite === 'function') queueCardMasterAutoWrite();
+  if(typeof queueCardMasterAutoWrite === 'function' && !cardMasterSuppressAuto) queueCardMasterAutoWrite();
   return corpCardSaveQueue;
 }
 // ---- 내 PC의 엑셀 파일 연결 (엑셀 도우미 · COM) ----
@@ -13322,7 +13460,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 22;
+const EXCEL_HELPER_VERSION = 23;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -14715,6 +14853,7 @@ async function openCorpCardMonthPrintPreview(card, month, rows, onExported){
   printExportHook = onExported || null;
 }
 async function renderCorpCardMain(){
+  setTimeout(()=>checkCardMasterFileChanges(false).catch(()=>{}), 1500); // 통합본 파일에서 고친 것 확인(20초에 한 번까지)
   const main = document.getElementById('main');
   // 체크박스나 필터를 건드릴 때마다 표 전체를 다시 그리는데, innerHTML을
   // 통째로 바꾸면 브라우저가 .table-wrap-frozen(overflow-y:auto)의 스크롤
@@ -20320,7 +20459,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '22'
+$Version = '23'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21224,6 +21363,36 @@ function Add-SheetValuesJson([Text.StringBuilder]$sb, $ws){
   }
   [void]$sb.Append(']')
 }
+# 통합본의 월 시트("N월"/"N 월")들의 값을 한 번에 읽는다 — 앱이 카드 블록(R열 끝 4자리)을 찾아
+# 파일에서 고친 내역을 법인카드 탭에 반영할 때 쓴다. 돌려주는 것(JSON 글자): ok, sheets[{name, rows}]
+function Handle-CardMasterRead($body){
+  $path = [string]$body.path
+  $xl = Get-Excel $true
+  $wb = Find-OpenWorkbook $xl $path
+  $openedHere = $false
+  if(-not $wb){
+    if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
+    $wb = Invoke-Retry { $xl.Workbooks.Open($path, 0, $true) }
+    $openedHere = $true
+  }
+  try {
+    $sb = New-Object Text.StringBuilder
+    [void]$sb.Append('{"ok":true,"sheets":[')
+    $first = $true
+    foreach($ws in $wb.Worksheets){
+      $nm = [string]$ws.Name
+      if($nm -notmatch '^\s*\d{1,2}\s*월\s*$'){ continue }
+      if(-not $first){ [void]$sb.Append(',') }; $first = $false
+      [void]$sb.Append('{"name":'); Add-JsonString $sb $nm
+      [void]$sb.Append(',"rows":'); Add-SheetValuesJson $sb $ws
+      [void]$sb.Append('}')
+    }
+    [void]$sb.Append(']}')
+    return $sb.ToString()
+  } finally {
+    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+  }
+}
 # body: path, sheet(없으면 "2026"처럼 네 자리 숫자 이름의 첫 시트, 없으면 첫 시트)
 # 돌려주는 것(JSON 글자): ok, name, sheetNames, sheet, rows
 function Handle-ReadValues($body){
@@ -21325,6 +21494,10 @@ function Handle-Context($ctx){
     }
     if($route -eq '/progress'){
       Send-Json $ctx @{ ok=$true; active=[bool]$global:progress.active; pct=[int]$global:progress.pct; text=[string]$global:progress.text } 200; return
+    }
+    if($route -eq '/cardmaster/read'){
+      Log "$route $($body.path)"
+      Send-JsonText $ctx (Handle-CardMasterRead $body); return
     }
     if($route -eq '/readvalues'){
       Log "$route $($body.path) $($body.sheet)"
