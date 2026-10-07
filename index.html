@@ -10744,7 +10744,7 @@ function bindCardMasterLinkButtons(rerender){
 function cardMasterWriteResultLines(r){
   const lines = [];
   if((r.created||[]).length) lines.push(`※ 통합본에 없던 ${r.created.join('·')} 시트를 바로 앞 달 시트를 복사해 새로 만들었습니다(카드 블록 입력칸은 비우고 채움).`);
-  if((r.newBlocks||[]).length) lines.push('※ 통합본에 블록이 없던 카드는 첫 카드의 머리글·소계 모양을 본떠 새 블록을 만들어 채웠습니다(마지막 카드 바로 위):\n  ' + r.newBlocks.join('\n  '));
+  if((r.newBlocks||[]).length) lines.push('※ 통합본에 없던 카드는 시트 맨 아래에 기존 카드 행과 같은 형식으로 행을 추가해 채웠습니다:\n  ' + r.newBlocks.join('\n  '));
   if((r.report||[]).length) lines.push('채운 곳:\n  ' + r.report.join('\n  '));
   if((r.skipped||[]).length) lines.push('넣지 못한 곳:\n  ' + r.skipped.join('\n  '));
   if((r.noBlock||[]).length) lines.push(`통합본에 해당 카드 블록이 없어 건너뛴 곳 ${r.noBlock.length}건:\n  ` + r.noBlock.slice(0,10).join('\n  ') + (r.noBlock.length>10 ? `\n  …외 ${r.noBlock.length-10}건` : ''));
@@ -10994,7 +10994,7 @@ async function checkCardMasterFileChanges(force){
   cardMasterFileBusy = true;
   try{
     await checkExcelHelper();
-    if(!excelHelperRunning || excelHelperVersion < 23) return;
+    if(!excelHelperRunning || excelHelperVersion < 24) return;
     for(const t of targets){
       const link = getLinkedFile(cardMasterLinkKey(t.id));
       const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
@@ -13460,7 +13460,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 23;
+const EXCEL_HELPER_VERSION = 24;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20459,7 +20459,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '23'
+$Version = '24'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21129,57 +21129,37 @@ function Replace-CardRef([string]$text, [string]$oldLast4, [string]$newLast4, [s
   return [regex]::Replace($out, '(?<![A-Za-z0-9$])' + [regex]::Escape($oldLast4) + '(?![0-9])', $newLast4)
 }
 function New-CardBlockUnit($ws, $blocks, [string]$last4, [string]$cardNumber, $cardsByLast4, $xl, [int]$needRows){
-  $allSet = New-Object 'System.Collections.Generic.HashSet[int]'
-  $minRow = [int]::MaxValue; $firstKey = $null; $maxRow = 0; $lastKey = $null
+  # 새 카드는 시트 맨 아래(마지막으로 쓰인 행 바로 다음)부터 행을 이어 붙인다. 형식은 시트에서 가장
+  # 아래에 있는 카드 행 한 줄을 그대로 복사해 쓴다(글꼴·테두리·표시 형식·R열 오른쪽의 수식까지 같게).
+  # 복사한 줄은 B~Q 입력칸을 비우고 R열에 새 카드 끝 4자리를 넣으며, 그 오른쪽 칸에 본 카드의
+  # 번호(끝 4자리·전체)가 적혀 있으면 새 카드 번호로 바꾼다.
+  $srcRow = 0; $srcKey = $null
   foreach($k in $blocks.Keys){
-    $rs = $blocks[$k]
-    foreach($br in $rs){ [void]$allSet.Add([int]$br) }
-    if([int]$rs[0] -lt $minRow){ $minRow = [int]$rs[0]; $firstKey = $k }
-    if([int]$rs[$rs.Count - 1] -gt $maxRow){ $maxRow = [int]$rs[$rs.Count - 1]; $lastKey = $k }
+    foreach($br in $blocks[$k]){ if([int]$br -gt $srcRow){ $srcRow = [int]$br; $srcKey = $k } }
   }
+  if($srcRow -lt 1){ throw "$($ws.Name) 시트에 본으로 삼을 카드 행이 없습니다." }
   $used = $ws.UsedRange; $lastUsed = $used.Row + $used.Rows.Count - 1
-  $tpl = Get-BlockUnit $ws $blocks[$firstKey] $allSet $lastUsed
-  $srcR = $ws.Range("R$($tpl.bs)").Value2
-  $rv = if($srcR -is [double]){ [double]$last4 } else { $last4 }
-  if(-not (($tpl.start -lt $tpl.bs) -or ($tpl.end -gt $tpl.be))){
-    # 머리글·소계를 가려낼 수 없는 구조(카드 사이 빈 줄 없음 등) — 예전처럼 마지막 블록 아래에 블록 행만 만든다.
-    for($k=0; $k -lt $needRows; $k++){
-      $at = $maxRow + 1 + $k
-      Invoke-Retry { [void]$ws.Rows.Item($maxRow).Copy(); [void]$ws.Rows.Item($at).Insert() } | Out-Null
-      Invoke-Retry { [void]$ws.Range("B${at}:Q${at}").ClearContents() } | Out-Null
-      Invoke-Retry { $ws.Range("R$at").Value2 = $rv } | Out-Null
-    }
-    try { $xl.CutCopyMode = $false } catch {}
-    return "(머리글·소계 줄을 찾지 못해 블록 행만, $($maxRow + 1)~$($maxRow + $needRows)행)"
-  }
-  $copyEnd = $tpl.end
-  if(Test-RowEmpty $ws ($tpl.end + 1)){ $copyEnd = $tpl.end + 1 }   # 카드 사이 빈 줄도 같이
-  $n = $copyEnd - $tpl.start + 1
-  if($lastKey -eq $firstKey){ $at = $copyEnd + 1 }
-  else { $lastUnit = Get-BlockUnit $ws $blocks[$lastKey] $allSet $lastUsed; $at = $lastUnit.start }
-  Invoke-Retry { [void]$ws.Range("A$($tpl.start):A$copyEnd").EntireRow.Copy(); [void]$ws.Rows.Item($at).Insert() } | Out-Null
+  $at = [Math]::Max($lastUsed, $srcRow) + 1
+  $end = $at + [Math]::Max(1, $needRows) - 1
+  Invoke-Retry { [void]$ws.Rows.Item($srcRow).Copy($ws.Range("A${at}:A${end}").EntireRow) } | Out-Null
   try { $xl.CutCopyMode = $false } catch {}
-  $off = $at - $tpl.start
-  $oldFull = [string]$cardsByLast4[[string]$firstKey]
-  # 블록 행: 입력칸 비우고 R열에 새 카드 끝 4자리
-  for($r = $tpl.bs + $off; $r -le $tpl.be + $off; $r++){
+  $srcR = $ws.Range("R$srcRow").Value2
+  $oldFull = [string]$cardsByLast4[[string]$srcKey]
+  $lastCol = [Math]::Max(18, $used.Column + $used.Columns.Count - 1)
+  for($r = $at; $r -le $end; $r++){
     Invoke-Retry { [void]$ws.Range("B${r}:Q${r}").ClearContents() } | Out-Null
-    Invoke-Retry { $ws.Range("R$r").Value2 = $rv } | Out-Null
-  }
-  # 머리글·소계 줄: 본 카드의 번호를 새 카드 번호로
-  $frameRows = New-Object System.Collections.ArrayList
-  for($r = $tpl.start + $off; $r -lt $tpl.bs + $off; $r++){ [void]$frameRows.Add($r) }
-  for($r = $tpl.be + $off + 1; $r -le $tpl.end + $off; $r++){ [void]$frameRows.Add($r) }
-  foreach($r in $frameRows){
-    for($col = 1; $col -le 20; $col++){
+    # R열: 본 줄이 숫자면 숫자로, 글자(초록 삼각형)면 글자로 넣는다.
+    if($srcR -is [double]){ Invoke-Retry { $ws.Range("R$r").Value2 = [double]$last4 } | Out-Null }
+    else { Invoke-Retry { $ws.Range("R$r").Value2 = "'" + $last4 } | Out-Null }
+    for($col = 19; $col -le $lastCol; $col++){
       $cell = $ws.Cells.Item($r, $col)
       $f = [string]$cell.Formula
       if(-not $f){ continue }
-      $nf = Replace-CardRef $f ([string]$firstKey) $last4 $oldFull $cardNumber
+      $nf = Replace-CardRef $f ([string]$srcKey) $last4 $oldFull $cardNumber
       if($nf -ne $f){ Invoke-Retry { $cell.Formula = $nf } | Out-Null }
     }
   }
-  return "(머리글·소계 포함, $at~$($at + $n - 1)행 — $firstKey 카드 틀을 본뜸)"
+  return "(시트 맨 아래 ${at}~${end}행에 추가 — 카드 $srcKey 행 형식을 본뜸)"
 }
 function Handle-CardMasterWrite($body){
   $path = [string]$body.path
