@@ -13221,7 +13221,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 20;
+const EXCEL_HELPER_VERSION = 21;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20205,7 +20205,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '20'
+$Version = '21'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20234,17 +20234,18 @@ function Find-OpenWorkbook($xl, [string]$path){
 }
 function Invoke-Retry([scriptblock]$fn){
   # 엑셀에서 셀을 편집 중이면 COM 호출이 거절된다(RPC_E_CALL_REJECTED) — 잠깐씩 기다렸다 다시 해 본다.
-  for($i=0; $i -lt 20; $i++){
+  # 0x800AC472(VBA_E_IGNORE)는 엑셀이 다시 계산하는 중이거나 다른 일로 바쁠 때 나는 오류 — 이것도 기다렸다 다시 한다.
+  for($i=0; $i -lt 60; $i++){
     try { return & $fn }
     catch {
       $msg = "$($_.Exception.Message)"
-      if($msg -match '0x80010001' -or $msg -match 'RPC_E_CALL_REJECTED' -or $msg -match '0x8001010A'){
+      if($msg -match '0x80010001' -or $msg -match 'RPC_E_CALL_REJECTED' -or $msg -match '0x8001010A' -or $msg -match '0x800AC472' -or $msg -match 'VBA_E_IGNORE'){
         Start-Sleep -Milliseconds 500; continue
       }
       throw
     }
   }
-  throw '엑셀이 응답하지 않습니다. 엑셀에서 셀을 편집 중이면 Enter나 Esc를 누른 뒤 다시 시도해주세요.'
+  throw '엑셀이 바빠서 응답하지 않습니다. 엑셀에서 셀을 편집 중이거나 대화상자(저장·경고 창 등)가 떠 있으면 닫은 뒤 다시 시도해주세요.'
 }
 
 function Handle-Ping($body){
@@ -20918,6 +20919,8 @@ function Handle-CardMasterWrite($body){
   try {
     if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
     Invoke-Retry { $xl.ScreenUpdating = $false } | Out-Null
+    # 한 칸 쓸 때마다 엑셀이 통째로 다시 계산하면 바빠서 쓰기를 거절한다(0x800AC472) — 쓰는 동안만 수동 계산으로 둔다.
+    try { $prevCalc = $xl.Calculation; Invoke-Retry { $xl.Calculation = -4135 } | Out-Null } catch { $prevCalc = $null }
     $report = @(); $created = @(); $skipped = @(); $noBlock = @(); $newBlocks = @(); $applied = 0
     $cardsByLast4 = @{}
     foreach($ac in @($body.allCards)){ if($ac.last4){ $cardsByLast4[[string]$ac.last4] = [string]$ac.cardNumber } }
@@ -21013,9 +21016,12 @@ function Handle-CardMasterWrite($body){
         $report += "$($ws.Name) · 카드 $last4 $($rows.Count)건" + $(if($added){ " (행 $added 개 추가)" } else { '' })
       }
     }
+    # 저장 전에 계산 방식을 되돌려 합계가 다시 계산된 상태로 저장되게 한다.
+    if($null -ne $prevCalc){ try { Invoke-Retry { $xl.Calculation = $prevCalc } | Out-Null; $prevCalc = $null } catch {} }
     if($applied -gt 0 -or $created.Count -gt 0){ Invoke-Retry { $wb.Save() } | Out-Null }
     return @{ ok=$true; applied=$applied; report=$report; created=$created; skipped=$skipped; noBlock=$noBlock; newBlocks=$newBlocks; wasOpen=(-not $openedHere) }
   } finally {
+    if($null -ne $prevCalc){ try { $xl.Calculation = $prevCalc } catch {} }
     try { $xl.ScreenUpdating = $true } catch {}
     if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
   }
