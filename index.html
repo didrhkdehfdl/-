@@ -10796,6 +10796,11 @@ async function downloadCardMasterViaHelper(tmplId, onlyMonth, onStatus){
 function cardMasterAllCards(){
   return corpCardState.cards.flatMap(c=>cardNumbersOf(c).map(n=>{ const p = cardParts(n); return p ? { last4: p.p4, cardNumber: n } : null; })).filter(Boolean);
 }
+// 카드 소유자(담당자) 이름 — 통합본에 새 카드 행을 만들 때 U열에 적는다.
+function cardOwnerName(card){
+  const a = card.assignedTo || CORP_CARD_ASSIGNED_NAMES[card.cardNumber] || [];
+  return (Array.isArray(a) ? a : [a]).filter(Boolean).join('·');
+}
 function buildCardMasterWritePayload(onlyMonth){
   const byMonth = new Map();
   corpCardState.cards.forEach(card=>{
@@ -10810,7 +10815,7 @@ function buildCardMasterWritePayload(onlyMonth){
       const parts = cardParts(monthNumber);
       if(!parts) return;
       if(!byMonth.has(num)) byMonth.set(num, []);
-      byMonth.get(num).push({ last4: parts.p4, cardNumber: monthNumber, rows: dated.map(corpCardRowToBlock) });
+      byMonth.get(num).push({ last4: parts.p4, cardNumber: monthNumber, owner: cardOwnerName(card), rows: dated.map(corpCardRowToBlock) });
     });
   });
   return [...byMonth.entries()].sort((a,b)=>a[0]-b[0]).map(([num, cards])=>({ num, cards }));
@@ -10994,7 +10999,7 @@ async function checkCardMasterFileChanges(force){
   cardMasterFileBusy = true;
   try{
     await checkExcelHelper();
-    if(!excelHelperRunning || excelHelperVersion < 24) return;
+    if(!excelHelperRunning || excelHelperVersion < 25) return;
     for(const t of targets){
       const link = getLinkedFile(cardMasterLinkKey(t.id));
       const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
@@ -13460,7 +13465,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 24;
+const EXCEL_HELPER_VERSION = 25;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20459,7 +20464,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '24'
+$Version = '25'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21128,7 +21133,7 @@ function Replace-CardRef([string]$text, [string]$oldLast4, [string]$newLast4, [s
   # 셀 주소(N8992 같은)의 숫자는 건드리지 않게 앞뒤가 글자·숫자가 아닌 4자리만 바꾼다.
   return [regex]::Replace($out, '(?<![A-Za-z0-9$])' + [regex]::Escape($oldLast4) + '(?![0-9])', $newLast4)
 }
-function New-CardBlockUnit($ws, $blocks, [string]$last4, [string]$cardNumber, $cardsByLast4, $xl, [int]$needRows){
+function New-CardBlockUnit($ws, $blocks, [string]$last4, [string]$cardNumber, $cardsByLast4, $xl, [int]$needRows, [string]$owner){
   # 새 카드는 시트 맨 아래(마지막으로 쓰인 행 바로 다음)부터 행을 이어 붙인다. 형식은 시트에서 가장
   # 아래에 있는 카드 행 한 줄을 그대로 복사해 쓴다(글꼴·테두리·표시 형식·R열 오른쪽의 수식까지 같게).
   # 복사한 줄은 B~Q 입력칸을 비우고 R열에 새 카드 끝 4자리를 넣으며, 그 오른쪽 칸에 본 카드의
@@ -21158,6 +21163,9 @@ function New-CardBlockUnit($ws, $blocks, [string]$last4, [string]$cardNumber, $c
       $nf = Replace-CardRef $f ([string]$srcKey) $last4 $oldFull $cardNumber
       if($nf -ne $f){ Invoke-Retry { $cell.Formula = $nf } | Out-Null }
     }
+    # U열: 카드 소유자 이름(본 줄의 다른 사람 이름이 남지 않게, 이름을 모르면 비운다)
+    if($owner){ Invoke-Retry { $ws.Range("U$r").Value2 = $owner } | Out-Null }
+    else { Invoke-Retry { [void]$ws.Range("U${r}:U${r}").ClearContents() } | Out-Null }
   }
   return "(시트 맨 아래 ${at}~${end}행에 추가 — 카드 $srcKey 행 형식을 본뜸)"
 }
@@ -21221,7 +21229,7 @@ function Handle-CardMasterWrite($body){
         Set-Progress $pgBase $pgTotal "${num}월 카드 $last4"
         if(-not $blocks.ContainsKey($last4) -and $blocks.Count -gt 0 -and $rows.Count -gt 0){
           # 이 카드 블록이 없으면 첫 카드 틀(머리글·블록·소계)을 본떠 새로 만든다.
-          $made = New-CardBlockUnit $ws $blocks $last4 ([string]$c.cardNumber) $cardsByLast4 $xl $rows.Count
+          $made = New-CardBlockUnit $ws $blocks $last4 ([string]$c.cardNumber) $cardsByLast4 $xl $rows.Count ([string]$c.owner)
           $blocks = Get-CardBlockRows $ws
           $newBlocks += "$($ws.Name) · 카드 $last4 $made"
         }
