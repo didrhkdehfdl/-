@@ -13681,7 +13681,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 29;
+const EXCEL_HELPER_VERSION = 30;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20692,7 +20692,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '29'
+$Version = '30'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20738,7 +20738,12 @@ function Set-Progress([double]$done, [double]$total, [string]$text){
 }
 
 function Get-Excel([bool]$create){
-  try { return [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application') } catch {}
+  # 떠 있는 엑셀을 쓰되, 닫히는 중이거나 멈춘 엑셀(통합문서 목록을 못 주는 상태)은 건너뛰고 새로 띄운다.
+  try {
+    $a = [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application')
+    if($a -and $null -ne $a.Workbooks){ return $a }
+    Log '떠 있는 엑셀이 응답하지 않아 새 엑셀을 띄웁니다.'
+  } catch {}
   if(-not $create){ return $null }
   $xl = New-Object -ComObject Excel.Application
   $xl.Visible = $false
@@ -20754,6 +20759,7 @@ function Open-Workbook($xl, [string]$path, [bool]$readOnly){
   try { $prevAsk = $xl.AskToUpdateLinks } catch {}
   try { $xl.DisplayAlerts = $false } catch {}
   try { $xl.AskToUpdateLinks = $false } catch {}
+  if($null -eq $xl -or $null -eq $xl.Workbooks){ throw '엑셀을 사용할 수 없습니다. 작업 관리자에서 EXCEL.EXE를 모두 끝낸 뒤 다시 해주세요.' }
   try {
     if($readOnly){ return (Invoke-Retry { $xl.Workbooks.Open($path, 0, $true) }) }
     return (Invoke-Retry { $xl.Workbooks.Open($path, 0) })
