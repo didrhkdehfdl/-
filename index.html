@@ -13681,7 +13681,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 31;
+const EXCEL_HELPER_VERSION = 32;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20713,7 +20713,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '31'
+$Version = '32'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20777,6 +20777,29 @@ function Open-Workbook($xl, [string]$path, [bool]$readOnly){
     try { $xl.DisplayAlerts = $prevAlerts } catch {}
     try { $xl.AskToUpdateLinks = $prevAsk } catch {}
   }
+}
+# 쓰기 전에: 이 PC 엑셀에 그 파일이 읽기 전용으로 열려 있으면(예전에 도우미가 읽으려고 열어 둔 채 남은 경우 등)
+# 닫고 쓰기용으로 다시 열어 본다. 그래도 읽기 전용이면 다른 사람(또는 남아 있는 숨은 엑셀)이 쓰고 있는 것.
+function Ensure-Writable($xl, $wb, [string]$path){
+  if(-not $wb.ReadOnly){ return $wb }
+  Log "읽기 전용으로 열려 있어 다시 엽니다: $path"
+  try { $wb.Close($false) } catch {}
+  $wb2 = Open-Workbook $xl $path $false
+  if($wb2.ReadOnly){
+    try { $wb2.Close($false) } catch {}
+    throw '파일이 읽기 전용으로만 열립니다 — 다른 사람이 이 파일을 열고 있거나, 이 PC에 숨은 엑셀(EXCEL.EXE)이 파일을 잡고 있습니다. 다른 사람이 닫았는지 확인하고, 작업 관리자에서 화면에 안 보이는 EXCEL.EXE를 끝낸 뒤 다시 해주세요.'
+  }
+  return $wb2
+}
+# 읽기만 할 때는 원본 대신 임시 복사본을 연다 — 원본을 잡고 있지 않으니, 1분마다 확인하는 동안에도
+# 다른 사람(또는 나)이 그 파일을 열면 읽기 전용으로 열리는 일이 없다.
+function Copy-ForRead([string]$path){
+  $dir = Join-Path ([IO.Path]::GetTempPath()) 'ExcelHelper'
+  [void](New-Item -ItemType Directory -Force -Path $dir)
+  $tmp = Join-Path $dir ('rd_' + [Guid]::NewGuid().ToString('N').Substring(0,8) + '_' + [IO.Path]::GetFileName($path))
+  $src = New-Object IO.FileStream($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+  try { $dst = [IO.File]::Create($tmp); try { $src.CopyTo($dst) } finally { $dst.Close() } } finally { $src.Close() }
+  return $tmp
 }
 function Find-OpenWorkbook($xl, [string]$path){
   if(-not $xl){ return $null }
@@ -20868,7 +20891,7 @@ function Handle-WriteFile([string]$path, [byte[]]$bytes){
   $wb = Find-OpenWorkbook $xl $path
   $reopen = $null
   if($wb){
-    if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
+    $wb = Ensure-Writable $xl $wb $path
     $reopen = $wb.FullName
     Invoke-Retry { $wb.Close($false) } | Out-Null
   }
@@ -20913,7 +20936,7 @@ function Handle-CorpCardWrite($body){
   }
   $prevScreen = $xl.ScreenUpdating
   try {
-    if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
+    $wb = Ensure-Writable $xl $wb $path
     # 카드번호 확인 — 첫 번째 월 시트의 B9
     $monthSheets = @()
     foreach($ws in $wb.Worksheets){
@@ -21200,7 +21223,7 @@ function Handle-SagupWrite($body){
     $openedHere = $true
   }
   try {
-    if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
+    $wb = Ensure-Writable $xl $wb $path
     $ws = $null; foreach($s in $wb.Worksheets){ if([string]$s.Name -eq [string]$body.sheet){ $ws = $s } }
     if(-not $ws){ throw """$($body.sheet)"" 시트를 찾지 못했습니다." }
     $cc = [int]$body.customerCol; $dc = [int]$body.dateCol
@@ -21288,7 +21311,7 @@ function Handle-OMListWrite($body){
     $openedHere = $true
   }
   try {
-    if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
+    $wb = Ensure-Writable $xl $wb $path
     $ws = $null; foreach($sh in $wb.Worksheets){ if([string]$sh.Name -eq [string]$body.sheet){ $ws = $sh } }
     if(-not $ws){ throw """$($body.sheet)"" 시트를 찾지 못했습니다." }
     $start = [int]$body.dataStart; $cc = [int]$body.customerCol; $dc = [int]$body.dateCol
@@ -21366,7 +21389,7 @@ function Handle-ProfitLedgerWrite($body){
     $openedHere = $true
   }
   try {
-    if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
+    $wb = Ensure-Writable $xl $wb $path
     $sheetName = [string]$body.sheet
     $ws = $null; foreach($s in $wb.Worksheets){ if([string]$s.Name -eq $sheetName){ $ws = $s } }
     if(-not $ws){ throw """$sheetName"" 시트를 찾을 수 없습니다." }
@@ -21556,7 +21579,7 @@ function Handle-CardMasterWrite($body){
     $openedHere = $true
   }
   try {
-    if($wb.ReadOnly){ throw '파일이 읽기 전용으로 열려 있습니다(다른 사람이 이 파일을 열고 있을 수 있습니다). 그 사람이 닫은 뒤 다시 시도해주세요.' }
+    $wb = Ensure-Writable $xl $wb $path
     Invoke-Retry { $xl.ScreenUpdating = $false } | Out-Null
     # 한 칸 쓸 때마다 엑셀이 통째로 다시 계산하면 바빠서 쓰기를 거절한다(0x800AC472) — 쓰는 동안만 수동 계산으로 둔다.
     try { $prevCalc = $xl.Calculation; Invoke-Retry { $xl.Calculation = -4135 } | Out-Null } catch { $prevCalc = $null }
@@ -21737,7 +21760,8 @@ function Handle-CardMasterRead($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Open-Workbook $xl $path $true
+    $tmpCopy = Copy-ForRead $path
+    $wb = Open-Workbook $xl $tmpCopy $true
     $openedHere = $true
   }
   try {
@@ -21756,6 +21780,7 @@ function Handle-CardMasterRead($body){
     return $sb.ToString()
   } finally {
     if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+    if($tmpCopy){ try { Remove-Item -LiteralPath $tmpCopy -Force -ErrorAction SilentlyContinue } catch {} }
   }
 }
 # body: path, sheet(없으면 "2026"처럼 네 자리 숫자 이름의 첫 시트, 없으면 첫 시트)
@@ -21768,7 +21793,8 @@ function Handle-ReadValues($body){
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
     # 읽기 전용으로 연다 — 다른 사람이 쓰고 있어도 되고, 파일은 바뀌지 않는다.
-    $wb = Open-Workbook $xl $path $true
+    $tmpCopy = Copy-ForRead $path
+    $wb = Open-Workbook $xl $tmpCopy $true
     $openedHere = $true
   }
   try {
@@ -21789,6 +21815,7 @@ function Handle-ReadValues($body){
     return $sb.ToString()
   } finally {
     if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+    if($tmpCopy){ try { Remove-Item -LiteralPath $tmpCopy -Force -ErrorAction SilentlyContinue } catch {} }
   }
 }
 function Send-JsonText($ctx, [string]$json){
