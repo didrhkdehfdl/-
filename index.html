@@ -15177,7 +15177,7 @@ async function renderCorpCardMain(){
       </div>
     </div>
     ${!activeCard ? `<div class="empty-side">등록된 카드가 없습니다. "+ 카드 추가"로 카드별 관리대장 엑셀을 올려주세요.</div>` : !tmpl ? `<div class="empty-side">이 카드의 양식 파일을 다시 올려주세요.</div>` : `
-    <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">카드번호: ${escapeHtml(activeCard.cardNumber)}${(activeCard.numberHistory||[]).length > 1 ? ` <span title="달마다 그 달에 쓰던 번호로 관리대장·사용내역서·통합본이 만들어집니다.">(${activeCard.numberHistory.slice().sort((a,b)=>a.fromMonth-b.fromMonth).map(h=>`${h.fromMonth}월~ ${escapeHtml(String(h.cardNumber).slice(-4))}`).join(' → ')})</span>` : ''}${isAdminUser ? ` <button id="corpCardEditNumberBtn" title="카드가 재발급돼 번호가 바뀌었을 때 고칩니다(카드 버튼에는 끝 4자리가 표시됩니다)." style="font-size:11px; padding:2px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--sky); cursor:pointer; margin-left:2px;">수정</button>` : ''} · 양식 파일: ${escapeHtml(tmpl.fileName)}</div>
+    <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">카드번호: ${escapeHtml(activeCard.cardNumber)}${(activeCard.numberHistory||[]).length > 1 ? ` <span title="달마다 그 달에 쓰던 번호로 관리대장·사용내역서·통합본이 만들어집니다.">(${activeCard.numberHistory.slice().sort((a,b)=>a.fromMonth-b.fromMonth).map(h=>`${h.fromMonth}월~ ${escapeHtml(String(h.cardNumber).slice(-4))}`).join(' → ')})</span>` : ''}${isAdminUser ? ` <button id="corpCardEditNumberBtn" title="카드가 재발급돼 번호가 바뀌었을 때 고칩니다(카드 버튼에는 끝 4자리가 표시됩니다)." style="font-size:11px; padding:2px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--sky); cursor:pointer; margin-left:2px;">수정</button>` : ''} · 사용자: ${escapeHtml((activeCard.assignedTo||[]).join('·') || '(없음)')}${isAdminUser ? ` <button id="corpCardEditOwnerBtn" title="카드 버튼 아래에 보이는 사용자(담당자) 이름을 고칩니다. 개인불출카드는 이 이름의 사용자에게 보입니다." style="font-size:11px; padding:2px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--sky); cursor:pointer; margin-left:2px;">수정</button>` : ''} · 양식 파일: ${escapeHtml(tmpl.fileName)}</div>
     ${(() => {
       const pending = unrecordedSummaryAll();
       if(!pending.length) return `<div style="font-size:12px; color:var(--pos); margin-bottom:12px;">✅ 모든 카드의 승인내역이 리스트에 다 적혀 있습니다. <span style="color:var(--muted);">(${escapeHtml(corpCardSummaryFromLabel())} 확인)</span></div>`;
@@ -15329,6 +15329,16 @@ async function renderCorpCardMain(){
     `}
   `;
 
+  const editOwnerBtn = document.getElementById('corpCardEditOwnerBtn');
+  if(editOwnerBtn) editOwnerBtn.addEventListener('click', async ()=>{
+    const card = corpCardState.cards.find(c=>c.id===corpCardState.activeCardId);
+    if(!card) return;
+    const input = prompt('카드 사용자 이름을 입력해주세요.\n여러 명이면 쉼표(,)로 구분합니다. 예: 이승열, 김태형\n(비우면 사용자 없음)', (card.assignedTo||[]).join(', '));
+    if(input === null) return;
+    card.assignedTo = String(input).split(/[,·\/]/).map(x=>x.trim()).filter(Boolean);
+    await saveCorpCardList();
+    renderCorpCardMain();
+  });
   const editNumBtn = document.getElementById('corpCardEditNumberBtn');
   if(editNumBtn) editNumBtn.addEventListener('click', async ()=>{
     const card = corpCardState.cards.find(c=>c.id===corpCardState.activeCardId);
