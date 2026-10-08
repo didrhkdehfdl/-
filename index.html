@@ -13681,7 +13681,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 30;
+const EXCEL_HELPER_VERSION = 31;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20692,7 +20692,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '30'
+$Version = '31'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -20714,26 +20714,15 @@ trap {
   try { [void][System.Windows.Forms.MessageBox]::Show("엑셀 도우미가 오류로 멈췄습니다.`n`n$em`n`n기록: $LogFile", '엑셀 도우미') } catch {}
   exit 1
 }
-# 오래 걸리는 작업의 진행률 — 앱이 /progress로 물어본다. 도우미는 요청을 하나씩 처리하므로,
-# 작업 중간중간 Pump-Requests로 들어온 /progress(와 그 사전 확인 OPTIONS)에만 바로 답하고
-# 다른 요청은 줄 세워 두었다가 작업이 끝난 뒤 처리한다.
-$global:progress = @{ active=$false; pct=0; text='' }
-$global:pending = $null
-$global:queued = New-Object System.Collections.ArrayList
-function Pump-Requests {
-  try { [System.Windows.Forms.Application]::DoEvents() } catch {}
-  while($global:pending -and $global:pending.IsCompleted){
-    $c = $null
-    try { $c = $global:pending.Result } catch {}
-    $global:pending = $global:listener.GetContextAsync()
-    if(-not $c){ continue }
-    $p = $c.Request.Url.AbsolutePath.TrimEnd('/')
-    if($c.Request.HttpMethod -eq 'OPTIONS' -or $p -eq '/progress' -or $p -eq '/ping' -or $p -eq '/filestat' -or $p -eq '/shutdown'){ $global:inPump = $true; try { Handle-Context $c } finally { $global:inPump = $false } } else { [void]$global:queued.Add($c) }
-  }
-}
+# 요청 받기는 별도 일꾼(백그라운드 runspace)이 맡는다 — 엑셀이 큰 파일을 여느라 몇십 초씩 걸려도
+# 연결 확인(/ping)·파일 저장 시각(/filestat)·진행률(/progress)·끄기(/shutdown)에는 일꾼이 바로 답하고,
+# 엑셀이 필요한 요청만 줄(queue)에 넣어 이 창(엑셀을 다루는 주 스레드)이 하나씩 처리한다.
+$global:shared = [hashtable]::Synchronized(@{ running=$true; busy=''; progress=@{ active=$false; pct=0; text='' } })
+$global:reqQueue = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
+function Pump-Requests { try { [System.Windows.Forms.Application]::DoEvents() } catch {} }
 function Set-Progress([double]$done, [double]$total, [string]$text){
   $pct = if($total -gt 0){ [Math]::Floor([Math]::Min([double]1, $done / $total) * 100) } else { 0 }
-  $global:progress = @{ active=$true; pct=[int]$pct; text=$text }
+  $global:shared.progress = @{ active=$true; pct=[int]$pct; text=$text }
   Pump-Requests
 }
 
@@ -20800,7 +20789,6 @@ function Invoke-Retry([scriptblock]$fn){
 
 function Handle-Ping($body){
   # 다른 작업 중(진행률 확인 사이)에는 엑셀을 건드리지 않고 살아 있다는 것만 알려준다.
-  if($global:inPump){ return @{ ok=$true; version=$Version; busy=$true; excelRunning=$true; openWorkbooks=@() } }
   $xl = Get-Excel $false
   $open = @()
   if($xl){ foreach($wb in $xl.Workbooks){ $open += $wb.FullName } }
@@ -21854,7 +21842,8 @@ function Handle-Context($ctx){
       Send-Json $ctx @{ ok=$true } 200; return
     }
     if($route -eq '/progress'){
-      Send-Json $ctx @{ ok=$true; active=[bool]$global:progress.active; pct=[int]$global:progress.pct; text=[string]$global:progress.text } 200; return
+      $pg = $global:shared.progress
+      Send-Json $ctx @{ ok=$true; active=[bool]$pg.active; pct=[int]$pg.pct; text=[string]$pg.text } 200; return
     }
     if($route -eq '/cardmaster/read'){
       Log "$route $($body.path)"
@@ -21955,7 +21944,7 @@ $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $title = $menu.Items.Add('엑셀 도우미 실행 중'); $title.Enabled = $false
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 $quit = New-Object System.Windows.Forms.ToolStripMenuItem('종료')
-$quit.add_Click({ $global:helperRunning = $false })
+$quit.add_Click({ $global:helperRunning = $false; $global:shared.running = $false })
 [void]$menu.Items.Add($quit)
 $tray.ContextMenuStrip = $menu
 # 왼쪽 클릭으로도 메뉴가 뜨게 한다(오른쪽 클릭이 잘 안 먹는 PC가 있다).
@@ -21968,24 +21957,81 @@ $tray.Visible = $true
 $tray.ShowBalloonTip(5000, '엑셀 도우미 실행 중', "$(if($replaced){ '예전 도우미를 끄고 새 버전(v' + $Version + ')으로 바꿨습니다.' } else { '업무프로그램에서 PC 엑셀 파일에 저장·불러오기를 할 수 있습니다.' })`n끌 때는 이 아이콘을 클릭 → 종료.", [System.Windows.Forms.ToolTipIcon]::Info)
 Log "엑셀 도우미 v$Version 시작 ($AllowedOrigin)$(if($replaced){ " — 예전 도우미 $replaced 개를 끄고 바꿈" })"
 
+# 요청 받기 일꾼
+$receiver = {
+  param($listener, $shared, $queue, $origin, $version)
+  function Reply($ctx, [int]$code, [string]$json){
+    try {
+      $ctx.Response.Headers.Add('Access-Control-Allow-Origin', $origin)
+      $ctx.Response.Headers.Add('Vary', 'Origin')
+      $ctx.Response.StatusCode = $code
+      if($json){
+        $buf = [Text.Encoding]::UTF8.GetBytes($json)
+        $ctx.Response.ContentType = 'application/json; charset=utf-8'
+        $ctx.Response.ContentLength64 = $buf.Length
+        $ctx.Response.OutputStream.Write($buf, 0, $buf.Length)
+        $ctx.Response.OutputStream.Close()
+      } else { $ctx.Response.Close() }
+    } catch {}
+  }
+  while($shared.running){
+    $ctx = $null
+    try { $ctx = $listener.GetContext() } catch { break }
+    try {
+      $req = $ctx.Request
+      $route = $req.Url.AbsolutePath.TrimEnd('/')
+      if($req.Headers['Origin'] -ne $origin){ $queue.Enqueue($ctx); continue }   # 거절은 주 스레드가 한다
+      if($req.HttpMethod -eq 'OPTIONS'){
+        $ctx.Response.Headers.Add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        $ctx.Response.Headers.Add('Access-Control-Allow-Headers', 'Content-Type, X-File-Path, X-File-Name')
+        $ctx.Response.Headers.Add('Access-Control-Allow-Private-Network', 'true')
+        Reply $ctx 204 ''; continue
+      }
+      if($route -eq '/ping'){
+        Reply $ctx 200 ('{"ok":true,"version":"' + $version + '","busy":' + $(if($shared.busy){ 'true' } else { 'false' }) + '}'); continue
+      }
+      if($route -eq '/progress'){
+        $pg = $shared.progress
+        $t = ([string]$pg.text).Replace('\','\\').Replace('"','\"')
+        Reply $ctx 200 ('{"ok":true,"active":' + $(if($pg.active){ 'true' } else { 'false' }) + ',"pct":' + [int]$pg.pct + ',"text":"' + $t + '"}'); continue
+      }
+      if($route -eq '/shutdown'){ $shared.running = $false; Reply $ctx 200 '{"ok":true}'; continue }
+      if($route -eq '/filestat'){
+        $reader = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8)
+        $body = $reader.ReadToEnd() | ConvertFrom-Json; $reader.Close()
+        $p = [string]$body.path
+        if(-not (Test-Path -LiteralPath $p)){
+          $m = ('파일을 찾을 수 없습니다: ' + $p).Replace('\','\\').Replace('"','\"')
+          Reply $ctx 200 ('{"ok":false,"error":"' + $m + '"}'); continue
+        }
+        $fi = Get-Item -LiteralPath $p
+        Reply $ctx 200 ('{"ok":true,"mtime":"' + $fi.LastWriteTimeUtc.Ticks + '","size":' + $fi.Length + '}'); continue
+      }
+      $queue.Enqueue($ctx)
+    } catch { try { Reply $ctx 200 ('{"ok":false,"error":"요청 처리 오류"}') } catch {} }
+  }
+}
+$rcvPs = [powershell]::Create()
+$rcvPs.Runspace = [runspacefactory]::CreateRunspace()
+$rcvPs.Runspace.Open()
+[void]$rcvPs.AddScript($receiver).AddArgument($listener).AddArgument($global:shared).AddArgument($global:reqQueue).AddArgument($AllowedOrigin).AddArgument($Version)
+$rcvHandle = $rcvPs.BeginInvoke()
+
 try {
-  $global:pending = $listener.GetContextAsync()
-  while($global:helperRunning){
+  while($global:helperRunning -and $global:shared.running){
     [System.Windows.Forms.Application]::DoEvents()
-    if($global:queued.Count){
-      $ctx = $global:queued[0]; $global:queued.RemoveAt(0)
-      Handle-Context $ctx; continue
-    }
-    if($global:pending.Wait(50)){
-      $ctx = $global:pending.Result
-      $global:pending = $listener.GetContextAsync()
-      try { Handle-Context $ctx } finally { $global:progress = @{ active=$false; pct=0; text='' } }
-    }
+    $ctx = $null
+    if($global:reqQueue.TryDequeue([ref]$ctx)){
+      $global:shared.busy = $ctx.Request.Url.AbsolutePath
+      try { Handle-Context $ctx } finally { $global:shared.busy = ''; $global:shared.progress = @{ active=$false; pct=0; text='' } }
+    } else { Start-Sleep -Milliseconds 40 }
   }
 } finally {
+  $global:shared.running = $false
   $tray.Visible = $false
   $tray.Dispose()
   try { $listener.Stop() } catch {}
+  try { $rcvPs.Stop(); $rcvPs.Dispose() } catch {}
 }
 </script>
 </body>
