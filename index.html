@@ -13681,7 +13681,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 32;
+const EXCEL_HELPER_VERSION = 33;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -17140,7 +17140,7 @@ function renderUploadMode(){
       ` : ''}
       ${st.rows.length ? `<input id="importSearch" placeholder="고객명/영업자/시공팀 검색" value="${escapeHtml(st.search)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; min-width:200px;">` : ''}
     </div>
-    ${st.loading ? `<div style="color:var(--muted); font-size:13px;">불러오는 중…</div>` : ''}
+    ${st.loading ? `<div id="importLoadingText" style="color:var(--muted); font-size:13px;">불러오는 중…</div>` : ''}
     ${st.error ? `<div style="color:var(--neg); font-size:13px; margin-bottom:10px;">${escapeHtml(st.error)}</div>` : ''}
     ${st.rows.length ? `
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
@@ -17693,7 +17693,15 @@ async function handleImportFile(e){
 async function readLinkedImportSheet(sheet){
   const link = getLinkedFile(IMPORT_LINK_KEY);
   if(!link) throw new Error('연결된 파일이 없습니다.');
-  const r = await excelHelperCall('/readvalues', { path: link.path, sheet: sheet || '' }, 5*60*1000);
+  // 읽는 동안 진행률(%)을 "불러오는 중…" 자리에 보여준다(버튼 글자도 함께).
+  const show = t => {
+    const el = document.getElementById('importLoadingText'); if(el) el.textContent = `불러오는 중… ${t}`;
+    const b = document.getElementById('importLinkedLoadBtn'); if(b && b.disabled) b.textContent = `불러오는 중… ${t}`;
+  };
+  const stop = watchExcelHelperProgress(show);
+  let r;
+  try{ r = await excelHelperCall('/readvalues', { path: link.path, sheet: sheet || '' }, 5*60*1000); }
+  finally{ stop(); }
   await loadXlsxLib();
   return { ...r, ws: XLSX.utils.aoa_to_sheet((r.rows||[]).map(row=>row.map(v=>v==null ? '' : v))) };
 }
@@ -20713,7 +20721,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '32'
+$Version = '33'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21738,7 +21746,7 @@ function Add-SheetValuesJson([Text.StringBuilder]$sb, $ws){
     Invoke-Retry { $rgo = $rg.psobject.BaseObject; $box.v = $rgo.GetType().InvokeMember('Value', [Reflection.BindingFlags]::GetProperty, $null, $rgo, $null) } | Out-Null
     $vals = $box.v
     for($r=1; $r -le $lastRow; $r++){
-      if(($r % 200) -eq 0){ Pump-Requests }
+      if(($r % 100) -eq 0){ Set-Progress (40 + 58 * $r / $lastRow) 100 "행 읽는 중 ($r/$lastRow)" }
       if($r -gt 1){ [void]$sb.Append(',') }
       [void]$sb.Append('[')
       for($c=1; $c -le $lastCol; $c++){
@@ -21793,11 +21801,14 @@ function Handle-ReadValues($body){
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
     # 읽기 전용으로 연다 — 다른 사람이 쓰고 있어도 되고, 파일은 바뀌지 않는다.
+    Set-Progress 5 100 '파일 복사 중'
     $tmpCopy = Copy-ForRead $path
+    Set-Progress 15 100 '엑셀로 여는 중'
     $wb = Open-Workbook $xl $tmpCopy $true
     $openedHere = $true
   }
   try {
+    Set-Progress 40 100 '시트 읽는 중'
     $names = @(); foreach($s in $wb.Worksheets){ $names += [string]$s.Name }
     $want = [string]$body.sheet
     if(-not $want -or $names -notcontains $want){
