@@ -1031,6 +1031,13 @@ function autoNoteFirstLine(rec){
   // "…원 입금" 줄이므로 날짜도 입금일자를 쓴다. 예전에는 시공일자를 썼는데,
   // 시공하고 한참 뒤에 입금되는 건이 많아 실제 입금일과 다른 날짜가 적혔다.
   // 입금일자가 아직 없는 건(직접 만든 건 등)은 지금까지처럼 시공일자로 적는다.
+  // 나눠서 입금한 건(입금일자가 여러 줄이고 입금금액이 =4000000+4250000처럼 나눠 적힌 경우)은
+  // 날짜마다 그 금액으로 한 줄씩 적는다.
+  const dates = String(rec.depositDate||'').split('\n').map(x=>x.trim()).filter(Boolean);
+  const parts = Array.isArray(rec.depositParts) ? rec.depositParts : [];
+  if(dates.length > 1 && parts.length === dates.length){
+    return dates.map((dt,i)=>`${dt} ${cust} ${fmtWon(Number(parts[i])||0)} 입금`.replace(/\s+/g,' ').trim()).join('\n');
+  }
   const noteDate = rec.depositDate || rec.date;
   const d = noteDate ? formatShortDate(noteDate) : formatShortDate(isoDate(new Date()));
   const dep = fmtWon(depositNum);
@@ -1054,7 +1061,10 @@ function upsertNoteLine(lines, prefix, content, beforePrefixes){
 function updateNoteFirstLine(rec){
   const newFirst = autoNoteFirstLine(rec);
   const lines = (rec.note||'').split('\n');
-  lines[0] = newFirst;
+  // 맨 위의 "… 입금" 줄들(나눠 입금이면 여러 줄)을 통째로 새 줄(들)로 바꾼다.
+  let n = 0;
+  while(n < lines.length && /입금\s*$/.test(lines[n]) && !/^\s*입금가/.test(lines[n])) n++;
+  lines.splice(0, Math.max(1, n), ...String(newFirst).split('\n'));
   rec.note = lines.join('\n');
   if(newFirst){
     ensureNoteExtraLine(rec);
@@ -13681,7 +13691,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 33;
+const EXCEL_HELPER_VERSION = 34;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -17703,7 +17713,14 @@ async function readLinkedImportSheet(sheet){
   try{ r = await excelHelperCall('/readvalues', { path: link.path, sheet: sheet || '' }, 5*60*1000); }
   finally{ stop(); }
   await loadXlsxLib();
-  return { ...r, ws: XLSX.utils.aoa_to_sheet((r.rows||[]).map(row=>row.map(v=>v==null ? '' : v))) };
+  const ws = XLSX.utils.aoa_to_sheet((r.rows||[]).map(row=>row.map(v=>v==null ? '' : v)));
+  // 도우미가 알려준 간단한 덧셈 수식(나눠 입금한 금액 등)을 셀에 붙여 둔다(파일 업로드 때와 같게).
+  Object.entries(r.formulas||{}).forEach(([k, f])=>{
+    const [rr, cc] = k.split(',').map(Number);
+    const addr = XLSX.utils.encode_cell({ r: rr-1, c: cc-1 });
+    if(ws[addr]) ws[addr].f = String(f).replace(/^=/,'');
+  });
+  return { ...r, ws };
 }
 // opts.quiet: 자동으로 다시 불러올 때 — 목록을 비우고 "불러오는 중"을 띄우지 않고, 보던 시트·검색어·체크를 그대로 둔 채 바꿔 넣는다.
 async function loadImportFromLinkedExcel(opts){
@@ -17899,6 +17916,14 @@ function parseImportSheet(sheetName){
         agent: String(get('agent')||''),
         depositDate: excelDateToIso(get('depositDate')),
         deposit: parseExcelNumber(get('deposit')),
+        depositParts: (()=>{
+          // 입금금액 칸이 =4000000+4250000 같은 수식이면 나눠 입금한 금액들로 본다.
+          if(!('deposit' in colMap) || !sheet) return undefined;
+          const cell = sheet[XLSX.utils.encode_cell({ r: i + origin.r, c: colMap.deposit + origin.c })];
+          const f = cell && cell.f ? String(cell.f).replace(/^=/,'').replace(/\s/g,'') : '';
+          if(!/^\d+(\.\d+)?(\+\d+(\.\d+)?)+$/.test(f)) return undefined;
+          return f.split('+').map(Number);
+        })(),
         receivable: parseExcelNumber(get('receivable')),
         certDate: excelDateToIso(get('certDate')),
         taxTarget: String(get('taxTarget')||''),
@@ -17946,6 +17971,7 @@ function buildSalesRecordFromRow(row, defaultCorp){
     inverter: row.inverterModel ? `${row.inverterModel}${row.inverterQty ? '*'+row.inverterQty : ''}` : rec.inverter,
     module: row.moduleModel || rec.module,
     deposit: row.deposit || row.totalAmount || 0,
+    depositParts: row.depositParts,
     companyPrice: (() => {
       if(row.companyPrice) return -Math.abs(row.companyPrice);
       const fallback = computePerfCompanyPrice(row);
@@ -18054,7 +18080,7 @@ function buildProfitCaseFromRow(row){
 // 채우는 값만 넣는다(newRecord/newProfitCase의 나머지 기본값, 특히
 // draftDate처럼 "지금 시각" 기준으로 매번 새로 계산되는 값은 절대 포함하지
 // 않는다 — 안 그러면 다시 동기화할 때마다 엉뚱하게 덮어써진다).
-const SALES_ROW_SYNCED_FIELDS = ['date','contractDate','depositDate','customer','address','team','structureType','capacity','inverter','module','deposit','companyPrice','extra','note','corp'];
+const SALES_ROW_SYNCED_FIELDS = ['depositParts','date','contractDate','depositDate','customer','address','team','structureType','capacity','inverter','module','deposit','companyPrice','extra','note','corp'];
 const PROFIT_ROW_SYNCED_FIELDS = ['customer','corp','inspectionCert','constructionDate','capacityKw','agentName','teamName','totalBusinessCost','depositPrice','moduleModel','moduleQty','moduleBuy','moduleSell','inverterModel','inverterQty','inverterBuy','inverterSell','structureNote','structureBuy','structureSell','structureQty','customerDeposit','salesCost','salesDeduction','salesDeductionNote','constructionCost'];
 // 만들어진 뒤 상세 화면에서 직접 고친 항목(touchedFields)은 절대 덮어쓰지
 // 않는다 — 실적리스트 값이 바뀌어도 사람이 이미 손댄 값은 그대로 둔다.
@@ -20721,7 +20747,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '33'
+$Version = '34'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21822,7 +21848,27 @@ function Handle-ReadValues($body){
     [void]$sb.Append(',"sheetNames":['); for($i=0; $i -lt $names.Count; $i++){ if($i){ [void]$sb.Append(',') }; Add-JsonString $sb $names[$i] }
     [void]$sb.Append('],"sheet":'); Add-JsonString $sb $want
     [void]$sb.Append(',"rows":'); Add-SheetValuesJson $sb $ws
-    [void]$sb.Append('}')
+    # 숫자 덧셈만으로 된 수식(=4000000+4250000 등) — 나눠 입금한 금액을 알 수 있게 함께 보낸다.
+    [void]$sb.Append(',"formulas":{')
+    try {
+      $used = $ws.UsedRange
+      $lr = $used.Row + $used.Rows.Count - 1; $lc = $used.Column + $used.Columns.Count - 1
+      if($lr -ge 1 -and $lc -ge 1){
+        $rg = $ws.Range($ws.Cells.Item(1,1), $ws.Cells.Item($lr, $lc))
+        $fb = @{}; Invoke-Retry { $o = $rg.psobject.BaseObject; $fb.v = $o.GetType().InvokeMember('Formula', [Reflection.BindingFlags]::GetProperty, $null, $o, $null) } | Out-Null
+        $first = $true
+        if($fb.v -is [Array]){
+          for($r=1; $r -le $lr; $r++){ for($c=1; $c -le $lc; $c++){
+            $f = $fb.v[$r,$c]
+            if($f -is [string] -and $f -match '^=\s*\d+(\.\d+)?(\s*\+\s*\d+(\.\d+)?)+\s*$'){
+              if(-not $first){ [void]$sb.Append(',') }; $first = $false
+              Add-JsonString $sb "$r,$c"; [void]$sb.Append(':'); Add-JsonString $sb $f
+            }
+          } }
+        }
+      }
+    } catch {}
+    [void]$sb.Append('}}')
     return $sb.ToString()
   } finally {
     if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
