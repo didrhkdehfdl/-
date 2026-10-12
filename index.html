@@ -5364,10 +5364,7 @@ function autoStructureSell(buy, kw, note, qty){
   if(/부착형/.test(note||'')) return 0;
   const b = Number(buy)||0;
   if(!b) return 0;
-  const scaled = Math.round(b * 1.2);
-  const q = roundStructureQty(qty) || 1;
-  const cap = structureCapTotal(kw);
-  return cap ? Math.min(scaled, Math.floor(cap / q)) : scaled;
+  return Math.round(b * 1.2);   // 판매단가는 상한 없이 — 투입비용에서만 50만원 단위 상한을 적용한다
 }
 function computeLedgerStructureSell(profitCase, salesRecord){
   const kwFactor = (Number(profitCase.capacityKw)||0) / 3;
@@ -5378,11 +5375,8 @@ function computeLedgerStructureSell(profitCase, salesRecord){
   // 비어있거나 표현이 다르면 서로 다른 단가가 나갈 수 있었다.
   const isAttached = /부착형/.test(profitCase.structureNote || '');
   if(isAttached) return Number(profitCase.structureSell)||0;
-  // 정산데이터의 투입비용(판매단가×수량)이 50만원 단위 상한을 넘지 않게 — 화면 계산과 같은 상한.
-  const scaled = Number(profitCase.structureSell)||Math.round((Number(profitCase.structureBuy)||0) * 1.2);
-  const q = roundStructureQty(profitCase.structureQty) || 1;
-  const cap = structureCapTotal(Number(profitCase.capacityKw)||0);
-  return cap ? Math.min(scaled, Math.floor(cap / q)) : scaled;
+  // 판매단가는 구매가×1.2 그대로(도소매 이윤용). 투입비용 상한은 AD열 수식이 적용한다.
+  return Number(profitCase.structureSell)||Math.round((Number(profitCase.structureBuy)||0) * 1.2);
 }
 function renderProfitLedgerPanel(p){
   const s = profitLedgerState;
@@ -5490,7 +5484,9 @@ const LEDGER_FORMULA_TEMPLATES = {
   N: n => `M${n}*0.1`,
   T: n => `Q${n}*S${n}`,
   Y: n => `V${n}*X${n}`,
-  AD: n => `AA${n}*AC${n}`,
+  // 구조물 투입비용: 판매단가×수량이되, 부착형이 아니면 50만원 단위 상한(3kW당 반올림 묶음×50만원)을 넘지 않게.
+  // 판매단가(AC)는 구매가×1.2 그대로 두어 도소매 이윤은 (구매가×1.2 − 구매가)로 나온다.
+  AD: n => `IF(ISNUMBER(SEARCH("부착형",Z${n})),AA${n}*AC${n},MIN(AA${n}*AC${n},MAX(1,ROUND(K${n}/3,0))*500000))`,
   AF: n => `T${n}+Y${n}+AD${n}+AE${n}`,
   AM: n => `SUM(AG${n}:AL${n})`,
   AO: n => `M${n}`,
@@ -5691,7 +5687,7 @@ const PROFIT_LEDGER_READ_MAP = [
   ['AQ','salesDeduction','number'], ['AS','salesDeductionNote','text'], ['AU','maintenanceCost','number'],
 ];
 const PROFIT_LEDGER_SNAPSHOT_KEY = 'profit-ledger-snapshot-v1';
-const PROFIT_LEDGER_QTYFIX_KEY = 'profit-ledger-qtyfix-v3';
+const PROFIT_LEDGER_QTYFIX_KEY = 'profit-ledger-qtyfix-v4';
 function normLedgerVal(v, type){
   if(v === null || v === undefined) v = '';
   if(type === 'number' || type === 'vat'){ const n = Number(String(v).replace(/,/g,'')); return v === '' || isNaN(n) ? '' : String(Math.round(n*100)/100); }
@@ -5763,9 +5759,13 @@ async function syncProfitCasesFromLedgerFile(force){
         const ac = Number((rows[i]||[])[idx('AC')]) || 0;
         const q = roundStructureQty(values.AA ? values.AA.value : (rows[i]||[])[idx('AA')]) || 1;
         const cap = structureCapTotal(kw);
-        if(!/부착형/.test(z) && cap && ac * q > cap){
-          values.AC = { col: idx('AC')+1, type:'number', value: Math.floor(cap / q) };
+        const ab = Number((rows[i]||[])[idx('AB')]) || 0;
+        // 예전에 판매단가를 상한에 맞춰 깎아 쓴 행은 구매가×1.2로 되돌린다(도소매 이윤이 맞게).
+        if(!/부착형/.test(z) && cap && ab && ac === Math.floor(cap / q) && ac < Math.round(ab * 1.2)){
+          values.AC = { col: idx('AC')+1, type:'number', value: Math.round(ab * 1.2) };
         }
+        // 투입비용(AD) 수식을 50만원 단위 상한이 들어간 수식으로 바꾼다.
+        if(excelHelperVersion >= 35) values.AD = { col: idx('AD')+1, type:'formula', value: LEDGER_FORMULA_TEMPLATES.AD(i+1) };
       }
       const as = (rows[i]||[])[idx('AS')];
       if(typeof as === 'string' && as.trim()){
@@ -5782,7 +5782,7 @@ async function syncProfitCasesFromLedgerFile(force){
       const wr = await excelHelperCall('/sagup/write', { path: link.path, sheet: PROFIT_LEDGER_SHEET, customerCol: idx('C')+1, dateCol: 0, headerRow: 5, items: qtyFix }, 5*60*1000);
       qtyFixed = (wr.written||[]).length;
     }
-    try{ localStorage.setItem(PROFIT_LEDGER_QTYFIX_KEY, link.path); }catch(e){}
+    if(excelHelperVersion >= 35){ try{ localStorage.setItem(PROFIT_LEDGER_QTYFIX_KEY, link.path); }catch(e){} }
     let snap = null;
     try{ snap = JSON.parse(localStorage.getItem(PROFIT_LEDGER_SNAPSHOT_KEY) || 'null'); }catch(e){}
     const applied = [];
@@ -13717,7 +13717,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 34;
+const EXCEL_HELPER_VERSION = 35;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20774,7 +20774,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '34'
+$Version = '35'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21312,6 +21312,7 @@ function Handle-SagupWrite($body){
         $v = $spec.value
         if($null -eq $v -or [string]$v -eq ''){ Invoke-Retry { [void]$cell.ClearContents() } | Out-Null; continue }
         $t = [string]$spec.type
+        if($t -eq 'formula'){ $fv = '=' + (([string]$v) -replace '^=',''); if([string]$cell.Formula -ne $fv){ Invoke-Retry { $cell.Formula = $fv } | Out-Null }; continue }
         if($t -eq 'date'){
           $d = [datetime]::MinValue
           # 날짜 칸이 원래 날짜 값이면 날짜로, 글자(여러 날짜를 줄바꿈으로 적은 칸 등)면 글자로 쓴다.
