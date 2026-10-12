@@ -14606,6 +14606,26 @@ function fitCorpCardSheetHtml(html){
       }
       const need = span.scrollWidth;
       if(need <= avail) return;
+      if(span.classList.contains('xdata')){
+        // 입력 내역 글자는 줄이기 전에 먼저 띄어쓰기 자리에서 두 줄로 내린다
+        // (예: "26년 경기도 주택지원 설치확인 / (오산, 용인)"). 두 줄로도 넘치면 그때 글자를 줄인다.
+        span.style.whiteSpace = 'pre-wrap';
+        span.style.wordBreak = 'keep-all';
+        span.style.overflowWrap = 'normal';
+        span.style.display = 'block';
+        span.style.width = avail + 'px';
+        let size = base;
+        for(let k=0; k<14; k++){
+          const lh = size * 1.2;
+          const lines = Math.round(span.scrollHeight / lh);
+          if(lines <= 2 && span.scrollWidth <= avail + 1) break;
+          size = size * 0.93;
+          if(size < base * 0.4) break;
+          setSize(span, size);
+        }
+        span.style.width = '';
+        return;
+      }
       const size = base * avail / need;
       if(size >= base * 0.7){ setSize(span, size); return; }
       span.style.whiteSpace = 'pre-wrap';
@@ -14998,6 +15018,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     const code = styles.numFmtCode(st.numFmtId);
     let text = cell.text;
     const isData = (r >= dataStart && r <= lastDataRow) || !!opts;
+    let dataText = false;   // 입력 내역의 글자 칸(날짜·금액 제외) — 넘치면 두 줄로 내려 쓴다
     if(isData){
       // 데이터 칸은 양식에 남아있던 값 대신 지금 입력한 내역으로 채운다.
       const d = opts ? opts.data : (dataRows[r-dataStart] || null);
@@ -15006,7 +15027,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         const raw = d ? d[field] : '';
         if(field === 'date') text = d ? String(formatXlsxDate(raw, code)).replace(/\s*\n\s*/g,' ') : '';   // 날짜는 한 줄로
         else if(field === 'amount') text = (d && Number(raw)) ? fmtNum(Number(raw)) : '';
-        else text = d ? String(raw||'') : '';
+        else { text = d ? String(raw||'') : ''; dataText = true; }
       } else if(c === COL_L){ text = d ? (corpCardSupplyVat(d.amount).supply ? fmtNum(corpCardSupplyVat(d.amount).supply) : '') : ''; }
       else if(c === COL_M){ text = d ? (corpCardSupplyVat(d.amount).vat ? fmtNum(corpCardSupplyVat(d.amount).vat) : '') : ''; }
       else if(cell.formula) text = '';
@@ -15106,7 +15127,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     const spanCss = (wrapPara
       ? 'display:block; white-space:pre-wrap; word-break:keep-all; overflow-wrap:normal; line-height:1.2;'
       : 'display:inline-block; white-space:pre; line-height:1.2;') + deco;
-    return `<td${attrs} style="${css.join('; ')}">${inner ? `<span class="xfit${wrapPara?' xwrap':''}" style="${spanCss}">${inner}</span>` : ''}</td>`;
+    return `<td${attrs} style="${css.join('; ')}">${inner ? `<span class="xfit${wrapPara?' xwrap':''}${dataText?' xdata':''}" style="${spanCss}">${inner}</span>` : ''}</td>`;
   };
 
   // 엑셀 문자폭 → 픽셀(대략 7px/문자 + 5px 여백), 전체를 용지 폭에 맞춰 비율로 쓴다.
