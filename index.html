@@ -11267,19 +11267,22 @@ async function renderCardReconMain(){
     </div>
 
     <div class="table-wrap">
-      ${corpCardMasterTemplates.length ? corpCardMasterTemplates.map(t=>`
-        <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--line);">
-          <div style="flex:1; min-width:0;">
+      ${corpCardMasterTemplates.length ? corpCardMasterTemplates.map(t=>{
+        // PC 파일과 연결돼 자동 연동되면 업로드 날짜·달 선택·다운로드 버튼은 필요 없어 숨기고 이름과 연결 상태만 보여준다.
+        const linked = !!getLinkedFile(cardMasterLinkKey(t.id));
+        return `
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 14px; border-bottom:1px solid var(--line);">
+          <div style="flex:1 1 220px; min-width:180px;">
             <div style="font-size:13px; font-weight:600;">${escapeHtml(t.label)}</div>
-            <div style="font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(t.fileName)}">${escapeHtml(t.fileName)}</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:2px;">${t.uploadedAt ? `업로드 ${fmtUploadedAt(t.uploadedAt)}` : '업로드 날짜 기록 없음(이 기능 추가 전에 올린 파일)'}</div>
+            ${linked ? '' : `<div style="font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(t.fileName)}">${escapeHtml(t.fileName)}</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:2px;">${t.uploadedAt ? `업로드 ${fmtUploadedAt(t.uploadedAt)}` : '업로드 날짜 기록 없음(이 기능 추가 전에 올린 파일)'}</div>`}
           </div>
           ${cardMasterMonthSelectHtml(t)}
           ${cardMasterLinkHtml(t)}
-          <button class="cardmaster-refresh-btn" data-id="${t.id}" style="padding:8px 14px; border-radius:7px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600; font-size:12.5px;">최신 데이터로 갱신 후 다운로드</button>
+          ${linked ? '' : `<button class="cardmaster-refresh-btn" data-id="${t.id}" style="padding:8px 14px; border-radius:7px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600; font-size:12.5px;">최신 데이터로 갱신 후 다운로드</button>`}
           <button class="cardmaster-remove-btn" data-id="${t.id}" style="padding:8px 12px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">제거</button>
-        </div>
-      `).join('') : `<div class="empty-side">등록된 통합본이 없습니다. "+ 통합본 파일 추가"로 올려주세요.</div>`}
+        </div>`;
+      }).join('') : `<div class="empty-side">등록된 통합본이 없습니다. "+ 통합본 파일 추가"로 올려주세요.</div>`}
     </div>
 
     ${corpCardLinkSectionHtml()}
