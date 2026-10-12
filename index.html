@@ -1303,7 +1303,7 @@ function computeProfitCase(p){
   // 판매단가×수량으로 계산한 금액이 이 한도를 넘으면 한도 금액으로 잘라서
   // 정산내역서/투입금액 계산에 반영한다. 구조물 투입비용을 수동으로 지정한
   // 경우(structureOverride)는 사용자가 명시적으로 입력한 값이므로 상한을 적용하지 않는다.
-  const structureCap = kw>0 ? Math.round(kw/3)*500000 : 0;
+  const structureCap = structureCapTotal(kw);
   const structureCappedAmount = (structureCap>0 && structureNaturalAmount>structureCap) ? structureCap : structureNaturalAmount;
   const structureAmount = (p.structureOverride !== '' && p.structureOverride !== null && p.structureOverride !== undefined)
     ? Number(p.structureOverride)||0
@@ -5357,12 +5357,17 @@ function applySalesDraftDeduction(p){
 // 그 외(슬라브형 등)는 구매단가×1.2 하되 3kW당 50만원을 넘지 않도록 —
 // 이런 유형은 화면에서 판매단가를 따로 자동 채워주지 않을 수 있어서, 정산데이터
 // 기록 시점에 합리적인 값을 추정해 넣는다.
-function autoStructureSell(buy, kw, note){
+// 구조물 투입비용 상한은 50만원 단위: 3kW당 50만원을 반올림한 묶음 수(6.4kW → 2묶음 → 100만원).
+// 판매단가는 이 상한을 수량으로 나눈 값을 넘지 않게 한다(판매단가×수량 = 투입비용이 상한 이하).
+function structureCapTotal(kw){ return kw > 0 ? Math.max(1, Math.round(kw/3)) * 500000 : 0; }
+function autoStructureSell(buy, kw, note, qty){
   if(/부착형/.test(note||'')) return 0;
   const b = Number(buy)||0;
   if(!b) return 0;
   const scaled = Math.round(b * 1.2);
-  return kw > 0 ? Math.min(scaled, Math.round(500000 * kw / 3)) : scaled;
+  const q = roundStructureQty(qty) || 1;
+  const cap = structureCapTotal(kw);
+  return cap ? Math.min(scaled, Math.floor(cap / q)) : scaled;
 }
 function computeLedgerStructureSell(profitCase, salesRecord){
   const kwFactor = (Number(profitCase.capacityKw)||0) / 3;
@@ -5373,9 +5378,11 @@ function computeLedgerStructureSell(profitCase, salesRecord){
   // 비어있거나 표현이 다르면 서로 다른 단가가 나갈 수 있었다.
   const isAttached = /부착형/.test(profitCase.structureNote || '');
   if(isAttached) return Number(profitCase.structureSell)||0;
-  const capped = Math.round(500000 * kwFactor);
-  const scaled = Math.round((Number(profitCase.structureBuy)||0) * 1.2);
-  return Math.min(scaled, capped);
+  // 정산데이터의 투입비용(판매단가×수량)이 50만원 단위 상한을 넘지 않게 — 화면 계산과 같은 상한.
+  const scaled = Number(profitCase.structureSell)||Math.round((Number(profitCase.structureBuy)||0) * 1.2);
+  const q = roundStructureQty(profitCase.structureQty) || 1;
+  const cap = structureCapTotal(Number(profitCase.capacityKw)||0);
+  return cap ? Math.min(scaled, Math.floor(cap / q)) : scaled;
 }
 function renderProfitLedgerPanel(p){
   const s = profitLedgerState;
@@ -5684,7 +5691,7 @@ const PROFIT_LEDGER_READ_MAP = [
   ['AQ','salesDeduction','number'], ['AS','salesDeductionNote','text'], ['AU','maintenanceCost','number'],
 ];
 const PROFIT_LEDGER_SNAPSHOT_KEY = 'profit-ledger-snapshot-v1';
-const PROFIT_LEDGER_QTYFIX_KEY = 'profit-ledger-qtyfix-v2';
+const PROFIT_LEDGER_QTYFIX_KEY = 'profit-ledger-qtyfix-v3';
 function normLedgerVal(v, type){
   if(v === null || v === undefined) v = '';
   if(type === 'number' || type === 'vat'){ const n = Number(String(v).replace(/,/g,'')); return v === '' || isNaN(n) ? '' : String(Math.round(n*100)/100); }
@@ -5748,6 +5755,17 @@ async function syncProfitCasesFromLedgerFile(force){
         const fixed = roundStructureQty(aa);
         values.AA = { col: idx('AA')+1, type:'number', value: fixed };
         if(fresh[cust] && !fresh[cust].__dup) fresh[cust].AA = normLedgerVal(fixed, 'number');
+      }
+      // 부착형이 아닌 구조물의 판매단가(AC)×수량이 50만원 단위 상한을 넘으면 판매단가를 상한에 맞춘다.
+      {
+        const z = String((rows[i]||[])[idx('Z')] ?? '');
+        const kw = Number((rows[i]||[])[idx('K')]) || 0;
+        const ac = Number((rows[i]||[])[idx('AC')]) || 0;
+        const q = roundStructureQty(values.AA ? values.AA.value : (rows[i]||[])[idx('AA')]) || 1;
+        const cap = structureCapTotal(kw);
+        if(!/부착형/.test(z) && cap && ac * q > cap){
+          values.AC = { col: idx('AC')+1, type:'number', value: Math.floor(cap / q) };
+        }
       }
       const as = (rows[i]||[])[idx('AS')];
       if(typeof as === 'string' && as.trim()){
