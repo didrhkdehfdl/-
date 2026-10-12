@@ -8087,12 +8087,26 @@ async function renderAdminApprovalMain(){
   const main = document.getElementById('main');
   main.innerHTML = `
     <h2 class="section-title">승인관리</h2>
+    <div style="padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--panel); margin-bottom:16px; max-width:640px;">
+      <div style="font-size:13px; font-weight:600; margin-bottom:6px;">탭 숨기기 <span style="font-size:11px; color:var(--muted); font-weight:400;">— 체크한 탭은 모든 사람(관리자 포함)에게 안 보입니다. 저장된 내용은 그대로 남고, 체크를 풀면 다시 보입니다.</span></div>
+      <div style="display:flex; flex-wrap:wrap; gap:10px 14px;">
+        ${ALL_TABS.map(t=>`<label style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;"><input type="checkbox" class="global-hide-tab" data-tab="${t.key}" ${globalHiddenTabs.includes(t.key)?'checked':''}>${t.label}</label>`).join('')}
+      </div>
+      <button id="globalHideSaveBtn" style="margin-top:8px; font-size:11.5px; padding:5px 12px; border-radius:6px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">숨김 저장</button>
+      <span id="globalHideMsg" style="font-size:11px; color:var(--pos); margin-left:6px;"></span>
+    </div>
     <p style="font-size:13px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
       가입 신청한 사용자 목록입니다. "승인하기"를 누르면 그 사람이 로그인했을 때 바로 앱을 사용할 수 있고,
       "거절하기"를 누르면 가입이 거절됩니다.
     </p>
     <div id="adminApprovalList" style="display:flex; flex-direction:column; gap:8px; max-width:640px;">불러오는 중…</div>
   `;
+  document.getElementById('globalHideSaveBtn').addEventListener('click', async ()=>{
+    globalHiddenTabs = [...document.querySelectorAll('.global-hide-tab')].filter(cb=>cb.checked).map(cb=>cb.dataset.tab);
+    try{ await saveFileToStorage(GLOBAL_HIDDEN_TABS_KEY, JSON.stringify(globalHiddenTabs)); }catch(e){ alert('저장하지 못했습니다: ' + (e.message||e)); return; }
+    applyTabPermissions(lastAllowedTabsArg);
+    const m = document.getElementById('globalHideMsg'); if(m){ m.textContent = '저장됨'; setTimeout(()=>{ m.textContent=''; }, 1500); }
+  });
   await renderAdminApprovalList();
 }
 
@@ -20246,13 +20260,31 @@ async function init(){
 // both been confirmed). allowedTabs is the approved user's per-account tab
 // permission list from Firestore (null/undefined = no restriction, i.e.
 // every tab visible — this keeps existing/older accounts unaffected).
+// 모든 사람(관리자 포함)에게서 잠시 숨겨 둘 탭 — 승인관리의 "탭 숨기기"에서 켜고 끈다(데이터는 그대로 남는다).
+// 설정을 한 번도 저장하지 않았으면 점심체크·일일업무일지를 숨긴다.
+const GLOBAL_HIDDEN_TABS_KEY = 'global-hidden-tabs';
+let globalHiddenTabs = ['lunch','worklog'];
+let lastAllowedTabsArg = null;
+async function loadGlobalHiddenTabs(){
+  try{
+    const raw = await loadFileFromStorage(GLOBAL_HIDDEN_TABS_KEY);
+    if(raw){ const v = JSON.parse(raw); if(Array.isArray(v)) globalHiddenTabs = v; }
+  }catch(e){}
+  applyTabPermissions(lastAllowedTabsArg);
+  if(typeof renderSidebar === 'function') renderSidebar();
+}
 function applyTabPermissions(allowedTabs){
+  lastAllowedTabsArg = allowedTabs;
   document.querySelectorAll('.tab-btn').forEach(btn=>{
     const key = btn.dataset.tab;
     if(key === 'adminApproval') return; // shown/hidden separately based on isAdminUser
-    const allowed = !allowedTabs || allowedTabs.includes(key);
+    const allowed = (!allowedTabs || allowedTabs.includes(key)) && !globalHiddenTabs.includes(key);
     btn.style.display = allowed ? 'flex' : 'none';
   });
+  if(globalHiddenTabs.includes(state.activeTab)){
+    const first = [...document.querySelectorAll('.tab-btn')].find(b=>b.style.display !== 'none' && b.dataset.tab !== 'adminApproval');
+    if(first){ state.activeTab = first.dataset.tab; if(typeof renderMain === 'function' && document.getElementById('app').classList.contains('show')) renderMain(); }
+  }
   if(allowedTabs){
     if(allowedTabs.length === 0){
       state.activeTab = 'none'; // 허용된 탭이 하나도 없음 — 전용 안내 화면으로 대체
@@ -20273,6 +20305,7 @@ function startApp(allowedTabs){
     if(lastTab) state.activeTab = lastTab;
   }catch(e){}
   applyTabPermissions(isAdminUser ? null : allowedTabs);
+  loadGlobalHiddenTabs();
   renderSidebar();
   renderMain();
   init();
