@@ -1297,6 +1297,7 @@ function computeProfitCase(p){
     effStructureSell = 220000;
     if(!effStructureQty) effStructureQty = roundStructureQty(kw>0 ? kw/3 : 0);
   }
+  if(!effStructureSell && effStructureBuy) effStructureSell = autoStructureSell(effStructureBuy, kw, p.structureNote);
   const structureNaturalAmount = effStructureSell * effStructureQty;
   // 구조물 투입비용 상한: 3kw당 50만원 (3kw→50만, 6kw→100만, 9kw→150만 ...).
   // 판매단가×수량으로 계산한 금액이 이 한도를 넘으면 한도 금액으로 잘라서
@@ -1448,7 +1449,7 @@ function applyProfitListFieldChange(p, col, inputEl){
     if(price !== null) p.depositPrice = price;
   }
   if(pfield === 'structureNote') applyAttachedStructurePricing(p);
-  if(pfield === 'structureBuy') p.structureSell = Math.round((Number(p.structureBuy)||0) * 1.2);
+  if(pfield === 'structureBuy') p.structureSell = autoStructureSell(p.structureBuy, Number(p.capacityKw)||0, p.structureNote) || Math.round((Number(p.structureBuy)||0) * 1.2);
   if(pfield === 'capacityKw') p.constructionCost = computeConstructionCost(p.capacityKw);
   pushCaseEditsToImportRow('profit', p, (pfield === 'moduleModel' || pfield === 'structureNote') ? [pfield, 'depositPrice'] : [pfield]);
   queueProfitLedgerAutoWrite(p);
@@ -5356,6 +5357,13 @@ function applySalesDraftDeduction(p){
 // 그 외(슬라브형 등)는 구매단가×1.2 하되 3kW당 50만원을 넘지 않도록 —
 // 이런 유형은 화면에서 판매단가를 따로 자동 채워주지 않을 수 있어서, 정산데이터
 // 기록 시점에 합리적인 값을 추정해 넣는다.
+function autoStructureSell(buy, kw, note){
+  if(/부착형/.test(note||'')) return 0;
+  const b = Number(buy)||0;
+  if(!b) return 0;
+  const scaled = Math.round(b * 1.2);
+  return kw > 0 ? Math.min(scaled, Math.round(500000 * kw / 3)) : scaled;
+}
 function computeLedgerStructureSell(profitCase, salesRecord){
   const kwFactor = (Number(profitCase.capacityKw)||0) / 3;
   // 부착형 여부는 이 이윤정산 건 자체의 구조물 분류(structureNote)로 판단한다
@@ -6659,7 +6667,7 @@ function renderProfitMain(){
         applyAttachedStructurePricing(p);
       }
       if(key === 'structureBuy'){
-        p.structureSell = Math.round((Number(p.structureBuy)||0) * 1.2);
+        p.structureSell = autoStructureSell(p.structureBuy, Number(p.capacityKw)||0, p.structureNote) || Math.round((Number(p.structureBuy)||0) * 1.2);
       }
       updateProfitCalculations();
       debouncedSave();
@@ -18057,7 +18065,8 @@ function buildProfitCaseFromRow(row){
     // 실제로 적힌 구조물 구매가/판매가가 그대로 쓰인다. 50만원 상한은 그 뒤의
     // computeProfitCase 계산 단계에서 그대로 적용된다(값의 출처와 무관).
     structureBuy: row.structureBuy || 0,
-    structureSell: row.structureSell || 0,
+    // 실적리스트에 구조물 판매가가 비어 있으면 구매단가×1.2(3kW당 50만원 상한)로 채운다 — 정산데이터 기록과 같은 규칙.
+    structureSell: row.structureSell || autoStructureSell(row.structureBuy, parseFloat(String(row.capacity||'').replace(/[^0-9.]/g,''))||0, row.structureType),
     customerDeposit: row.deposit || row.totalAmount || 0,
     // 영업비는 연결된 기안지가 있으면 거기서 실제로 계산된 지급금을 그대로
     // 쓴다 — 다시 계산하면 기안지에서 부가세를 수동으로 지정했거나 공제가 커서
