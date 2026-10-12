@@ -13839,7 +13839,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 37;
+const EXCEL_HELPER_VERSION = 38;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20915,7 +20915,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '37'
+$Version = '38'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21800,7 +21800,8 @@ function Handle-CardMasterWrite($body){
       $monthOf = { param($n) if($n -match '(\d{1,2})\s*월'){ [int]$Matches[1] } else { $null } }
       $isPlain = { param($n) $n -match '^\s*\d{1,2}\s*월\s*$' }
       $ws = $sheets | Where-Object { (& $monthOf $_.Name) -eq $num -and (& $isPlain $_.Name) } | Select-Object -First 1
-      if(-not $ws){ $ws = $sheets | Where-Object { (& $monthOf $_.Name) -eq $num } | Select-Object -First 1 }
+      # 이름이 "N월 …"인 다른 시트(예: "10월 안성식대기안지 첨부내역")는 B1이 "날짜"인 카드 내역 시트일 때만 쓴다 — 아니면 새 달 시트를 만든다.
+      if(-not $ws){ $ws = $sheets | Where-Object { (& $monthOf $_.Name) -eq $num -and $_.Name -notmatch '보고용' -and ((([string]$_.Range('B1').Text) -replace '\s','') -eq '날짜') } | Select-Object -First 1 }
       if(-not $ws){
         $plain = @($sheets | Where-Object { (& $isPlain $_.Name) })
         $pool = if($plain.Count){ $plain } else { @($sheets | Where-Object { $null -ne (& $monthOf $_.Name) }) }
