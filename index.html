@@ -15120,6 +15120,46 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     const w = colWidths[c] !== undefined ? colWidths[c] : 8.43;
     widths.push(w > 0 ? Math.max(1, Math.trunc(((256*w + Math.trunc(128/mdw)) / 256) * mdw)) : 0);
   }
+  // 가독성: 전체 폭은 그대로 두고, 실제로 적힌 내용에 맞춰 칸 너비를 다시 나눈다. 내용이 짧은 칸
+  // (부서·법인·하이패스 등)은 줄이고(원래의 55%까지), 그만큼을 글자가 넘치는 칸(사용처·업무내용·비고 등)에
+  // 준다 — 칸에 맞추느라 글자를 줄이는 일이 줄어 같은 종이에서 글자가 더 크게 찍힌다.
+  try{
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.font = `${(8.5 * 96 / 72).toFixed(2)}px 'Malgun Gothic','Noto Sans KR',sans-serif`;
+    const textOf = v => (typeof v === 'number') ? (v ? fmtNum(v) : '') : String(v == null ? '' : v);
+    const blocks = (dataRows||[]).map(corpCardRowToBlock);
+    if(blocks.length){
+      const need = widths.map(()=>0), isData = widths.map(()=>false);
+      for(let c=minCol; c<=maxCol; c++){
+        const k = c - 1;                       // B열(=1)부터 16칸이 입력 칸
+        if(k < 0 || k > 15) continue;
+        isData[c-minCol] = true;
+        let mx = 0;
+        blocks.forEach(b=>{ String(textOf(b[k])).split('\n').forEach(line=>{ mx = Math.max(mx, ctx.measureText(line).width); }); });
+        need[c-minCol] = Math.ceil(mx) + 10;
+      }
+      const total = widths.reduce((a,b)=>a+b,0);
+      const target = widths.map((w,i)=> isData[i] && w > 0 ? Math.max(Math.round(w * 0.55), Math.min(w, need[i])) : w);
+      let spare = total - target.reduce((a,b)=>a+b,0);
+      // 먼저 글자가 넘치는 칸을 필요한 만큼 채우고(모자라면 비율대로), 남는 폭은 내용이 긴 칸에 비례해 나눈다.
+      const lack = target.map((t,i)=> isData[i] ? Math.max(0, need[i] - t) : 0);
+      const lackSum = lack.reduce((a,b)=>a+b,0);
+      if(spare > 0 && lackSum > 0){
+        const give = Math.min(spare, lackSum);
+        lack.forEach((l,i)=>{ target[i] += Math.floor(l / lackSum * give); });
+        spare = total - target.reduce((a,b)=>a+b,0);
+      }
+      if(spare > 0){
+        const weight = target.map((t,i)=> isData[i] ? need[i] : 0);
+        const wSum = weight.reduce((a,b)=>a+b,0);
+        if(wSum > 0) weight.forEach((wt,i)=>{ target[i] += Math.floor(wt / wSum * spare); });
+      }
+      const diff = total - target.reduce((a,b)=>a+b,0);
+      const widest = target.indexOf(Math.max(...target));
+      if(widest >= 0) target[widest] += diff;
+      target.forEach((t,i)=>{ widths[i] = t; });
+    }
+  }catch(e){ console.warn('칸 너비 조정 건너뜀', e); }
   const widthSum = widths.reduce((a,b)=>a+b,0) || 1;
   const docWidth = Math.round(widthSum);
   const colgroup = widths.map(w=>`<col style="width:${(w/widthSum*100).toFixed(3)}%;">`).join('');
