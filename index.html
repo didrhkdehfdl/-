@@ -15037,10 +15037,10 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         else { text = d ? String(raw||'') : ''; dataText = true; }
       } else if(c === COL_L){ text = d ? (corpCardSupplyVat(d.amount).supply ? fmtNum(corpCardSupplyVat(d.amount).supply) : '') : ''; }
       else if(c === COL_M){ text = d ? (corpCardSupplyVat(d.amount).vat ? fmtNum(corpCardSupplyVat(d.amount).vat) : '') : ''; }
-      if(field === 'amount' || c === COL_L || c === COL_M) numPad = true;
-      if(field === 'amount' && d && d.hl) hlAmount = true;   // 🟨 표시한 행의 금액은 노란색
       else if(cell.formula) text = '';
       else if(cell.num !== null && cell.num !== undefined && !isNaN(cell.num)) text = opts ? String(opts.seq) : cell.text; // 순번 등 미리 인쇄된 값은 그대로
+      if(field === 'amount' || c === COL_L || c === COL_M) numPad = true;
+      if(field === 'amount' && d && d.hl) hlAmount = true;   // 🟨 표시한 행의 금액은 노란색
     } else if(r === totalRowNum){
       if(c === COL_L) text = fmtNum(supplyTotal);
       else if(c === COL_M) text = fmtNum(vatTotal);
