@@ -14614,6 +14614,12 @@ function fitCorpCardSheetHtml(html){
         span.style.overflowWrap = 'normal';
         span.style.display = 'block';
         span.style.width = avail + 'px';
+        // 괄호가 있으면 괄호 앞에서 줄을 바꾼다(예: "…설치확인" / "(오산, 용인)").
+        const raw = span.textContent;
+        const pi = raw.lastIndexOf('(');
+        if(pi > 0 && !raw.includes('\n')){
+          span.innerHTML = escapeHtml(raw.slice(0, pi).trimEnd()) + '<br>' + escapeHtml(raw.slice(pi));
+        }
         let size = base;
         for(let k=0; k<14; k++){
           const lh = size * 1.2;
@@ -15018,7 +15024,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     const code = styles.numFmtCode(st.numFmtId);
     let text = cell.text;
     const isData = (r >= dataStart && r <= lastDataRow) || !!opts;
-    let dataText = false;   // 입력 내역의 글자 칸(날짜·금액 제외) — 넘치면 두 줄로 내려 쓴다
+    let dataText = false, numPad = false;   // 입력 내역의 글자 칸(날짜·금액 제외) — 넘치면 두 줄로 내려 쓴다
     if(isData){
       // 데이터 칸은 양식에 남아있던 값 대신 지금 입력한 내역으로 채운다.
       const d = opts ? opts.data : (dataRows[r-dataStart] || null);
@@ -15030,6 +15036,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         else { text = d ? String(raw||'') : ''; dataText = true; }
       } else if(c === COL_L){ text = d ? (corpCardSupplyVat(d.amount).supply ? fmtNum(corpCardSupplyVat(d.amount).supply) : '') : ''; }
       else if(c === COL_M){ text = d ? (corpCardSupplyVat(d.amount).vat ? fmtNum(corpCardSupplyVat(d.amount).vat) : '') : ''; }
+      if(field === 'amount' || c === COL_L || c === COL_M) numPad = true;
       else if(cell.formula) text = '';
       else if(cell.num !== null && cell.num !== undefined && !isNaN(cell.num)) text = opts ? String(opts.seq) : cell.text; // 순번 등 미리 인쇄된 값은 그대로
     } else if(r === totalRowNum){
@@ -15127,6 +15134,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     const spanCss = (wrapPara
       ? 'display:block; white-space:pre-wrap; word-break:keep-all; overflow-wrap:normal; line-height:1.2;'
       : 'display:inline-block; white-space:pre; line-height:1.2;') + deco;
+    if(numPad){ css.push('text-align:right'); css.push('padding-right:0.45em'); }
     return `<td${attrs} style="${css.join('; ')}">${inner ? `<span class="xfit${wrapPara?' xwrap':''}${dataText?' xdata':''}" style="${spanCss}">${inner}</span>` : ''}</td>`;
   };
 
@@ -15162,7 +15170,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         // 머리글 글자(한 칸짜리일 때)도 너무 작아지지 않게 80%까지는 확보한다.
         const hc = headerRowNum && rows[headerRowNum] && rows[headerRowNum].cells[c];
         const ht = hc ? String(hc.text||'').split('\n').reduce((a,l)=>Math.max(a, ctx.measureText(l.trim()).width), 0) : 0;
-        need[c-minCol] = Math.ceil(Math.max(mx, ht * 0.8)) + 10;
+        // 공급가·부가세·금액(숫자)은 줄이지 않고 오른쪽에 여유를 둔다.
+        need[c-minCol] = Math.ceil(Math.max(mx, ht * 0.8)) + (k >= 10 && k <= 12 ? 22 : 10);
       }
       const total = widths.reduce((a,b)=>a+b,0);
       // 내용이 짧은 칸(비고 등)은 내용 폭까지 줄인다(원래의 30% 아래로는 안 줄임).
