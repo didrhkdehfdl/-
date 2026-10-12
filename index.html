@@ -14111,6 +14111,14 @@ async function importCorpCardFile(file, expectCardId){
 // "통행여부"는 법인카드 탭에 대응되는 데이터가 없어 빈칸으로 남는다.
 // "사용장소"는 row.venue(법인카드 탭의 "사용장소" 칸)를 그대로 옮겨 적는다.
 let corpCardSelectedIds = new Set();
+// 체크한 행의 금액 칸을 노란색으로 표시한다(PDF 내보냄 표시와는 별개).
+function paintCorpCardSelectedAmounts(){
+  document.querySelectorAll('.corpcard-money[data-field="amount"]').forEach(inp=>{
+    const on = corpCardSelectedIds.has(inp.dataset.id);
+    inp.style.background = on ? '#fff3a0' : '';
+    inp.style.color = on ? '#000' : '';
+  });
+}
 function groupCorpCardRowsForDoc(rows){
   const order = [];
   const groups = new Map();
@@ -15538,7 +15546,7 @@ async function renderCorpCardMain(){
               <td class="corpcard-supply" data-id="${row.id}" style="padding:5px 4px; text-align:right; color:var(--muted);">${sv.supply?fmtNum(sv.supply):''}</td>
               <td class="corpcard-vat" data-id="${row.id}" style="padding:5px 4px; text-align:right; color:var(--muted);">${sv.vat?fmtNum(sv.vat):''}</td>
               <td style="padding:3px 4px;">
-                <input type="text" inputmode="numeric" class="corpcard-f corpcard-money" data-id="${row.id}" data-field="amount" value="${row.amount?Number(row.amount).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right; ${issues.amount?errBorder:''}">
+                <input type="text" inputmode="numeric" class="corpcard-f corpcard-money" data-id="${row.id}" data-field="amount" value="${row.amount?Number(row.amount).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right; ${corpCardSelectedIds.has(row.id)?'background:#fff3a0; color:#000;':''} ${issues.amount?errBorder:''}">
                 ${issues.amount ? `<div class="corpcard-issue" data-id="${row.id}" data-field="amount" style="font-size:10px; color:var(--neg); margin-top:2px; text-align:right;">${escapeHtml(issues.amount)}</div>` : ''}
               </td>
               <td style="padding:3px 4px;">
@@ -15871,6 +15879,7 @@ async function renderCorpCardMain(){
       if(selectAllBox.checked) rows.forEach(r=>corpCardSelectedIds.add(r.id));
       else rows.forEach(r=>corpCardSelectedIds.delete(r.id));
       document.querySelectorAll('.corpcard-select-box').forEach(b=>{ b.checked = corpCardSelectedIds.has(b.dataset.id); });
+      paintCorpCardSelectedAmounts();
       updateCorpCardSelectionUi();
     });
   }
@@ -15879,7 +15888,8 @@ async function renderCorpCardMain(){
       if(box.checked) corpCardSelectedIds.add(box.dataset.id);
       else corpCardSelectedIds.delete(box.dataset.id);
       // 표 전체를 다시 그리면 행이 많을 때 체크 한 번에 0.2초씩 멈춘다 —
-      // 선택 때문에 달라지는 건 출력 버튼 문구뿐이라 그것만 고친다.
+      // 선택 때문에 달라지는 건 출력 버튼 문구와 금액 칸 색뿐이라 그것만 고친다.
+      paintCorpCardSelectedAmounts();
       updateCorpCardSelectionUi();
     });
   });
