@@ -6841,6 +6841,7 @@ function normalizeHeader(s){
 }
 function normalizeDateString(s){
   s = s.trim();
+  s = s.replace(/^(\d{4}-\d{2}-\d{2})\s+\d{1,2}:\d{2}(:\d{2})?$/, '$1');   // 엑셀 도우미가 보낸 "날짜 시각"은 날짜만
   if(!s) return s;
   let m = s.match(/^(\d{4})[-.\/](\d{1,2})[-.\/](\d{1,2})$/);
   if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
@@ -13669,6 +13670,18 @@ async function reparseStoredApprovalFile(){
 const APPROVAL_LINK_KEY = 'cardapproval';
 const APPROVAL_NAME_PATTERN = '^\\d+_\\d{14}\\.(xlsx|xls)$';
 let approvalAutoBusy = false, approvalAutoLast = 0, approvalAutoNote = '';
+// 엑셀 도우미가 엑셀(COM)로 파일을 열어 모든 시트의 값을 읽어 SheetJS 통합문서 모양으로 만든다.
+async function readWorkbookViaExcel(path){
+  await loadXlsxLib();
+  const first = await excelHelperCall('/readvalues', { path, sheet: '' }, 5*60*1000);
+  const wb = { SheetNames: [], Sheets: {} };
+  for(const name of (first.sheetNames || [])){
+    const r = name === first.sheet ? first : await excelHelperCall('/readvalues', { path, sheet: name }, 5*60*1000);
+    wb.SheetNames.push(name);
+    wb.Sheets[name] = XLSX.utils.aoa_to_sheet((r.rows||[]).map(row=>row.map(v=>v==null ? '' : v)));
+  }
+  return wb;
+}
 async function pickApprovalFolder(){
   const r = await excelHelperCall('/pick', { title: '카드사 승인내역 파일 하나를 고르세요 (그 폴더의 최신 파일을 자동으로 불러옵니다)' }, 10*60*1000);
   if(r.cancelled) return null;
@@ -13689,9 +13702,18 @@ async function checkApprovalFolder(force){
     const key = r.name + '|' + r.mtime;
     if(!force && link.lastImported === key){ approvalAutoNote = `최신 파일 ${r.name} 불러옴`; return; }
     setLinkedFile(APPROVAL_LINK_KEY, { ...link, path: r.path, name: r.name });
-    const file = await readLinkedFile(APPROVAL_LINK_KEY);
     await ensureCorpCardLoaded();
-    const ok = await handleCorpCardApprovalUpload(file, { quiet: true });
+    let ok;
+    let file = null;
+    try{ file = await readLinkedFile(APPROVAL_LINK_KEY); }catch(e){ file = null; }
+    if(file){
+      try{ ok = await handleCorpCardApprovalUpload(file, { quiet: true }); }catch(e){ file = null; }
+    }
+    if(!file){
+      // 앱이 파일을 직접 못 읽으면(문서보안 등) 엑셀 도우미가 엑셀(COM)로 열어 시트 값을 읽어 온다.
+      const wb = await readWorkbookViaExcel(r.path);
+      ok = await handleCorpCardApprovalUpload({ name: r.name }, { quiet: true, wb });
+    }
     if(ok) setLinkedFile(APPROVAL_LINK_KEY, { ...getLinkedFile(APPROVAL_LINK_KEY), lastImported: key });
     approvalAutoNote = `${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 최신 파일 ${r.name} 불러옴`;
     if(state.activeTab === 'cardrecon') renderCardReconMain();
@@ -13705,7 +13727,8 @@ setInterval(()=>{ if((state.activeTab === 'cardrecon' || state.activeTab === 'co
 async function handleCorpCardApprovalUpload(file, opts){
   const say = (opts && opts.quiet) ? (m => showLedgerToast(m)) : (m => alert(m));
   await loadXlsxLib();
-  const { wb, buf } = await readWorkbookFromFile(file);
+  // opts.wb: 문서보안(DRM) 파일처럼 앱이 직접 못 읽는 파일을 엑셀 도우미(COM)로 읽어 만든 통합문서
+  const { wb, buf } = (opts && opts.wb) ? { wb: opts.wb, buf: null } : await readWorkbookFromFile(file);
   const { rows: parsedRows, totalRaw } = parseApprovalWorkbookForCorpCard(wb);
   if(!totalRaw){ say('승인내역 시트에서 "승인일자"/"승인금액" 헤더를 찾지 못했습니다.'); return false; }
   const cancelledCount = totalRaw - parsedRows.length;
@@ -13793,7 +13816,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 36;
+const EXCEL_HELPER_VERSION = 37;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20869,7 +20892,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '36'
+$Version = '37'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21872,7 +21895,7 @@ function Add-JsonString([Text.StringBuilder]$sb, [string]$s){
 function Add-JsonCell([Text.StringBuilder]$sb, $v){
   if($null -eq $v){ [void]$sb.Append('null') }
   elseif($v -is [string]){ Add-JsonString $sb $v }
-  elseif($v -is [datetime]){ Add-JsonString $sb ($v.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)) }
+  elseif($v -is [datetime]){ Add-JsonString $sb ($v.ToString($(if($v.TimeOfDay.TotalSeconds -ge 1){ 'yyyy-MM-dd HH:mm:ss' } else { 'yyyy-MM-dd' }), [Globalization.CultureInfo]::InvariantCulture)) }
   elseif($v -is [bool]){ [void]$sb.Append($(if($v){ 'true' } else { 'false' })) }
   elseif($v -is [double] -or $v -is [decimal] -or $v -is [single]){
     $d = [double]$v
