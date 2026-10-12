@@ -15480,7 +15480,7 @@ async function renderCorpCardMain(){
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">지출내역${colFilterIconHtml(colFilterTabKey,'expenseType')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">공급가액</th>
           <th style="padding:6px 4px; color:var(--muted); width:80px;">부가세</th>
-          <th style="padding:6px 4px; color:var(--muted); width:100px;">금액${colFilterIconHtml(colFilterTabKey,'amount')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:100px;">금액${colFilterIconHtml(colFilterTabKey,'amount')}<label title="보이는 줄의 금액 노란색 표시를 한 번에 켜고 끕니다" style="display:flex; align-items:center; justify-content:flex-end; gap:3px; font-size:10px; font-weight:400; cursor:pointer; margin-top:2px;"><input type="checkbox" id="corpCardHlAllBox" style="margin:0;">🟨 전체</label></th>
           <th style="padding:6px 4px; color:var(--muted); width:70px;">하이패스<br>사용여부${colFilterIconHtml(colFilterTabKey,'hipass')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">차량번호<br>(끝4자리)${colFilterIconHtml(colFilterTabKey,'carNo')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
@@ -15878,12 +15878,31 @@ async function renderCorpCardMain(){
       updateCorpCardSelectionUi();
     });
   }
+  // 🟨 전체: 지금 화면에 보이는 줄(필터 적용 후) 전체를 한 번에 표시/해제
+  const hlAllBox = document.getElementById('corpCardHlAllBox');
+  if(hlAllBox){
+    const visibleIds = () => [...main.querySelectorAll('.corpcard-hl-box')].map(b=>b.dataset.id);
+    const vis = visibleIds();
+    hlAllBox.checked = vis.length > 0 && vis.every(id => (rows.find(x=>x.id===id)||{}).hl);
+    hlAllBox.addEventListener('change', ()=>{
+      visibleIds().forEach(id=>{
+        const r = rows.find(x=>x.id===id); if(!r) return;
+        if(hlAllBox.checked) r.hl = true; else delete r.hl;
+        const b = main.querySelector(`.corpcard-hl-box[data-id="${id}"]`); if(b) b.checked = hlAllBox.checked;
+        const inp = main.querySelector(`.corpcard-money[data-field="amount"][data-id="${id}"]`);
+        if(inp){ inp.style.background = hlAllBox.checked ? '#fff3a0' : ''; inp.style.color = hlAllBox.checked ? '#000' : ''; }
+      });
+      markCorpCardDirty(activeCard.id);
+      flushCorpCardSave();
+    });
+  }
   // 🟨 금액 노란색 표시(선택 체크와 별개, 저장되며 PDF에도 나온다)
   main.querySelectorAll('.corpcard-hl-box').forEach(box=>{
     box.addEventListener('change', ()=>{
       const r = rows.find(x=>x.id===box.dataset.id);
       if(!r) return;
       if(box.checked) r.hl = true; else delete r.hl;
+      if(hlAllBox){ const ids = [...main.querySelectorAll('.corpcard-hl-box')].map(b=>b.dataset.id); hlAllBox.checked = ids.length > 0 && ids.every(id => (rows.find(x=>x.id===id)||{}).hl); }
       const inp = main.querySelector(`.corpcard-money[data-field="amount"][data-id="${r.id}"]`);
       if(inp){ inp.style.background = box.checked ? '#fff3a0' : ''; inp.style.color = box.checked ? '#000' : ''; }
       markCorpCardDirty(activeCard.id);
