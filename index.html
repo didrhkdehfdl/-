@@ -15032,7 +15032,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     const code = styles.numFmtCode(st.numFmtId);
     let text = cell.text;
     const isData = (r >= dataStart && r <= lastDataRow) || !!opts;
-    let dataText = false, numPad = false;   // 입력 내역의 글자 칸(날짜·금액 제외) — 넘치면 두 줄로 내려 쓴다
+    let dataText = false, numPad = false, hlAmount = false;   // 입력 내역의 글자 칸(날짜·금액 제외) — 넘치면 두 줄로 내려 쓴다
     if(isData){
       // 데이터 칸은 양식에 남아있던 값 대신 지금 입력한 내역으로 채운다.
       const d = opts ? opts.data : (dataRows[r-dataStart] || null);
@@ -15045,6 +15045,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       } else if(c === COL_L){ text = d ? (corpCardSupplyVat(d.amount).supply ? fmtNum(corpCardSupplyVat(d.amount).supply) : '') : ''; }
       else if(c === COL_M){ text = d ? (corpCardSupplyVat(d.amount).vat ? fmtNum(corpCardSupplyVat(d.amount).vat) : '') : ''; }
       if(field === 'amount' || c === COL_L || c === COL_M) numPad = true;
+      if(field === 'amount' && d && corpCardSelectedIds.has(d.id)) hlAmount = true;   // 화면에서 체크한 행의 금액은 노란색
       else if(cell.formula) text = '';
       else if(cell.num !== null && cell.num !== undefined && !isNaN(cell.num)) text = opts ? String(opts.seq) : cell.text; // 순번 등 미리 인쇄된 값은 그대로
     } else if(r === totalRowNum){
@@ -15143,6 +15144,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       ? 'display:block; white-space:pre-wrap; word-break:keep-all; overflow-wrap:normal; line-height:1.2;'
       : 'display:inline-block; white-space:pre; line-height:1.2;') + deco;
     if(numPad){ css.push('text-align:right'); css.push('padding-right:0.45em'); }
+    if(hlAmount){ css.push('background:#ffff00'); css.push('-webkit-print-color-adjust:exact'); css.push('print-color-adjust:exact'); }
     return `<td${attrs} style="${css.join('; ')}">${inner ? `<span class="xfit${wrapPara?' xwrap':''}${dataText?' xdata':''}" style="${spanCss}">${inner}</span>` : ''}</td>`;
   };
 
@@ -15260,7 +15262,7 @@ function buildCorpCardMonthPrintHtml(card, month, rows){
       <td class="pt-center">${escapeHtml(row.expenseType)}</td>
       <td class="pt-num">${sv.supply?fmtNum(sv.supply):''}</td>
       <td class="pt-num">${sv.vat?fmtNum(sv.vat):''}</td>
-      <td class="pt-num">${row.amount?fmtNum(row.amount):''}</td>
+      <td class="pt-num" ${corpCardSelectedIds.has(row.id)?'style="background:#ffff00; -webkit-print-color-adjust:exact; print-color-adjust:exact;"':''}>${row.amount?fmtNum(row.amount):''}</td>
       <td class="pt-center">${escapeHtml(row.hipass)}</td>
       <td class="pt-center">${escapeHtml(row.carNo)}</td>
       <td class="pt-note">${escapeHtml(row.note)}</td>
