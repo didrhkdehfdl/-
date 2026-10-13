@@ -15095,8 +15095,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       // 그대로 찍힌다.
       const label = labelLeftOf(r, c);
       const agg = cell.formula ? cell.formula.match(/^(COUNT|SUM)\(([A-Z]+)\d+:[A-Z]+\d+\)$/i) : null;
-      if(/사용건수|건수/.test(label)) text = String(dataRows.length);
-      else if(/사용금액|합계금액|총금액/.test(label)) text = fmtNum(total);
+      if(/사용건수|건수/.test(label)) text = String(dataRows.length) + '건';
+      else if(/사용금액|합계금액|총금액/.test(label)) text = fmtNum(total) + '원';
       else if(agg && agg[1].toUpperCase() === 'COUNT') text = String(dataRows.length);
       else if(agg){
         const aggCol = xlsxColToIdx(agg[2]);
