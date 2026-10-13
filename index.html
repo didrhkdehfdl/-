@@ -14720,6 +14720,20 @@ function measureXlsxDigitWidth(font){
 }
 // 시트 모양 + 지금 입력한 내역 → 인쇄용 HTML 한 장.
 // 비고에 이름이 쉼표로 5명 이상 적혀 있으면 4명씩 끊어 줄을 바꾼다(아니면 그대로).
+// 사용처·업무내용이 길면(12자 초과) 띄어쓰기·괄호 앞에서 끊어 여러 줄로 만든다.
+function corpCardWrapText(raw, max=12){
+  const str = String(raw||'').trim();
+  if(str.includes('\n') || str.length <= max) return str;
+  const words = str.replace(/\s*\(/g,' (').split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = '';
+  words.forEach(w=>{
+    if(cur && (cur + ' ' + w).length > max){ lines.push(cur); cur = w; }
+    else cur = cur ? cur + ' ' + w : w;
+  });
+  if(cur) lines.push(cur);
+  return lines.join('\n');
+}
 function corpCardNoteLines(raw){
   const str = String(raw||'');
   const names = str.split(/\s*,\s*/).filter(Boolean);
@@ -15045,6 +15059,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         const raw = d ? d[field] : '';
         if(field === 'date') text = d ? String(formatXlsxDate(raw, code)).replace(/\s*\n\s*/g,' ') : '';   // 날짜는 한 줄로
         else if(field === 'amount') text = (d && Number(raw)) ? fmtNum(Number(raw)) : '';
+        else if((field === 'place' || field === 'workDetail') && d && /\n/.test(corpCardWrapText(raw))) text = corpCardWrapText(raw);   // 길면 여러 줄로
         else if(field === 'note' && d && /\n/.test(corpCardNoteLines(raw))) text = corpCardNoteLines(raw);   // 이름 4명씩 줄바꿈
         else { text = d ? String(raw||'') : ''; dataText = true; }
       } else if(c === COL_L){ text = d ? (corpCardSupplyVat(d.amount).supply ? fmtNum(corpCardSupplyVat(d.amount).supply) : '') : ''; }
@@ -15181,7 +15196,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         let mx = 0;
         // 날짜 칸은 "10월 02일"처럼 찍히므로 그 모양으로 잰다(한 줄로 나오게).
         if(k === 0) mx = ctx.measureText('10월 02일').width;
-        else blocks.forEach(b=>{ (k === 15 ? corpCardNoteLines(textOf(b[k])) : String(textOf(b[k]))).split('\n').forEach(line=>{ mx = Math.max(mx, ctx.measureText(line).width); }); });
+        else blocks.forEach(b=>{ (k === 15 ? corpCardNoteLines(textOf(b[k])) : (k === 7 || k === 8) ? corpCardWrapText(textOf(b[k])) : String(textOf(b[k]))).split('\n').forEach(line=>{ mx = Math.max(mx, ctx.measureText(line).width); }); });
         // 머리글 글자(한 칸짜리일 때)도 너무 작아지지 않게 80%까지는 확보한다.
         const hc = headerRowNum && rows[headerRowNum] && rows[headerRowNum].cells[c];
         const ht = hc ? String(hc.text||'').split('\n').reduce((a,l)=>Math.max(a, ctx.measureText(l.trim()).width), 0) : 0;
