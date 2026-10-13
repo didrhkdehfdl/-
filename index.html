@@ -13841,7 +13841,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 39;
+const EXCEL_HELPER_VERSION = 40;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -21093,7 +21093,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '39'
+$Version = '40'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -22113,11 +22113,13 @@ function Add-SheetValuesJson([Text.StringBuilder]$sb, $ws){
   # 서식만 끝까지 칠해진 시트는 UsedRange가 1,048,576행까지 잡혀 오래 걸린다 — 실제 값이 있는 마지막 행·열로 줄인다.
   try {
     $m = [Type]::Missing
-    $fr = $ws.Cells.Find('*', $m, -4123, 2, 1, 2)
-    $fc = $ws.Cells.Find('*', $m, -4123, 2, 2, 2)
+    # 값(xlValues) 기준 — 맨 아래까지 ="" 같은 빈 수식이 채워져 있어도 실제 글자가 있는 행까지만.
+    $fr = $ws.Cells.Find('*', $ws.Cells.Item(1,1), -4163, 2, 1, 2)
+    $fc = $ws.Cells.Find('*', $ws.Cells.Item(1,1), -4163, 2, 2, 2)
     if($fr){ $lastRow = [Math]::Min($lastRow, [int]$fr.Row) } else { $lastRow = 0 }
     if($fc){ $lastCol = [Math]::Min($lastCol, [int]$fc.Column) }
-  } catch {}
+  } catch { Log "Find 실패: $($_.Exception.Message)" }
+  Log "시트 읽기 범위: $lastRow 행 x $lastCol 열"
   [void]$sb.Append('[')
   if($lastRow -ge 1 -and $lastCol -ge 1){
     # A1부터 읽어 앱이 파일을 직접 읽을 때와 행·열 위치가 같게 한다.
@@ -22127,8 +22129,15 @@ function Add-SheetValuesJson([Text.StringBuilder]$sb, $ws){
     $box = @{}
     Invoke-Retry { $rgo = $rg.psobject.BaseObject; $box.v = $rgo.GetType().InvokeMember('Value', [Reflection.BindingFlags]::GetProperty, $null, $rgo, $null) } | Out-Null
     $vals = $box.v
+    $emptyRun = 0
     for($r=1; $r -le $lastRow; $r++){
       if(($r % 100) -eq 0){ Set-Progress (40 + 58 * $r / $lastRow) 100 "행 읽는 중 ($r/$lastRow)" }
+      # 빈 행이 500줄 넘게 이어지면 그 아래는 서식만 남은 빈 칸으로 보고 그만 읽는다.
+      if($lastRow -gt 1 -or $lastCol -gt 1){
+        $blank = $true
+        for($c=1; $c -le $lastCol; $c++){ $cv = $vals[$r,$c]; if($cv -ne $null -and [string]$cv -ne ''){ $blank = $false; break } }
+        if($blank){ $emptyRun++; if($emptyRun -ge 500){ break } } else { $emptyRun = 0 }
+      }
       if($r -gt 1){ [void]$sb.Append(',') }
       [void]$sb.Append('[')
       for($c=1; $c -le $lastCol; $c++){
