@@ -15142,7 +15142,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     if(st.italic) css.push('font-style:italic');
     if(st.underline) css.push('text-decoration:underline');
     if(st.color) css.push(`color:${st.color}`);
-    if(fontSize) css.push(`font-size:${cq(fontSize * 96 / 72)}`);
+    if(isData && r !== totalRowNum) css.push(`font-size:${cq((fontSize || 8.5) * corpDataFontScale * 96 / 72)}`);
+    else if(fontSize) css.push(`font-size:${cq(fontSize * 96 / 72)}`);
     // 글꼴 이름도 양식 그대로 — 없으면 표 전체 기본 글꼴을 쓴다.
     if(st.name) css.push(`font-family:'${String(st.name).replace(/'/g,'')}','Malgun Gothic','Noto Sans KR',sans-serif`);
     // 정렬을 따로 지정하지 않은 칸(일반)은 엑셀처럼 숫자는 오른쪽, 글자는 왼쪽.
@@ -15193,6 +15194,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     const w = colWidths[c] !== undefined ? colWidths[c] : 8.43;
     widths.push(w > 0 ? Math.max(1, Math.trunc(((256*w + Math.trunc(128/mdw)) / 256) * mdw)) : 0);
   }
+  let corpDataFontScale = 1;
   // 가독성: 전체 폭은 그대로 두고, 실제로 적힌 내용에 맞춰 칸 너비를 다시 나눈다. 내용이 짧은 칸
   // (부서·법인·하이패스 등)은 줄이고(원래의 55%까지), 그만큼을 글자가 넘치는 칸(사용처·업무내용·비고 등)에
   // 준다 — 칸에 맞추느라 글자를 줄이는 일이 줄어 같은 종이에서 글자가 더 크게 찍힌다.
@@ -15221,10 +15223,15 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       const noteSp = headerRowNum ? spanAt.get(`${headerRowNum},16`) : null;
       const isNoteIdx = i => { const c = i + minCol; return c === 16 || (noteSp && c > 16 && c < 16 + noteSp.cs); };
       for(let i=0; i<widths.length; i++) if(isNoteIdx(i) && i+minCol !== 16){ isData[i] = true; need[i] = 0; }
+      // 입력 칸 전체 폭에 내용이 여유 있게 들어가면 그 비율만큼 입력 내역 글자를 키운다(최대 1.5배).
+      const dataW = widths.reduce((a,w,i)=> a + (isData[i] ? w : 0), 0);
+      const needSum = need.reduce((a,n,i)=> a + (isData[i] ? n : 0), 0);
+      if(needSum > 0) corpDataFontScale = Math.max(1, Math.min(1.5, dataW / needSum * 0.97));
+      for(let i=0; i<need.length; i++) need[i] = Math.ceil(need[i] * corpDataFontScale);
       const total = widths.reduce((a,b)=>a+b,0);
       // 내용이 짧은 칸(비고 등)은 내용 폭까지 줄인다(원래의 30% 아래로는 안 줄임).
       // 비고 칸(k=15)은 4명씩 끊은 줄 폭까지 바짝 줄인다(하한 10%).
-      const target = widths.map((w,i)=> isData[i] && w > 0 ? Math.max(Math.round(w * (isNoteIdx(i) ? (i+minCol === 16 ? 0.1 : 0) : 0.3)), Math.min(w, need[i])) : w);
+      const target = widths.map((w,i)=> isData[i] && w > 0 ? Math.max(Math.round(w * (isNoteIdx(i) ? (i+minCol === 16 ? 0.1 : 0) : 0.15)), Math.min(w, need[i])) : w);
       let spare = total - target.reduce((a,b)=>a+b,0);
       // 먼저 글자가 넘치는 칸을 필요한 만큼 채우고(모자라면 비율대로), 남는 폭은 내용이 긴 칸에 비례해 나눈다.
       const lack = target.map((t,i)=> isData[i] ? Math.max(0, need[i] - t) : 0);
