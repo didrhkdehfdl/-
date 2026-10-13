@@ -15188,7 +15188,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       }
       const total = widths.reduce((a,b)=>a+b,0);
       // 내용이 짧은 칸(비고 등)은 내용 폭까지 줄인다(원래의 30% 아래로는 안 줄임).
-      const target = widths.map((w,i)=> isData[i] && w > 0 ? Math.max(Math.round(w * 0.3), Math.min(w, need[i])) : w);
+      // 비고 칸(k=15)은 4명씩 끊은 줄 폭까지 바짝 줄인다(하한 10%).
+      const target = widths.map((w,i)=> isData[i] && w > 0 ? Math.max(Math.round(w * (i+minCol-1 === 15 ? 0.1 : 0.3)), Math.min(w, need[i])) : w);
       let spare = total - target.reduce((a,b)=>a+b,0);
       // 먼저 글자가 넘치는 칸을 필요한 만큼 채우고(모자라면 비율대로), 남는 폭은 내용이 긴 칸에 비례해 나눈다.
       const lack = target.map((t,i)=> isData[i] ? Math.max(0, need[i] - t) : 0);
