@@ -14724,15 +14724,29 @@ function measureXlsxDigitWidth(font){
 function corpCardWrapText(raw, max=12){
   const str = String(raw||'').trim();
   if(str.includes('\n') || str.length <= max) return str;
-  const words = str.replace(/\s*\(/g,' (').split(/\s+/).filter(Boolean);
+  // 끊을 수 있는 자리: 띄어쓰기, "(주)" 같은 괄호 뒤, 지점·방향 괄호 앞(단 "(주)" 앞은 안 끊음).
+  const cuts = [];
+  for(let k=1; k<str.length; k++){
+    if(str[k] === ' ') cuts.push([k, k+1]);
+    else if(str[k-1] === ')' && str[k] !== ' ') cuts.push([k, k]);
+    else if(str[k] === '(' && str[k-1] !== ' ' && !/^\((주|유|사|재)\)/.test(str.slice(k))) cuts.push([k, k, 6]);
+  }
+  if(!cuts.length) return str;
+  // 줄 수는 길이에 맞추고(12자당 1줄), 각 줄이 비슷한 길이가 되는 자리를 고른다.
+  const n = Math.min(cuts.length + 1, Math.ceil(str.length / max));
   const lines = [];
-  let cur = '';
-  words.forEach(w=>{
-    if(cur && (cur + ' ' + w).length > max){ lines.push(cur); cur = w; }
-    else cur = cur ? cur + ' ' + w : w;
-  });
-  if(cur) lines.push(cur);
-  return lines.join('\n');
+  let start = 0;
+  for(let l=1; l<n; l++){
+    const ideal = start + (str.length - start) / (n - l + 1);
+    let best = null;
+    const cost = c => Math.abs(c[0]-ideal) + (c[2]||0);   // 괄호 앞보다 띄어쓰기·(주) 뒤를 우선
+    cuts.forEach(c=>{ if(c[0] > start && (!best || cost(c) < cost(best))) best = c; });
+    if(!best) break;
+    lines.push(str.slice(start, best[0]).trim());
+    start = best[1];
+  }
+  lines.push(str.slice(start).trim());
+  return lines.filter(Boolean).join('\n');
 }
 function corpCardNoteLines(raw){
   const str = String(raw||'');
