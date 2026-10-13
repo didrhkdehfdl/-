@@ -14056,7 +14056,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 42;
+const EXCEL_HELPER_VERSION = 43;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -21320,7 +21320,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '42'
+$Version = '43'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -22176,6 +22176,29 @@ function New-CardBlockUnit($ws, $blocks, [string]$last4, [string]$cardNumber, $c
   }
   return "(시트 맨 아래 ${at}~${end}행에 추가 — 카드 $srcKey 행 형식을 본뜸)"
 }
+# 카드 내역 한 줄(B~Q 16칸)을 쓴다. 엑셀·PC 환경에 따라 어떤 방식이 "지정한 캐스트가 잘못되었습니다"로
+# 거절될 때가 있어, 되는 방식이 나올 때까지 차례로 시도하고 실패 내용을 기록(helper.log)에 자세히 남긴다.
+function Write-CardRowValues($ws, [int]$r, $arr){
+  $errs = @()
+  try { Invoke-Retry { $ws.Range("B${r}:Q${r}").Value2 = $arr } | Out-Null; return } catch { $errs += "Value2배열: $($_.Exception.GetType().Name) $($_.Exception.HResult) $($_.Exception.Message)" }
+  try { Invoke-Retry { $rgo = $ws.Range("B${r}:Q${r}").psobject.BaseObject; [void]$rgo.GetType().InvokeMember('Value2', [Reflection.BindingFlags]::SetProperty, $null, $rgo, @(,$arr)) } | Out-Null; return } catch { $errs += "Invoke배열: $($_.Exception.GetType().Name) $($_.Exception.HResult) $($_.Exception.Message)" }
+  # 한 칸씩: Value2 → Formula(글자로) 순서로
+  $failed = @()
+  for($j=0; $j -lt 16; $j++){
+    $cv = $arr[0,$j]; $cc = 2 + $j
+    $ok = $false
+    try { Invoke-Retry { $ws.Cells.Item($r, $cc).Value2 = $cv } | Out-Null; $ok = $true } catch { if($j -eq 0){ $errs += "칸Value2: $($_.Exception.GetType().Name) $($_.Exception.HResult) $($_.Exception.Message)" } }
+    if(-not $ok){
+      try { $fs = if($null -eq $cv){ '' } else { [string]$cv }; Invoke-Retry { $ws.Range("$([char](64 + $cc))$r").Formula = $fs } | Out-Null; $ok = $true } catch { if($j -eq 0){ $errs += "칸Formula: $($_.Exception.GetType().Name) $($_.Exception.HResult) $($_.Exception.Message)" } }
+    }
+    if(-not $ok){ $failed += "$([char](64 + $cc))$r" }
+  }
+  if($errs.Count){ Log ("카드 내역 쓰기 $($ws.Name) ${r}행: " + ($errs -join ' | ')) }
+  if($failed.Count){
+    $sheetInfo = try { "시트보호=$($ws.ProtectContents) 병합=$($ws.Range("B${r}:Q${r}").MergeCells)" } catch { '' }
+    throw "$($ws.Name) 시트 ${r}행에 값을 쓰지 못했습니다($($failed -join ',')). $sheetInfo / $($errs[0])"
+  }
+}
 function Handle-CardMasterWrite($body){
   $path = [string]$body.path
   $xl = Get-Excel $true
@@ -22286,12 +22309,7 @@ function Handle-CardMasterWrite($body){
             }
             # 한 줄을 배열로 한 번에 쓴다. PowerShell의 COM 변환이 배열을 못 넘기는 경우("지정한 캐스트가
             # 잘못되었습니다")가 있어 COM 객체에 직접 넘기고, 그래도 안 되면 한 칸씩 쓴다.
-            try {
-              Invoke-Retry { $rgo = $ws.Range("B${r}:Q${r}").psobject.BaseObject; [void]$rgo.GetType().InvokeMember('Value2', [Reflection.BindingFlags]::SetProperty, $null, $rgo, @(,$arr)) } | Out-Null
-            } catch {
-              Log "한 줄 쓰기 실패(${r}행) → 한 칸씩 씀: $($_.Exception.Message)"
-              for($j=0; $j -lt 16; $j++){ $cv = $arr[0,$j]; $cc = 2 + $j; Invoke-Retry { $ws.Cells.Item($r, $cc).Value2 = $cv } | Out-Null }
-            }
+            Write-CardRowValues $ws ([int]$r) $arr
             if(($i % 5) -eq 4){ Set-Progress ($pgBase + $i + 1) $pgTotal "${num}월 카드 $last4" }
           } else {
             Invoke-Retry { [void]$ws.Range("B${r}:Q${r}").ClearContents() } | Out-Null
