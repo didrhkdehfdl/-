@@ -12319,8 +12319,9 @@ const OM_LIST_MULTITEXT_FIELDS = ['phone','receivedDetail','actionDetail','note'
 function omListCellHtml(row, field){
   const isNumber = OM_LIST_NUMBER_FIELDS.includes(field);
   const isDate = field==='receivedDate' || field==='processedDate' || field==='invoiceDate';
-  const isMultitext = OM_LIST_MULTITEXT_FIELDS.includes(field);
   const v = row[field];
+  // 엑셀에서 칸 안 줄바꿈(Alt+Enter)이 있는 값은 어느 칸이든 여러 줄로 보여준다(한 줄 입력칸은 줄바꿈을 지운다).
+  const isMultitext = OM_LIST_MULTITEXT_FIELDS.includes(field) || /\n/.test(String(v==null?'':v));
   if(isDate) return `<input type="date" class="om-field" data-id="${row.id}" data-field="${field}" value="${escapeHtml(v)}" style="width:100%;">`;
   if(isNumber) return `<input type="text" inputmode="numeric" class="om-field om-money" data-id="${row.id}" data-field="${field}" value="${v?Number(v).toLocaleString('ko-KR'):''}" style="width:100%;">`;
   if(isMultitext){
