@@ -14607,7 +14607,7 @@ function fitCorpCardSheetHtml(html){
       }
       const need = span.scrollWidth;
       if(need <= avail) return;
-      if(span.classList.contains('xdata')){
+      if(span.classList.contains('xdata') && !span.querySelector('br')){
         // 입력 내역 글자는 줄이기 전에 먼저 띄어쓰기 자리에서 두 줄로 내린다
         // (예: "26년 경기도 주택지원 설치확인 / (오산, 용인)"). 두 줄로도 넘치면 그때 글자를 줄인다.
         span.style.whiteSpace = 'pre-wrap';
@@ -14634,7 +14634,8 @@ function fitCorpCardSheetHtml(html){
         return;
       }
       const size = base * avail / need;
-      if(size >= base * 0.7){ setSize(span, size); return; }
+      // 이름 4명씩 직접 끊은 비고는 더 줄바꿈하지 않고 글자만 줄인다.
+      if(size >= base * 0.7 || span.querySelector('br')){ setSize(span, Math.max(base * 0.35, size)); return; }
       span.style.whiteSpace = 'pre-wrap';
       span.style.wordBreak = 'keep-all';
       span.style.overflowWrap = 'normal';
@@ -15043,7 +15044,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         const raw = d ? d[field] : '';
         if(field === 'date') text = d ? String(formatXlsxDate(raw, code)).replace(/\s*\n\s*/g,' ') : '';   // 날짜는 한 줄로
         else if(field === 'amount') text = (d && Number(raw)) ? fmtNum(Number(raw)) : '';
-        else if(field === 'note' && d && corpCardNoteLines(raw) !== String(raw||'')) text = corpCardNoteLines(raw);   // 이름 4명씩 줄바꿈
+        else if(field === 'note' && d && /\n/.test(corpCardNoteLines(raw))) text = corpCardNoteLines(raw);   // 이름 4명씩 줄바꿈
         else { text = d ? String(raw||'') : ''; dataText = true; }
       } else if(c === COL_L){ text = d ? (corpCardSupplyVat(d.amount).supply ? fmtNum(corpCardSupplyVat(d.amount).supply) : '') : ''; }
       else if(c === COL_M){ text = d ? (corpCardSupplyVat(d.amount).vat ? fmtNum(corpCardSupplyVat(d.amount).vat) : '') : ''; }
