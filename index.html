@@ -489,6 +489,8 @@
   @page{ margin:12mm; }
   @page portraitPage{ size:A4 portrait; margin:12mm; }
   @page landscapePage{ size:A4 landscape; margin:10mm; }
+.om-mobile-list .om-field{ font-family:inherit; font-size:16px !important; padding:9px 10px !important; width:100% !important; box-sizing:border-box; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--text); }
+.om-mobile-list textarea.om-field{ line-height:1.5 !important; min-height:44px; }
 </style>
 </head>
 <body>
@@ -12330,7 +12332,46 @@ function omListCellHtml(row, field){
   }
   return `<input type="text" class="om-field" data-id="${row.id}" data-field="${field}" value="${escapeHtml(v)}" style="width:100%;">`;
 }
+
+// ---------- O&M 리스트: 휴대폰 화면(카드형) ----------
+// 좁은 화면에서는 2400px짜리 표 대신 건마다 카드로 보여준다. 자주 보는 칸(고객명·발전소명·연락처·접수/조치 내역·
+// 유무상·처리일자)은 바로 고칠 수 있게 펼쳐 두고, 나머지는 "전체 항목"을 눌러 연다. 입력칸은 표와 같은
+// .om-field(data-id/data-field)라서 저장·파일 연동·같이 보는 사람 표시가 그대로 동작한다.
+function omListIsMobile(){ return window.innerWidth < 760; }
+const OM_MOBILE_MAIN_FIELDS = ['customer','plantName','phone','address','receivedDetail','actionDetail','freePaid','processedDate','handler1'];
+function omListMobileCardsHtml(rows, offset){
+  const label = f => (OM_LIST_COLUMNS.find(c=>c[0]===f)||[f,f])[1];
+  const fieldRow = (row, f) => `<label style="display:block; margin-top:8px;"><span style="display:block; font-size:12px; color:var(--muted); margin-bottom:3px;">${escapeHtml(label(f))}</span>${omListCellHtml(row, f)}</label>`;
+  return `<div id="omListTableWrap" class="om-mobile-list" style="display:flex; flex-direction:column; gap:12px;">
+    ${rows.map((row,i)=>{
+      const tel = String(row.phone||'').split('\n')[0].replace(/[^0-9]/g,'');
+      return `<div class="om-card" data-id="${row.id}" style="border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--panel-2);">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span style="font-size:12px; color:var(--muted);">#${offset+i+1}</span>
+          <span style="font-size:13px; color:var(--muted);">${escapeHtml(row.receivedDate||'')}</span>
+          ${row.freePaid ? `<span style="font-size:12px; padding:1px 8px; border-radius:10px; border:1px solid var(--line);">${escapeHtml(row.freePaid)}</span>` : ''}
+          ${tel ? `<a href="tel:${tel}" style="margin-left:auto; font-size:13px; text-decoration:none; padding:4px 10px; border-radius:8px; border:1px solid var(--sky); color:var(--sky);">📞 전화</a>` : '<span style="margin-left:auto;"></span>'}
+          <button class="om-del-btn" data-id="${row.id}" title="삭제" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:20px; padding:0 4px;">×</button>
+        </div>
+        <div style="font-size:16px; font-weight:700; margin-top:6px;">${escapeHtml(row.customer||'(고객명 없음)')}${row.plantName ? ` <span style="font-size:13px; font-weight:400; color:var(--muted);">· ${escapeHtml(row.plantName)}</span>` : ''}</div>
+        ${OM_MOBILE_MAIN_FIELDS.map(f=>fieldRow(row, f)).join('')}
+        <details style="margin-top:10px;">
+          <summary style="font-size:13px; color:var(--sky); cursor:pointer; padding:6px 0;">전체 항목 보기·수정</summary>
+          ${OM_LIST_COLUMNS.map(([f])=>f).filter(f=>!OM_MOBILE_MAIN_FIELDS.includes(f)).map(f=>fieldRow(row, f)).join('')}
+        </details>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+// 화면 폭이 표↔카드 기준을 넘나들면 다시 그린다(가로·세로 돌리기 등).
+let omListLastMobile = null;
+window.addEventListener('resize', debounce(()=>{
+  const m = omListIsMobile();
+  if(omListLastMobile !== null && m !== omListLastMobile && state.activeTab === 'omList' && !document.querySelector('#main input:focus, #main textarea:focus')) renderOMListMain();
+  omListLastMobile = m;
+}, 300));
 async function renderOMListMain(){
+  omListLastMobile = omListIsMobile();
   const main = document.getElementById('main');
   // corpCard/vehicle와 같은 이유로, 다시 그리기 전 .table-wrap-frozen의
   // 세로·가로 스크롤 위치를 기억했다가 다시 그린 뒤 복원한다.
@@ -12379,7 +12420,8 @@ async function renderOMListMain(){
     </div>
     ${s.error ? `<div style="color:var(--neg); font-size:13px; margin-bottom:10px;">${escapeHtml(s.error)}</div>` : ''}
     ${s.rows.length===0 ? `<div class="empty-side">아직 등록된 O&M 리스트가 없습니다. 엑셀을 올리거나 "+ 행 추가"로 직접 입력해주세요.</div>` : `
-    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px;"><span style="font-size:12px; color:var(--muted);">총 ${filtered.length}건 · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다</span><span id="omPresenceBar" style="display:flex; gap:6px; flex-wrap:wrap;"></span></div>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px;"><span style="font-size:12px; color:var(--muted);">총 ${filtered.length}건${omListIsMobile() ? '' : ' · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다'}</span><span id="omPresenceBar" style="display:flex; gap:6px; flex-wrap:wrap;"></span></div>
+    ${omListIsMobile() ? omListMobileCardsHtml(pageRows, (s.page-1)*OM_LIST_PAGE_SIZE) : `
     <div class="table-wrap table-wrap-frozen" id="omListTableWrap">
       <table style="border-collapse:collapse; min-width:2400px; font-size:12px;">
         <thead><tr>
@@ -12401,6 +12443,7 @@ async function renderOMListMain(){
         </tbody>
       </table>
     </div>
+    `}
     ${totalPages>1 ? `
     <div style="display:flex; align-items:center; gap:10px; margin-top:12px;">
       <button id="omListPrevPageBtn" ${s.page<=1?'disabled':''} style="font-size:12px; padding:6px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--text); cursor:pointer;">◀ 이전</button>
@@ -12628,7 +12671,7 @@ function omVisibleRowIds(){
   const wr = wrap.getBoundingClientRect();
   const top = Math.max(0, wr.top), bottom = Math.min(window.innerHeight, wr.bottom);
   const ids = [];
-  wrap.querySelectorAll('tbody tr[data-id]').forEach(tr=>{ const r = tr.getBoundingClientRect(); if(r.bottom > top && r.top < bottom) ids.push(tr.dataset.id); });
+  wrap.querySelectorAll('tbody tr[data-id], .om-card[data-id]').forEach(tr=>{ const r = tr.getBoundingClientRect(); if(r.bottom > top && r.top < bottom) ids.push(tr.dataset.id); });
   return ids.slice(0, 80);
 }
 function omPresenceOthers(){
@@ -12644,13 +12687,13 @@ function applyOMPresence(){
   const label = f => { const c = OM_LIST_COLUMNS.find(x=>x[0]===f); return c ? c[1] : f; };
   others.forEach(o=>{
     (o.rows||[]).forEach(id=>{
-      const td = main.querySelector(`#omListTableWrap tr[data-id="${id}"] td`);
+      const td = main.querySelector(`#omListTableWrap tr[data-id="${id}"] td, #omListTableWrap .om-card[data-id="${id}"]`);
       if(td){ td.style.boxShadow = `inset 4px 0 0 ${o.color}`; td.setAttribute('data-presence','1'); td.title = `${o.name} 님이 보는 중`; }
     });
     if(o.rowId){
-      const tr = main.querySelector(`#omListTableWrap tr[data-id="${o.rowId}"]`);
+      const tr = main.querySelector(`#omListTableWrap tr[data-id="${o.rowId}"], #omListTableWrap .om-card[data-id="${o.rowId}"]`);
       if(tr){
-        const first = tr.querySelector('td');
+        const first = tr.querySelector('td') || tr;
         if(first){ first.style.boxShadow = `inset 4px 0 0 ${o.color}`; first.setAttribute('data-presence','1'); }
         const inp = o.field ? tr.querySelector(`.om-field[data-field="${o.field}"]`) : null;
         if(inp){
@@ -12658,7 +12701,7 @@ function applyOMPresence(){
           const tag = document.createElement('span'); tag.className = 'om-presence-tag';
           tag.textContent = o.name;
           tag.style.cssText = `position:absolute; transform:translateY(-100%); background:${o.color}; color:#fff; font-size:10px; padding:0 4px; border-radius:3px; pointer-events:none; white-space:nowrap; z-index:5;`;
-          const cell = inp.closest('td'); if(cell){ cell.style.position = 'relative'; cell.insertBefore(tag, cell.firstChild); }
+          const cell = inp.closest('td') || inp.closest('label'); if(cell){ cell.style.position = 'relative'; cell.insertBefore(tag, cell.firstChild); }
         }
       }
     }
