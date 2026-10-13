@@ -10928,6 +10928,8 @@ const flushCardMasterAutoWrite = debounce(async ()=>{
       const nums = new Set(dirtyNow);
       // 기억해 둔 달과 지금 내용이 다르면(다른 화면에서 한꺼번에 바뀐 경우 등) 그 달도 쓴다.
       Object.keys(snap).forEach(k=>{ const n = Number(k); const m = byNum.get(n) || { num:n, cards:[] }; if(cardMasterMonthSig(m) !== snap[k].sig) nums.add(n); });
+      // 아직 한 번도 쓰지 않은 달에 내역이 생겼으면(다른 PC에서 새 달을 입력한 경우 등) 그 달도 쓴다.
+      if(!firstTime) full.forEach(m=>{ if(!snap[m.num]) nums.add(m.num); });
       // 직접 고친 달이라도 마지막으로 쓴 내용과 똑같으면 다시 쓰지 않는다.
       [...nums].forEach(n=>{ if(snap[n] && cardMasterMonthSig(byNum.get(n) || { num:n, cards:[] }) === snap[n].sig) nums.delete(n); });
       const months = [...nums].sort((a,b)=>a-b).map(n=>{
@@ -11095,8 +11097,25 @@ async function checkCardMasterFileChanges(force){
     console.warn('통합본 파일 확인 실패', e);
   }finally{ cardMasterFileBusy = false; }
 }
-setInterval(()=>{
-  if((state.activeTab === 'corpCard' || state.activeTab === 'cardrecon') && document.visibilityState === 'visible') checkCardMasterFileChanges(true).catch(()=>{});
+// 연결한 PC 파일(O&M 리스트·사무실관리카드 통합본)은 어느 탭을 보고 있든(브라우저가 뒤에 있어도) 1분마다
+// 앱 ↔ 파일을 맞춘다. 다른 PC(도우미 없음)에서 고친 내용도 이 PC가 대신 파일에 쓴다.
+let linkedBgSyncBusy = false;
+setInterval(async ()=>{
+  if(linkedBgSyncBusy || typeof fbAuth === 'undefined' || !fbAuth.currentUser) return;
+  linkedBgSyncBusy = true;
+  try{
+    if(getLinkedFile(OM_LINK_KEY)){
+      try{ await ensureOMListLoaded(); await checkOMFileChanged(); }catch(e){ console.warn('O&M 백그라운드 동기화 실패', e); }
+    }
+    await ensureCardMasterLoaded();
+    if(corpCardMasterTemplates.some(t=>getLinkedFile(cardMasterLinkKey(t.id)))){
+      try{
+        await ensureCorpCardLoaded();
+        await checkCardMasterFileChanges(true);      // 파일 → 앱
+        flushCardMasterAutoWrite();                  // 앱(다른 PC에서 고친 것 포함) → 파일
+      }catch(e){ console.warn('통합본 백그라운드 동기화 실패', e); }
+    }
+  }finally{ linkedBgSyncBusy = false; }
 }, 60000);
 // 연결한 파일이 없어졌으면(이름을 바꿔 새로 저장한 경우 등) 같은 폴더에서 이름 앞부분이 같은 가장 최근
 // 파일을 찾아 연결을 그 파일로 바꾼다. 예: "…(안성지사)_최최신_안찬주.xlsx" → "…(안성지사)_최신.xlsx".
@@ -12690,7 +12709,7 @@ async function checkOMFileChanged(){
     if(state.activeTab === 'omList' && !document.querySelector('#main input:focus, #main textarea:focus, #main select:focus')) renderOMListMain();
   }catch(e){ console.warn('O&M 파일 확인 실패', e); }
 }
-setInterval(()=>{ if(state.activeTab === 'omList' && document.visibilityState === 'visible') checkOMFileChanged(); }, 60000);
+
 let omLastOpenCheck = 0;
 function omListLinkHtml(){
   const link = getLinkedFile(OM_LINK_KEY);
