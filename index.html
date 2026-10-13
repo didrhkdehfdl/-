@@ -15034,6 +15034,13 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         const raw = d ? d[field] : '';
         if(field === 'date') text = d ? String(formatXlsxDate(raw, code)).replace(/\s*\n\s*/g,' ') : '';   // 날짜는 한 줄로
         else if(field === 'amount') text = (d && Number(raw)) ? fmtNum(Number(raw)) : '';
+        else if(field === 'note' && d && String(raw||'').split(/\s*,\s*/).filter(Boolean).length > 4){
+          // 이름이 여러 명 적힌 비고는 4명씩 끊어 다음 줄로 내린다.
+          const names = String(raw).split(/\s*,\s*/).filter(Boolean);
+          const lines = [];
+          for(let i=0; i<names.length; i+=4) lines.push(names.slice(i, i+4).join(', ') + (i+4 < names.length ? ',' : ''));
+          text = lines.join('\n');
+        }
         else { text = d ? String(raw||'') : ''; dataText = true; }
       } else if(c === COL_L){ text = d ? (corpCardSupplyVat(d.amount).supply ? fmtNum(corpCardSupplyVat(d.amount).supply) : '') : ''; }
       else if(c === COL_M){ text = d ? (corpCardSupplyVat(d.amount).vat ? fmtNum(corpCardSupplyVat(d.amount).vat) : '') : ''; }
