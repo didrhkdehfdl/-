@@ -14635,7 +14635,8 @@ function fitCorpCardSheetHtml(html){
       }
       const size = base * avail / need;
       // 이름 4명씩 직접 끊은 비고는 더 줄바꿈하지 않고 글자만 줄인다.
-      if(size >= base * 0.7 || span.querySelector('br')){ setSize(span, Math.max(base * 0.35, size)); return; }
+      if(span.querySelector('br')){ setSize(span, Math.max(base * 0.35, size)); span.style.lineHeight = '1.55'; span.style.padding = '0.25em 0'; return; }
+      if(size >= base * 0.7){ setSize(span, size); return; }
       span.style.whiteSpace = 'pre-wrap';
       span.style.wordBreak = 'keep-all';
       span.style.overflowWrap = 'normal';
@@ -15185,7 +15186,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         const hc = headerRowNum && rows[headerRowNum] && rows[headerRowNum].cells[c];
         const ht = hc ? String(hc.text||'').split('\n').reduce((a,l)=>Math.max(a, ctx.measureText(l.trim()).width), 0) : 0;
         // 공급가·부가세·금액(숫자)은 줄이지 않고 오른쪽에 여유를 둔다.
-        need[c-minCol] = Math.ceil(Math.max(mx, ht * 0.8)) + (k >= 10 && k <= 12 ? 22 : (k === 15 ? 6 : 10));
+        need[c-minCol] = Math.ceil(Math.max(mx, ht * 0.8) * (k === 15 ? 1.2 : 1)) + (k >= 10 && k <= 12 ? 22 : (k === 15 ? 6 : 10));
       }
       // 비고 머리글이 오른쪽 칸들과 병합돼 있으면(Q:T 등) 그 칸들도 비고로 보고 함께 줄인다.
       const noteSp = headerRowNum ? spanAt.get(`${headerRowNum},16`) : null;
