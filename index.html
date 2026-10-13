@@ -15184,12 +15184,16 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         const hc = headerRowNum && rows[headerRowNum] && rows[headerRowNum].cells[c];
         const ht = hc ? String(hc.text||'').split('\n').reduce((a,l)=>Math.max(a, ctx.measureText(l.trim()).width), 0) : 0;
         // 공급가·부가세·금액(숫자)은 줄이지 않고 오른쪽에 여유를 둔다.
-        need[c-minCol] = Math.ceil(Math.max(mx, ht * 0.8)) + (k >= 10 && k <= 12 ? 22 : 10);
+        need[c-minCol] = Math.ceil(Math.max(mx, ht * 0.8)) + (k >= 10 && k <= 12 ? 22 : (k === 15 ? 6 : 10));
       }
+      // 비고 머리글이 오른쪽 칸들과 병합돼 있으면(Q:T 등) 그 칸들도 비고로 보고 함께 줄인다.
+      const noteSp = headerRowNum ? spanAt.get(`${headerRowNum},16`) : null;
+      const isNoteIdx = i => { const c = i + minCol; return c === 16 || (noteSp && c > 16 && c < 16 + noteSp.cs); };
+      for(let i=0; i<widths.length; i++) if(isNoteIdx(i) && i+minCol !== 16){ isData[i] = true; need[i] = 0; }
       const total = widths.reduce((a,b)=>a+b,0);
       // 내용이 짧은 칸(비고 등)은 내용 폭까지 줄인다(원래의 30% 아래로는 안 줄임).
       // 비고 칸(k=15)은 4명씩 끊은 줄 폭까지 바짝 줄인다(하한 10%).
-      const target = widths.map((w,i)=> isData[i] && w > 0 ? Math.max(Math.round(w * (i+minCol-1 === 15 ? 0.1 : 0.3)), Math.min(w, need[i])) : w);
+      const target = widths.map((w,i)=> isData[i] && w > 0 ? Math.max(Math.round(w * (isNoteIdx(i) ? (i+minCol === 16 ? 0.1 : 0) : 0.3)), Math.min(w, need[i])) : w);
       let spare = total - target.reduce((a,b)=>a+b,0);
       // 먼저 글자가 넘치는 칸을 필요한 만큼 채우고(모자라면 비율대로), 남는 폭은 내용이 긴 칸에 비례해 나눈다.
       const lack = target.map((t,i)=> isData[i] ? Math.max(0, need[i] - t) : 0);
@@ -15200,12 +15204,12 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         spare = total - target.reduce((a,b)=>a+b,0);
       }
       if(spare > 0){
-        const weight = target.map((t,i)=> isData[i] && i+minCol-1 !== 15 ? need[i] : 0);   // 남는 폭은 비고에 돌려주지 않는다
+        const weight = target.map((t,i)=> isData[i] && !isNoteIdx(i) ? need[i] : 0);   // 남는 폭은 비고에 돌려주지 않는다
         const wSum = weight.reduce((a,b)=>a+b,0);
         if(wSum > 0) weight.forEach((wt,i)=>{ target[i] += Math.floor(wt / wSum * spare); });
       }
       const diff = total - target.reduce((a,b)=>a+b,0);
-      const widest = target.indexOf(Math.max(...target.filter((t,i)=> i+minCol-1 !== 15)));
+      const widest = target.indexOf(Math.max(...target.filter((t,i)=> !isNoteIdx(i))));
       if(widest >= 0) target[widest] += diff;
       target.forEach((t,i)=>{ widths[i] = t; });
     }
