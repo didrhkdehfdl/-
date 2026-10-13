@@ -489,6 +489,7 @@
   @page{ margin:12mm; }
   @page portraitPage{ size:A4 portrait; margin:12mm; }
   @page landscapePage{ size:A4 landscape; margin:10mm; }
+body:not(.can-export) #profitListExportBtn, body:not(.can-export) #inquiryExportBtn, body:not(.can-export) #omListExportBtn, body:not(.can-export) #corpCardExportBtn, body:not(.can-export) #vehicleExportBtn, body:not(.can-export) #exportPerfExcelBtn, body:not(.can-export) #wlWeeklyExcelBtn, body:not(.can-export) #contractExportBtn{ display:none !important; }
 .om-mobile-list .om-field{ font-family:inherit; font-size:16px !important; padding:9px 10px !important; width:100% !important; box-sizing:border-box; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--text); }
 .om-mobile-list textarea.om-field{ line-height:1.5 !important; min-height:44px; }
 </style>
@@ -8204,6 +8205,9 @@ async function renderAdminApprovalList(){
               <input type="checkbox" class="admin2-tab-check" data-id="${doc.id}" data-tab="${t.key}" ${(!d.allowedTabs || d.allowedTabs.includes(t.key)) ? 'checked' : ''}>
               ${t.label}
             </label>`).join('')}
+          <label style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer; color:#2e9e5b; font-weight:600;" title="체크하면 이 사람도 모든 탭의 &quot;엑셀로 내보내기&quot;를 쓸 수 있습니다(관리자는 항상 가능).">
+            <input type="checkbox" class="admin2-export-check" data-id="${doc.id}" ${d.canExport === true ? 'checked' : ''}> 📤 엑셀 내보내기 허용
+          </label>
           <button class="admin2-savetabs-btn" data-id="${doc.id}" style="font-size:11px; padding:4px 10px; border-radius:5px; border:1px solid var(--gold-dim); background:transparent; color:var(--gold); cursor:pointer;">권한 저장</button>
           <span class="admin2-savetabs-msg" data-id="${doc.id}" style="font-size:11px; color:var(--pos);"></span>
         </div>`;
@@ -8242,12 +8246,20 @@ async function renderAdminApprovalList(){
         }
       });
     });
+    listEl.querySelectorAll('.admin2-export-check').forEach(cb=>{
+      cb.addEventListener('change', async ()=>{
+        await fbDb.collection('users').doc(cb.dataset.id).update({ canExport: cb.checked });
+        const msgEl = listEl.querySelector(`.admin2-savetabs-msg[data-id="${cb.dataset.id}"]`);
+        if(msgEl){ msgEl.textContent = cb.checked ? '엑셀 내보내기 허용됨' : '엑셀 내보내기 막음'; setTimeout(()=>{ if(msgEl) msgEl.textContent=''; }, 1800); }
+      });
+    });
     listEl.querySelectorAll('.admin2-savetabs-btn').forEach(btn=>{
       btn.addEventListener('click', async ()=>{
         const id = btn.dataset.id;
         const checked = [...listEl.querySelectorAll(`.admin2-tab-check[data-id="${id}"]`)]
           .filter(cb=>cb.checked).map(cb=>cb.dataset.tab);
-        await fbDb.collection('users').doc(id).update({ allowedTabs: checked });
+        const exportCb = listEl.querySelector(`.admin2-export-check[data-id="${id}"]`);
+        await fbDb.collection('users').doc(id).update({ allowedTabs: checked, canExport: !!(exportCb && exportCb.checked) });
         const msgEl = listEl.querySelector(`.admin2-savetabs-msg[data-id="${id}"]`);
         if(msgEl){ msgEl.textContent = '저장됨'; setTimeout(()=>{ if(msgEl) msgEl.textContent=''; }, 1500); }
       });
@@ -21096,6 +21108,15 @@ async function renderAdminList(){
 document.getElementById('appLogoutBtn').addEventListener('click', ()=>fbAuth.signOut());
 
 let isAdminUser = false;
+// 엑셀로 내보내기는 관리자와, 승인관리에서 "엑셀 내보내기 허용"을 받은 사람만 쓸 수 있다.
+let canExportExcel = false;
+const EXPORT_BUTTON_IDS = ["profitListExportBtn", "inquiryExportBtn", "omListExportBtn", "corpCardExportBtn", "vehicleExportBtn", "exportPerfExcelBtn", "wlWeeklyExcelBtn", "contractExportBtn"];
+function setCanExportExcel(v){ canExportExcel = !!v; document.body.classList.toggle('can-export', canExportExcel); }
+// 화면에서 숨기는 것과 별개로, 혹시 눌리더라도 막는다.
+document.addEventListener('click', e=>{
+  const btn = e.target.closest && e.target.closest(EXPORT_BUTTON_IDS.map(i=>'#'+i).join(','));
+  if(btn && !canExportExcel){ e.stopImmediatePropagation(); e.preventDefault(); alert('엑셀로 내보내기는 관리자만 쓸 수 있습니다. 필요하면 관리자에게 권한을 요청해주세요.'); }
+}, true);
 // 승인관리 탭에서 등록된 내 이름 — 법인카드 탭에서 "이 사람 담당 카드만
 // 보여주기"를 판단할 때 CORP_CARD_ASSIGNED_NAMES와 이 값을 비교한다.
 let currentUserName = '';
@@ -21238,6 +21259,7 @@ window.addEventListener('beforeunload', (e)=>{
 fbAuth.onAuthStateChanged(async (user) => {
   if(!user){
     isAdminUser = false;
+    setCanExportExcel(false);
     clearPresence();
     document.getElementById('adminApprovalTabBtn').style.display = 'none';
     document.getElementById('app').classList.remove('show');
@@ -21248,6 +21270,7 @@ fbAuth.onAuthStateChanged(async (user) => {
   }
   if(isAdminEmail(user.email)){
     isAdminUser = true;
+    setCanExportExcel(true);
     currentUserName = user.displayName || user.email || '관리자';
     document.getElementById('adminApprovalTabBtn').style.display = 'flex';
     startApp();
@@ -21263,6 +21286,7 @@ fbAuth.onAuthStateChanged(async (user) => {
     if(approved){
       currentUserName = FORCED_DISPLAY_NAMES[data.name || user.email || ''] || data.name || user.email || '';
       // 승인관리 화면에서 관리자로 지정된 계정도 관리자 기능을 쓸 수 있게 한다.
+      setCanExportExcel(data.isAdmin === true || data.canExport === true);
       if(data.isAdmin === true){
         isAdminUser = true;
         document.getElementById('adminApprovalTabBtn').style.display = 'flex';
