@@ -12378,7 +12378,7 @@ async function renderOMListMain(){
     </div>
     ${s.error ? `<div style="color:var(--neg); font-size:13px; margin-bottom:10px;">${escapeHtml(s.error)}</div>` : ''}
     ${s.rows.length===0 ? `<div class="empty-side">아직 등록된 O&M 리스트가 없습니다. 엑셀을 올리거나 "+ 행 추가"로 직접 입력해주세요.</div>` : `
-    <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">총 ${filtered.length}건 · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다</div>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px;"><span style="font-size:12px; color:var(--muted);">총 ${filtered.length}건 · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다</span><span id="omPresenceBar" style="display:flex; gap:6px; flex-wrap:wrap;"></span></div>
     <div class="table-wrap table-wrap-frozen" id="omListTableWrap">
       <table style="border-collapse:collapse; min-width:2400px; font-size:12px;">
         <thead><tr>
@@ -12412,6 +12412,7 @@ async function renderOMListMain(){
 
   document.getElementById('omListFile').addEventListener('change', handleOMListFile);
   bindOMListLinkButtons();
+  omPresenceAfterRender();
   if(getLinkedFile(OM_LINK_KEY) && Date.now() - omLastOpenCheck > 20000){ omLastOpenCheck = Date.now(); setTimeout(()=>checkOMFileChanged(), 800); }
   document.getElementById('omListSearch').addEventListener('input', (e)=>{ omListState.search = e.target.value; omListState.page = 1; renderOMListMain(); });
   const sortTh = main.querySelector('th[data-sort-field="receivedDate"]');
@@ -12601,6 +12602,95 @@ function applyOMFileRows(fileRows){
   old.forEach(r=>{ if(addIds.has(r.id)) out.push(r); });
   omListState.rows = out;
 }
+
+// ---------- O&M 리스트: 같이 보는 사람 표시 ----------
+// 다른 사람이 지금 보고 있는 행은 왼쪽에 그 사람 색 띠, 수정 중인 칸은 그 사람 색 테두리로 보여준다.
+// 각자의 위치(보는 행, 수정 중인 칸)는 서버 문서 하나(presence-omlist)에 사람별로 20초마다 갱신한다.
+const OM_PRESENCE_KEY = 'presence-omlist';
+let omPresence = {}, omPresenceUnsub = null, omPresenceMine = { rowId:'', field:'', rows:[] }, omPresenceActive = false;
+function omPresenceUid(){ return (typeof fbAuth !== 'undefined' && fbAuth.currentUser) ? fbAuth.currentUser.uid : ''; }
+function omPresenceSendNow(active){
+  const uid = omPresenceUid(); if(!uid) return;
+  omPresenceActive = active;
+  const v = active ? { name: presenceDisplayName(), ...omPresenceMine, ts: Date.now() } : { ts: 0 };
+  try{ appDataDoc(OM_PRESENCE_KEY).set({ [uid]: v }, { merge:true }).catch(()=>{}); }catch(e){}
+}
+const omPresenceSend = debounce(()=>omPresenceSendNow(state.activeTab === 'omList' && document.visibilityState === 'visible'), 400);
+function omPresenceSubscribe(){
+  if(omPresenceUnsub || !omPresenceUid()) return;
+  try{
+    omPresenceUnsub = appDataDoc(OM_PRESENCE_KEY).onSnapshot(snap=>{ omPresence = (snap && snap.exists) ? (snap.data() || {}) : {}; applyOMPresence(); }, ()=>{ omPresenceUnsub = null; });
+  }catch(e){ omPresenceUnsub = null; }
+}
+function omVisibleRowIds(){
+  const wrap = document.getElementById('omListTableWrap'); if(!wrap) return [];
+  const wr = wrap.getBoundingClientRect();
+  const top = Math.max(0, wr.top), bottom = Math.min(window.innerHeight, wr.bottom);
+  const ids = [];
+  wrap.querySelectorAll('tbody tr[data-id]').forEach(tr=>{ const r = tr.getBoundingClientRect(); if(r.bottom > top && r.top < bottom) ids.push(tr.dataset.id); });
+  return ids.slice(0, 80);
+}
+function omPresenceOthers(){
+  const me = omPresenceUid(), now = Date.now();
+  return Object.entries(omPresence).filter(([uid,v])=> uid !== me && v && v.ts && now - v.ts < 60000).map(([uid,v])=>({ uid, color: presenceColorFor(v.name||uid), ...v }));
+}
+function applyOMPresence(){
+  const main = document.getElementById('main');
+  if(!main || state.activeTab !== 'omList') return;
+  main.querySelectorAll('[data-presence]').forEach(el=>{ el.style.boxShadow = ''; el.style.outline = ''; el.removeAttribute('title'); el.removeAttribute('data-presence'); });
+  main.querySelectorAll('.om-presence-tag').forEach(el=>el.remove());
+  const others = omPresenceOthers();
+  const label = f => { const c = OM_LIST_COLUMNS.find(x=>x[0]===f); return c ? c[1] : f; };
+  others.forEach(o=>{
+    (o.rows||[]).forEach(id=>{
+      const td = main.querySelector(`#omListTableWrap tr[data-id="${id}"] td`);
+      if(td){ td.style.boxShadow = `inset 4px 0 0 ${o.color}`; td.setAttribute('data-presence','1'); td.title = `${o.name} 님이 보는 중`; }
+    });
+    if(o.rowId){
+      const tr = main.querySelector(`#omListTableWrap tr[data-id="${o.rowId}"]`);
+      if(tr){
+        const first = tr.querySelector('td');
+        if(first){ first.style.boxShadow = `inset 4px 0 0 ${o.color}`; first.setAttribute('data-presence','1'); }
+        const inp = o.field ? tr.querySelector(`.om-field[data-field="${o.field}"]`) : null;
+        if(inp){
+          inp.style.outline = `2px solid ${o.color}`; inp.setAttribute('data-presence','1'); inp.title = `${o.name} 님이 수정 중`;
+          const tag = document.createElement('span'); tag.className = 'om-presence-tag';
+          tag.textContent = o.name;
+          tag.style.cssText = `position:absolute; transform:translateY(-100%); background:${o.color}; color:#fff; font-size:10px; padding:0 4px; border-radius:3px; pointer-events:none; white-space:nowrap; z-index:5;`;
+          const cell = inp.closest('td'); if(cell){ cell.style.position = 'relative'; cell.insertBefore(tag, cell.firstChild); }
+        }
+      }
+    }
+  });
+  const bar = document.getElementById('omPresenceBar');
+  if(bar) bar.innerHTML = others.map(o=>{
+    const row = o.rowId ? (omListState.rows||[]).find(r=>r.id===o.rowId) : null;
+    const what = row && o.field ? `✏ ${escapeHtml(row.customer || row.plantName || '')} · ${escapeHtml(label(o.field))} 수정 중` : '👀 보는 중';
+    return `<span style="font-size:11.5px; padding:2px 8px; border-radius:10px; border:1px solid ${o.color}; color:${o.color}; white-space:nowrap;">● ${escapeHtml(o.name||'')} ${what}</span>`;
+  }).join('');
+}
+function omPresenceAfterRender(){
+  omPresenceSubscribe();
+  const wrap = document.getElementById('omListTableWrap');
+  const updView = debounce(()=>{ omPresenceMine.rows = omVisibleRowIds(); omPresenceSend(); }, 500);
+  if(wrap){
+    wrap.addEventListener('scroll', updView);
+    wrap.addEventListener('focusin', e=>{ const el = e.target.closest('.om-field'); if(!el) return; omPresenceMine.rowId = el.dataset.id; omPresenceMine.field = el.dataset.field; omPresenceSend(); });
+    wrap.addEventListener('focusout', e=>{ if(!e.target.closest('.om-field')) return; omPresenceMine.rowId = ''; omPresenceMine.field = ''; omPresenceSend(); });
+  }
+  if(!window.__omPresenceWinScroll){ window.__omPresenceWinScroll = true; window.addEventListener('scroll', debounce(()=>{ if(state.activeTab === 'omList'){ omPresenceMine.rows = omVisibleRowIds(); omPresenceSend(); } }, 500), { passive:true }); }
+  omPresenceMine.rows = omVisibleRowIds();
+  omPresenceSend();
+  applyOMPresence();
+}
+// 20초마다 "아직 보고 있음"을 알리고, 다른 탭으로 가거나 창을 내리면 내 표시를 지운다.
+setInterval(()=>{
+  const active = state.activeTab === 'omList' && document.visibilityState === 'visible';
+  if(active){ omPresenceMine.rows = omVisibleRowIds(); omPresenceSendNow(true); applyOMPresence(); }
+  else if(omPresenceActive) omPresenceSendNow(false);
+}, 20000);
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState !== 'visible' && omPresenceActive) omPresenceSendNow(false); });
+window.addEventListener('beforeunload', ()=>{ if(omPresenceActive) omPresenceSendNow(false); });
 let omSyncBusy = false;
 async function loadOMListFromLinkedFile(opts){
   const link = getLinkedFile(OM_LINK_KEY);
@@ -20981,7 +21071,7 @@ let presenceUnsub = null;
 let presenceHeartbeatTimer = null;
 let presenceCurrentCellKey = '';
 // 이 탭에서 프레즌스를 실제로 보여주는(칸 단위 추적을 붙여둔) 탭 목록.
-const PRESENCE_ENABLED_TABS = ['corpCard','vehicle','import'];
+const PRESENCE_ENABLED_TABS = ['corpCard','vehicle','import','omList'];
 function presenceDisplayName(){
   return currentUserName || (fbAuth.currentUser && (fbAuth.currentUser.displayName || fbAuth.currentUser.email)) || '이름 미상';
 }
