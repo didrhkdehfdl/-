@@ -12660,7 +12660,9 @@ function omListLinkHtml(){
 function bindOMListLinkButtons(){
   const busy = async (btn, text, fn) => {
     const label = btn.textContent; btn.textContent = text; btn.disabled = true;
-    try{ await fn(); } catch(e){ alert(linkedFileErrorMessage(e)); } finally{ btn.textContent = label; btn.disabled = false; }
+    // 도우미 진행률(%)을 버튼에 같이 보여준다.
+    const stop = watchExcelHelperProgress(t=>{ btn.textContent = `${text.replace(/…$/,'')} ${t}`; });
+    try{ await fn(); } catch(e){ alert(linkedFileErrorMessage(e)); } finally{ stop(); btn.textContent = label; btn.disabled = false; }
   };
   const pick = document.getElementById('omLinkPickBtn');
   if(pick) pick.addEventListener('click', ()=>busy(pick, '파일 선택 창을 띄웠습니다…', async ()=>{
