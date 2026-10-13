@@ -12482,7 +12482,51 @@ const OM_LINK_KEY = 'omlist';
 const OM_PENDING_KEY = 'om-pending-v1';
 const OM_DATA_START = 4;
 let omPending = (()=>{ try{ return JSON.parse(localStorage.getItem(OM_PENDING_KEY)||'null') || { upd:{}, add:[], del:[] }; }catch(e){ return { upd:{}, add:[], del:[] }; } })();
-function saveOMPending(){ try{ localStorage.setItem(OM_PENDING_KEY, JSON.stringify(omPending)); }catch(e){} }
+function saveOMPending(){ try{ localStorage.setItem(OM_PENDING_KEY, JSON.stringify(omPending)); }catch(e){} pushOMPendingSharedSoon(); }
+// 파일에 아직 못 쓴 수정은 서버에도 같이 둔다(공유) — 엑셀 도우미가 없는 PC에서 고친 것도
+// 도우미를 켠 사람이 O&M 탭을 열면 대신 파일에 써 준다.
+const OM_PENDING_SHARED_KEY = 'om-pending-shared';
+function omPendingUnion(a, b){
+  const out = { upd:{}, add:[], del:[] };
+  [b, a].forEach(p=>{ if(!p) return;   // a(나중) 쪽 값이 이긴다
+    Object.entries(p.upd||{}).forEach(([id,u])=>{ const cur = out.upd[id]; out.upd[id] = cur ? { ...cur, ...u, values:{ ...cur.values, ...u.values } } : { ...u, values:{ ...u.values } }; });
+    (p.add||[]).forEach(id=>{ if(!out.add.includes(id)) out.add.push(id); });
+    (p.del||[]).forEach(d=>{ if(!out.del.some(x=>x.id===d.id)) out.del.push(d); });
+  });
+  out.del.forEach(d=>{ delete out.upd[d.id]; });
+  return out;
+}
+async function loadOMPendingShared(){
+  try{ const raw = await loadFileFromStorage(OM_PENDING_SHARED_KEY, 15000); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
+}
+// 서버 쪽과 합쳐 올린다. handled: 방금 파일에 써서 서버에서도 지울 것들({upd:[id], add:[id], del:[id]}).
+let omSharedPushing = Promise.resolve();
+function pushOMPendingShared(handled){
+  omSharedPushing = omSharedPushing.then(async ()=>{
+    try{
+      const server = await loadOMPendingShared();
+      if(server && handled){
+        (handled.upd||[]).forEach(id=>{ delete server.upd[id]; });
+        server.add = (server.add||[]).filter(id=>!(handled.add||[]).includes(id));
+        server.del = (server.del||[]).filter(d=>!(handled.del||[]).includes(d.id));
+      }
+      const merged = omPendingUnion(omPending, server);
+      await saveFileToStorage(OM_PENDING_SHARED_KEY, JSON.stringify(merged));
+      // 도우미로 파일에 연결하지 않은 PC는 서버에 넘겼으면 자기 쪽 대기 목록을 비운다(다른 PC가 씀).
+      if(!getLinkedFile(OM_LINK_KEY)){ omPending = { upd:{}, add:[], del:[] }; try{ localStorage.setItem(OM_PENDING_KEY, JSON.stringify(omPending)); }catch(e){} }
+    }catch(e){ console.warn('O&M 대기 수정 공유 실패', e); }
+  });
+  return omSharedPushing;
+}
+const pushOMPendingSharedSoon = debounce(()=>{ pushOMPendingShared(); }, 1500);
+// 서버에 쌓인 (다른 PC의) 대기 수정을 가져와 합친다.
+async function pullOMPendingShared(){
+  await omSharedPushing;
+  const server = await loadOMPendingShared();
+  if(!server) return;
+  omPending = omPendingUnion(omPending, server);
+  try{ localStorage.setItem(OM_PENDING_KEY, JSON.stringify(omPending)); }catch(e){}
+}
 function omHasPending(){ return Object.keys(omPending.upd).length || omPending.add.length || omPending.del.length; }
 let omSyncNote = '';
 function setOMSyncNote(text, isErr){
@@ -12562,16 +12606,14 @@ async function loadOMListFromLinkedFile(opts){
   return true;
 }
 function queueOMUpdate(row, field){
-  if(!getLinkedFile(OM_LINK_KEY)) return;
   if(omPending.add.includes(row.id)){ saveOMPending(); flushOMWrites(); return; }   // 새 행은 통째로 쓴다
   const u = omPending.upd[row.id] || { row: row.xlRow||0, key: row.xlKey||'', label: row.customer||row.plantName||'', values:{} };
   u.values[field] = row[field];
   omPending.upd[row.id] = u;
   saveOMPending(); flushOMWrites();
 }
-function queueOMAdd(row){ if(!getLinkedFile(OM_LINK_KEY)) return; omPending.add.push(row.id); saveOMPending(); flushOMWrites(); }
+function queueOMAdd(row){ omPending.add.push(row.id); saveOMPending(); flushOMWrites(); }
 function queueOMDelete(row){
-  if(!getLinkedFile(OM_LINK_KEY)) return;
   if(omPending.add.includes(row.id)){ omPending.add = omPending.add.filter(x=>x!==row.id); saveOMPending(); return; }
   delete omPending.upd[row.id];
   if(row.xlRow) omPending.del.push({ id: row.id, row: row.xlRow, key: row.xlKey||'', label: row.customer||row.plantName||'' });
@@ -12589,6 +12631,7 @@ async function writeOMPendingToFile(){
       setOMSyncNote(`⚠ 파일에 아직 못 씀(${excelHelperRunning ? '엑셀 도우미가 예전 버전' : '엑셀 도우미가 꺼져 있음'}) — 도우미를 켜면 다음 수정 때 같이 씁니다.`, true);
       return;
     }
+    await pullOMPendingShared();   // 다른 PC(도우미 없음)에서 고친 것도 같이 쓴다
     if(!link.sheet){ await loadOMListFromLinkedFile(); }
     const spec = (f, v) => ({ col: omFieldCol(f), type: omFieldType(f), value: v==null ? '' : v });
     const sent = JSON.parse(JSON.stringify(omPending));
@@ -12618,7 +12661,9 @@ async function writeOMPendingToFile(){
       Object.keys(omPending.upd).forEach(id=>{ if(sent.upd[id] && nf.has(sent.upd[id].label)) delete omPending.upd[id]; });
       omPending.del = omPending.del.filter(d=>!nf.has(d.label));
     }
-    saveOMPending();
+    try{ localStorage.setItem(OM_PENDING_KEY, JSON.stringify(omPending)); }catch(e){}
+    // 서버에 공유된 대기 목록에서도 방금 쓴 것들을 지운다.
+    await pushOMPendingShared({ upd: Object.keys(sent.upd).filter(id=>!omPending.upd[id]), add: sent.add.filter(id=>!omPending.add.includes(id)), del: sent.del.map(d=>d.id).filter(id=>!omPending.del.some(d=>d.id===id)) });
     // 행 번호·No.를 파일과 맞추려고 다시 읽는다(앱이 쓴 저장이라 자동 확인에서 또 읽지 않게 시각도 기억).
     await loadOMListFromLinkedFile();
     const n = (res.written||[]).length + addedIds.length + (res.deleted||[]).length;
@@ -12635,9 +12680,10 @@ async function checkOMFileChanged(){
   try{
     await checkExcelHelper();
     if(!excelHelperRunning) return;
+    await pullOMPendingShared();
+    if(omHasPending()){ await writeOMPendingToFile(); return; }   // 다른 PC에서 고친 것까지 쓰고, 쓰면서 다시 읽는다
     const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
     if(st.mtime === link.mtime) return;
-    if(omHasPending()){ await writeOMPendingToFile(); return; }   // 쓰면서 다시 읽는다
     omSyncBusy = true;
     try{ await loadOMListFromLinkedFile(); } finally{ omSyncBusy = false; }
     showLedgerToast('O&M 리스트: PC 파일에서 고친 내용을 불러왔습니다.');
