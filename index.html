@@ -13841,7 +13841,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 38;
+const EXCEL_HELPER_VERSION = 39;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -21093,7 +21093,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '38'
+$Version = '39'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -22110,6 +22110,14 @@ function Add-SheetValuesJson([Text.StringBuilder]$sb, $ws){
   $used = $ws.UsedRange
   $lastRow = $used.Row + $used.Rows.Count - 1
   $lastCol = $used.Column + $used.Columns.Count - 1
+  # 서식만 끝까지 칠해진 시트는 UsedRange가 1,048,576행까지 잡혀 오래 걸린다 — 실제 값이 있는 마지막 행·열로 줄인다.
+  try {
+    $m = [Type]::Missing
+    $fr = $ws.Cells.Find('*', $m, -4123, 2, 1, 2)
+    $fc = $ws.Cells.Find('*', $m, -4123, 2, 2, 2)
+    if($fr){ $lastRow = [Math]::Min($lastRow, [int]$fr.Row) } else { $lastRow = 0 }
+    if($fc){ $lastCol = [Math]::Min($lastCol, [int]$fc.Column) }
+  } catch {}
   [void]$sb.Append('[')
   if($lastRow -ge 1 -and $lastCol -ge 1){
     # A1부터 읽어 앱이 파일을 직접 읽을 때와 행·열 위치가 같게 한다.
