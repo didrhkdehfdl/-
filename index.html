@@ -12543,10 +12543,13 @@ async function loadOMListFromLinkedFile(opts){
   if(!link) return false;
   await checkExcelHelper();
   if(!excelHelperRunning) throw new Error('엑셀 도우미가 실행되어 있지 않습니다. 카드관리 탭에서 받은 excel-helper.cmd를 실행한 뒤 다시 해주세요.');
+  if(excelHelperVersion < 41) throw new Error(`실행 중인 엑셀 도우미가 예전 버전(v${excelHelperVersion})입니다. 카드관리 탭에서 엑셀 도우미를 새로 받아 실행해주세요(v41 이상 필요).`);
   const st = await excelHelperCall('/filestat', { path: link.path }, 15000);
-  let res = await excelHelperCall('/readvalues', { path: link.path, sheet: link.sheet || '' }, 3*60*1000);
+  // O&M 표에 쓰는 열만 보고 빈 행을 판단하게 넘긴다(아래쪽 빈 칸을 끝까지 읽지 않게).
+  const keyCols = OM_LIST_COL_LETTERS.map(l => colLetterToIndex(l) + 1);
+  let res = await excelHelperCall('/readvalues', { path: link.path, sheet: link.sheet || '', keyCols }, 3*60*1000);
   const want = pickOMSheetName(res.sheetNames);
-  if(want && want !== res.sheet) res = await excelHelperCall('/readvalues', { path: link.path, sheet: want }, 3*60*1000);
+  if(want && want !== res.sheet) res = await excelHelperCall('/readvalues', { path: link.path, sheet: want, keyCols }, 3*60*1000);
   const rows = parseOMRowsFromValues(res.rows);
   if(!rows.length) throw new Error(`"${res.sheet}" 시트에서 데이터를 찾지 못했습니다.`);
   if(opts && opts.confirmReplace && (omListState.rows||[]).length &&
@@ -13841,7 +13844,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 40;
+const EXCEL_HELPER_VERSION = 41;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -21093,7 +21096,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '40'
+$Version = '41'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -22106,47 +22109,55 @@ function Add-JsonCell([Text.StringBuilder]$sb, $v){
   }
   else { [void]$sb.Append('null') }   # 오류 값(#N/A 등)은 엑셀이 정수로 준다
 }
-function Add-SheetValuesJson([Text.StringBuilder]$sb, $ws){
+function Add-SheetValuesJson([Text.StringBuilder]$sb, $ws, $keyCols){
+  $script:SheetReadLastRow = 0
   $used = $ws.UsedRange
   $lastRow = $used.Row + $used.Rows.Count - 1
   $lastCol = $used.Column + $used.Columns.Count - 1
   # 서식만 끝까지 칠해진 시트는 UsedRange가 1,048,576행까지 잡혀 오래 걸린다 — 실제 값이 있는 마지막 행·열로 줄인다.
   try {
-    $m = [Type]::Missing
-    # 값(xlValues) 기준 — 맨 아래까지 ="" 같은 빈 수식이 채워져 있어도 실제 글자가 있는 행까지만.
     $fr = $ws.Cells.Find('*', $ws.Cells.Item(1,1), -4163, 2, 1, 2)
     $fc = $ws.Cells.Find('*', $ws.Cells.Item(1,1), -4163, 2, 2, 2)
     if($fr){ $lastRow = [Math]::Min($lastRow, [int]$fr.Row) } else { $lastRow = 0 }
     if($fc){ $lastCol = [Math]::Min($lastCol, [int]$fc.Column) }
   } catch { Log "Find 실패: $($_.Exception.Message)" }
-  Log "시트 읽기 범위: $lastRow 행 x $lastCol 열"
+  # 빈 행 판단에 쓸 열(앱이 실제로 쓰는 열). 없으면 모든 열.
+  $chk = @()
+  if($keyCols){ foreach($k in $keyCols){ $kc = [int]$k; if($kc -ge 1 -and $kc -le $lastCol){ $chk += $kc } } }
+  if(-not $chk.Count){ $chk = 1..([Math]::Max(1,$lastCol)) }
+  Log "시트 읽기 범위: $lastRow 행 x $lastCol 열 (빈 행 판단 열 $($chk.Count)개)"
   [void]$sb.Append('[')
   if($lastRow -ge 1 -and $lastCol -ge 1){
-    # A1부터 읽어 앱이 파일을 직접 읽을 때와 행·열 위치가 같게 한다.
-    $rg = $ws.Range($ws.Cells.Item(1,1), $ws.Cells.Item($lastRow, $lastCol))
-    # Value2 대신 Value — 날짜 칸이 일련번호가 아니라 날짜로 온다.
-    # (배열을 함수 결과로 돌려받으면 PowerShell이 풀어 버리므로 상자(hashtable)에 담아 꺼낸다.)
-    $box = @{}
-    Invoke-Retry { $rgo = $rg.psobject.BaseObject; $box.v = $rgo.GetType().InvokeMember('Value', [Reflection.BindingFlags]::GetProperty, $null, $rgo, $null) } | Out-Null
-    $vals = $box.v
-    $emptyRun = 0
-    for($r=1; $r -le $lastRow; $r++){
-      if(($r % 100) -eq 0){ Set-Progress (40 + 58 * $r / $lastRow) 100 "행 읽는 중 ($r/$lastRow)" }
-      # 빈 행이 500줄 넘게 이어지면 그 아래는 서식만 남은 빈 칸으로 보고 그만 읽는다.
-      if($lastRow -gt 1 -or $lastCol -gt 1){
+    # 한 번에 다 읽지 않고 2000행씩 읽는다 — 확인할 열이 500행 넘게 연속으로 비면 그 아래는
+    # 서식·빈 수식만 남은 칸으로 보고 그만 읽는다(104만 행을 다 읽느라 몇 분씩 걸리던 문제).
+    $chunk = 2000; $emptyRun = 0; $stop = $false; $first = $true
+    for($start=1; $start -le $lastRow -and -not $stop; $start += $chunk){
+      $end = [Math]::Min($lastRow, $start + $chunk - 1)
+      $rg = $ws.Range($ws.Cells.Item($start,1), $ws.Cells.Item($end, $lastCol))
+      # Value2 대신 Value — 날짜 칸이 일련번호가 아니라 날짜로 온다.
+      # (배열을 함수 결과로 돌려받으면 PowerShell이 풀어 버리므로 상자(hashtable)에 담아 꺼낸다.)
+      $box = @{}
+      Invoke-Retry { $rgo = $rg.psobject.BaseObject; $box.v = $rgo.GetType().InvokeMember('Value', [Reflection.BindingFlags]::GetProperty, $null, $rgo, $null) } | Out-Null
+      $vals = $box.v
+      $single = ($end -eq $start -and $lastCol -eq 1)
+      for($r=$start; $r -le $end; $r++){
+        $ri = $r - $start + 1
+        if(($r % 200) -eq 0){ Set-Progress ([Math]::Min(97, 40 + $r / 20)) 100 "행 읽는 중 ($r행)" }
         $blank = $true
-        for($c=1; $c -le $lastCol; $c++){ $cv = $vals[$r,$c]; if($cv -ne $null -and [string]$cv -ne ''){ $blank = $false; break } }
-        if($blank){ $emptyRun++; if($emptyRun -ge 500){ break } } else { $emptyRun = 0 }
+        foreach($c in $chk){ $cv = if($single){ $vals } else { $vals[$ri,$c] }; if($cv -ne $null -and ([string]$cv).Trim() -ne ''){ $blank = $false; break } }
+        if($blank){ $emptyRun++; if($emptyRun -ge 500){ $stop = $true; break } } else { $emptyRun = 0 }
+        if(-not $first){ [void]$sb.Append(',') }; $first = $false
+        [void]$sb.Append('[')
+        for($c=1; $c -le $lastCol; $c++){
+          if($c -gt 1){ [void]$sb.Append(',') }
+          $v = if($single){ $vals } else { $vals[$ri,$c] }
+          Add-JsonCell $sb $v
+        }
+        [void]$sb.Append(']')
       }
-      if($r -gt 1){ [void]$sb.Append(',') }
-      [void]$sb.Append('[')
-      for($c=1; $c -le $lastCol; $c++){
-        if($c -gt 1){ [void]$sb.Append(',') }
-        $v = if($lastRow -eq 1 -and $lastCol -eq 1){ $vals } else { $vals[$r,$c] }
-        Add-JsonCell $sb $v
-      }
-      [void]$sb.Append(']')
     }
+    Log "시트 읽기 끝: $r 행에서 멈춤"
+    $script:SheetReadLastRow = $r
   }
   [void]$sb.Append(']')
 }
@@ -22212,12 +22223,14 @@ function Handle-ReadValues($body){
     [void]$sb.Append(',"wasOpen":'); [void]$sb.Append($(if($openedHere){ 'false' } else { 'true' }))
     [void]$sb.Append(',"sheetNames":['); for($i=0; $i -lt $names.Count; $i++){ if($i){ [void]$sb.Append(',') }; Add-JsonString $sb $names[$i] }
     [void]$sb.Append('],"sheet":'); Add-JsonString $sb $want
-    [void]$sb.Append(',"rows":'); Add-SheetValuesJson $sb $ws
+    [void]$sb.Append(',"rows":'); Add-SheetValuesJson $sb $ws $body.keyCols
     # 숫자 덧셈만으로 된 수식(=4000000+4250000 등) — 나눠 입금한 금액을 알 수 있게 함께 보낸다.
     [void]$sb.Append(',"formulas":{')
     try {
       $used = $ws.UsedRange
       $lr = $used.Row + $used.Rows.Count - 1; $lc = $used.Column + $used.Columns.Count - 1
+      # 값을 읽은 행까지만 본다(아래쪽 빈 서식 칸 104만 행을 다시 훑지 않게).
+      $lr = [Math]::Min($lr, [int]$script:SheetReadLastRow)
       if($lr -ge 1 -and $lc -ge 1){
         $rg = $ws.Range($ws.Cells.Item(1,1), $ws.Cells.Item($lr, $lc))
         $fb = @{}; Invoke-Retry { $o = $rg.psobject.BaseObject; $fb.v = $o.GetType().InvokeMember('Formula', [Reflection.BindingFlags]::GetProperty, $null, $o, $null) } | Out-Null
