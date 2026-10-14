@@ -15744,7 +15744,9 @@ async function renderCorpCardMain(){
       ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedPositionInput" placeholder="직급 고정값" value="${escapeHtml(activeCard.fixedPosition||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
       ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedDeptInput" placeholder="부서 고정값" value="${escapeHtml(activeCard.fixedDept||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
       ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedCorpInput" placeholder="법인 고정값" value="${escapeHtml(activeCard.fixedCorp||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
-      <button id="corpCardSaveBtn" style="margin-left:auto; font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:700;">✅ 저장됨</button>
+      ${(()=>{ const used = rows.filter(r=>r.date || Number(r.amount)); const sum = used.reduce((t,r)=>t+(Number(r.amount)||0),0);
+        return `<span id="corpCardTotalsBadge" style="margin-left:auto; font-size:13px; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); white-space:nowrap;">총 <b>${used.length}</b>건 · 총사용액 <b style="color:var(--gold);">${sum.toLocaleString('ko-KR')}</b>원</span>`; })()}
+      <button id="corpCardSaveBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:700;">✅ 저장됨</button>
       ${s.approvalEntries.length ? `<button id="corpCardApprovalViewBtn" style=" font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--sky); background:rgba(90,155,213,.1); color:var(--sky); cursor:pointer; font-weight:600;">💳 이 카드 승인내역 보기</button>` : ''}
       <button id="corpCardPrintDocBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>
       <button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">${corpCardMonthPdfLabel()}</button>
@@ -21127,6 +21129,14 @@ async function renderAdminList(){
 document.getElementById('appLogoutBtn').addEventListener('click', ()=>fbAuth.signOut());
 
 let isAdminUser = false;
+// 법인카드 탭 "총 n건 · 총사용액" 표시를 칸을 고칠 때마다 바로 맞춘다.
+document.addEventListener('change', ()=>{ setTimeout(()=>{
+  const el = document.getElementById('corpCardTotalsBadge'); if(!el || state.activeTab !== 'corpCard') return;
+  const s = corpCardState; const card = (s.cards||[]).find(c=>c.id===s.activeCardId);
+  const rows = (card && s.rowsByCard[card.id] && s.rowsByCard[card.id][s.activeMonth]) || [];
+  const used = rows.filter(r=>r.date || Number(r.amount)); const sum = used.reduce((t,r)=>t+(Number(r.amount)||0),0);
+  el.innerHTML = `총 <b>${used.length}</b>건 · 총사용액 <b style="color:var(--gold);">${sum.toLocaleString('ko-KR')}</b>원`;
+}, 0); }, true);
 // 엑셀로 내보내기는 관리자와, 승인관리에서 "엑셀 내보내기 허용"을 받은 사람만 쓸 수 있다.
 let canExportExcel = false;
 const EXPORT_BUTTON_IDS = ["profitListExportBtn", "inquiryExportBtn", "omListExportBtn", "corpCardExportBtn", "vehicleExportBtn", "exportPerfExcelBtn", "wlWeeklyExcelBtn", "contractExportBtn"];
