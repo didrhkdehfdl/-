@@ -15605,7 +15605,7 @@ async function openCorpCardMonthPrintPreview(card, month, rows, onExported){
           const d = String(c.text||'').replace(/\D/g,'');
           if(d.length >= 12 && known.has(d) && d !== String(want).replace(/\D/g,'')){ c.text = want; c.num = null; }
         }));
-        html = buildCorpCardSheetPrintHtml(layout, card, month, rows);
+        html = buildCorpCardSheetPrintHtml(layout, card, month, corpCardPdfRows(card, rows));
       }
     }catch(e){ console.error('양식 시트 모양을 읽지 못해 기본 표로 인쇄합니다', e); }
   }
@@ -16509,9 +16509,20 @@ function corpCardUsesReportPdf(card){
   if(link.reportPdf === undefined) return /1956$/.test(String(card.cardNumber||'').replace(/\D/g,''));
   return !!link.reportPdf;
 }
+// 1956 카드는 PDF로 낼 때 비고 내용을 업무내용 칸 아래 줄로 옮긴다(비고 칸은 비운다).
+function corpCardPdfRows(card, rows){
+  if(!/1956$/.test(String(card && card.cardNumber || '').replace(/\D/g,''))) return rows;
+  return rows.map(r=>{
+    const note = String(r.note||'').trim();
+    if(!note) return r;
+    const work = String(r.workDetail||'').trim();
+    return { ...r, workDetail: work ? work + '\n' + note : note, note: '' };
+  });
+}
 // 도우미가 연결된 파일의 복사본에 이 달 내역(rows)을 넣고 보고용 탭을 엑셀로 PDF로 만들어 준다
 // (원본 파일은 그대로). 받은 PDF를 내려받는다.
 async function exportCorpCardReportPdf(card, month, rows){
+  rows = corpCardPdfRows(card, rows);
   const link = getLinkedFile(corpCardLinkKey(card.id));
   if(!link) throw new Error('연결된 파일이 없습니다.');
   await checkExcelHelper();
