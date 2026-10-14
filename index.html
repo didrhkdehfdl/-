@@ -10973,6 +10973,12 @@ const flushCardMasterAutoWrite = debounce(async ()=>{
     }
   }catch(e){
     dirtyNow.forEach(n=>cardMasterAutoDirty.add(n));
+    // 도우미가 다른 작업(O&M 파일 읽기 등) 중이라 답이 늦은 것뿐이면 오류 창을 띄우지 않고 1분 뒤 다시 한다.
+    if(e && e.helperBusy){
+      setCardMasterAutoNote('통합본 PC 파일 자동 갱신 대기 중 — 엑셀 도우미가 다른 작업 중이라 잠시 뒤 다시 씁니다.');
+      setTimeout(()=>flushCardMasterAutoWrite(), 45000);
+      return;
+    }
     setCardMasterAutoNote('⚠ 통합본 PC 파일 자동 갱신 실패: ' + linkedFileErrorMessage(e).split('\n')[0], true);
     showLedgerToast('통합본 PC 파일 자동 갱신 실패:\n' + linkedFileErrorMessage(e), true);
   }finally{
@@ -12836,6 +12842,7 @@ async function writeOMPendingToFile(){
     setOMSyncNote(`${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 파일에 ${n}건 반영${(res.notFound||[]).length ? ` · 파일에서 못 찾은 행: ${res.notFound.join(', ')}` : ''}`, !!(res.notFound||[]).length);
     if(state.activeTab === 'omList' && !document.querySelector('#main input:focus, #main textarea:focus, #main select:focus')) renderOMListMain();
   }catch(e){
+    if(e && e.helperBusy){ setOMSyncNote('파일에 쓰기 대기 중 — 엑셀 도우미가 다른 작업 중이라 잠시 뒤 다시 씁니다.'); setTimeout(flushOMWrites, 45000); return; }
     setOMSyncNote('⚠ 파일에 못 씀: ' + linkedFileErrorMessage(e).split('\n')[0], true);
     showLedgerToast('O&M 리스트를 PC 파일에 쓰지 못했습니다:\n' + linkedFileErrorMessage(e), true);
   }finally{ omSyncBusy = false; }
