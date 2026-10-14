@@ -10923,6 +10923,18 @@ const flushCardMasterAutoWrite = debounce(async ()=>{
   await ensureCardMasterLoaded();
   const targets = corpCardMasterTemplates.filter(t=>getLinkedFile(cardMasterLinkKey(t.id)));
   if(!targets.length){ cardMasterAutoDirty.clear(); return; }
+  // 바뀐 달이 하나도 없으면 도우미에 아무것도 묻지 않고 끝낸다(변경이 있을 때만 갱신).
+  {
+    const fullPre = buildCardMasterWritePayload(null);
+    const byNumPre = new Map(fullPre.map(m=>[m.num, m]));
+    const anyChange = cardMasterAutoDirty.size > 0 || targets.some(t=>{
+      const snap = (cardMasterSnapAll()[t.id]) || {};
+      if(!Object.keys(snap).length) return false;   // 아직 기준이 없으면(처음) 직접 고칠 때까지 기다린다
+      if(Object.keys(snap).some(k=>cardMasterMonthSig(byNumPre.get(Number(k)) || { num:Number(k), cards:[] }) !== snap[k].sig)) return true;
+      return fullPre.some(m=>!snap[m.num]);
+    });
+    if(!anyChange) return;
+  }
   cardMasterAutoBusy = true;
   const dirtyNow = new Set(cardMasterAutoDirty); cardMasterAutoDirty.clear();
   try{
