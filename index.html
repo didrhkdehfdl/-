@@ -9941,7 +9941,7 @@ async function renderInquiryMain(){
     renderInquiryMain();
   });
   const searchInp = document.getElementById('inquirySearch');
-  if(searchInp) searchInp.addEventListener('input', (e)=>{ s.search = e.target.value; s.page = 1; renderInquiryMain(); });
+  bindLiveSearch(searchInp, 'inquirySearch', v=>{ s.search = v; s.page = 1; return renderInquiryMain(); });
   const addBtn = document.getElementById('inquiryAddBtn');
   if(addBtn) addBtn.addEventListener('click', async ()=>{
     s.items.unshift(newInquiryItem());
@@ -12488,7 +12488,7 @@ async function renderOMListMain(){
   bindOMListLinkButtons();
   omPresenceAfterRender();
   if(getLinkedFile(OM_LINK_KEY) && Date.now() - omLastOpenCheck > 20000){ omLastOpenCheck = Date.now(); setTimeout(()=>checkOMFileChanged(), 800); }
-  document.getElementById('omListSearch').addEventListener('input', (e)=>{ omListState.search = e.target.value; omListState.page = 1; renderOMListMain(); });
+  bindLiveSearch(document.getElementById('omListSearch'), 'omListSearch', v=>{ omListState.search = v; omListState.page = 1; return renderOMListMain(); });
   const sortTh = main.querySelector('th[data-sort-field="receivedDate"]');
   if(sortTh) sortTh.addEventListener('click', ()=>{
     if(s.sortKey==='receivedDate'){ s.sortDir = s.sortDir==='asc' ? 'desc' : 'asc'; }
@@ -17802,7 +17802,7 @@ function renderUploadMode(){
     renderImportMain();
   });
   const searchInp = document.getElementById('importSearch');
-  if(searchInp) searchInp.addEventListener('input', ()=>{ importState.search = searchInp.value; renderImportRowsOnly(); });
+  bindLiveSearch(searchInp, 'importSearch', v=>{ importState.search = v; return renderImportMain(); });
 
   main.querySelectorAll('.import-make-sales').forEach(btn=>{
     btn.addEventListener('click', ()=> createCaseFromImportRow(capped[Number(btn.dataset.idx)], 'sales'));
@@ -18212,6 +18212,26 @@ function wirePerfRowEvents(){
   });
 }
 
+// 검색칸: 글자를 칠 때마다 화면을 다시 그리면 휴대폰(한글 입력)에서 조합 중인 글자가 끊기고 키보드가 닫혀
+// 검색이 안 됐다. 한글 조합이 끝난 뒤, 입력이 잠깐 멈췄을 때만 검색하고, 다시 그린 뒤 검색칸에 커서를 돌려준다.
+function bindLiveSearch(inp, id, apply){
+  if(!inp) return;
+  let composing = false;
+  const run = debounce(()=>{
+    if(composing) return;
+    Promise.resolve(apply(inp.value)).catch(()=>{}).then(()=>{
+      const again = document.getElementById(id);
+      if(again && document.activeElement !== again){
+        again.focus({ preventScroll:true });
+        const n = again.value.length; try{ again.setSelectionRange(n, n); }catch(e){}
+      }
+    });
+  }, 350);
+  inp.addEventListener('compositionstart', ()=>{ composing = true; });
+  inp.addEventListener('compositionend', ()=>{ composing = false; run(); });
+  inp.addEventListener('input', e=>{ if(e.isComposing) return; run(); });
+  inp.addEventListener('search', run);
+}
 function renderImportRowsOnly(){
   // Search re-filters a lot of rows; a full re-render is simple and fast
   // enough at this scale, so just reuse renderImportMain.
