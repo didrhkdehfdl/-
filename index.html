@@ -13254,6 +13254,7 @@ async function ensureCorpCardLoaded(){
     for(const card of corpCardState.cards){
       const rowsText = await loadFileFromStorage('corp-card-rows:'+card.id);
       corpCardState.rowsByCard[card.id] = rowsText ? JSON.parse(rowsText) : {};
+      corpCardBase[card.id] = corpCardBaseOf(corpCardState.rowsByCard[card.id]);
       needsMonthFix.push(card.id);
       try{
         const metaText = await loadFileFromStorage('corp-card-template-meta:'+card.id);
@@ -13305,6 +13306,7 @@ function ensureCorpCardRowsSubscribed(cardId){
     migrate: (data) => {
       const incoming = (data && typeof data==='object' && !Array.isArray(data)) ? data : {};
       corpCardState.rowsByCard[cardId] = mergeIncomingRowsByMonth(incoming, corpCardState.rowsByCard[cardId], corpCardState.activeMonth, '.corpcard-f');
+      corpCardBase[cardId] = corpCardBaseOf(incoming);   // 서버 기준점 갱신(저장할 때 행 단위로 합치는 데 씀)
       recomputeCorpCardMismatches();
     },
     isActive: () => state.activeTab==='corpCard' && corpCardState.activeCardId===cardId,
@@ -13685,7 +13687,12 @@ async function refreshCorpCardRowsFromServer(cardId){
   await corpCardSaveQueue.catch(()=>{});
   const txt = await loadFileFromStorage('corp-card-rows:'+cardId);
   if(txt === null || txt === undefined) return false;   // 못 읽었으면(네트워크 등) 그대로 둔다
-  try{ corpCardState.rowsByCard[cardId] = JSON.parse(txt) || {}; return true; }catch(e){ return false; }
+  try{
+    const server = JSON.parse(txt) || {};
+    applyCorpCardRowsInPlace(cardId, mergeCorpCardRows(cardId, server));
+    corpCardBase[cardId] = corpCardBaseOf(server);
+    return true;
+  }catch(e){ return false; }
 }
 async function applyApprovalTimeOrderToAllCards(){
   let changedCards = 0, changedRows = 0;
@@ -14079,11 +14086,83 @@ async function flushCorpCardSave(opts){
   updateCorpCardSaveBtn();
   return { ok:true };
 }
+// ---- 법인카드 내역 여러 사람 동시 편집 ----
+// 카드마다 "마지막으로 서버에서 받은(또는 내가 저장한) 내용"을 행 단위로 기억해 두고(corpCardBase), 저장할 때와
+// 다른 사람이 저장한 내용이 들어올 때 행 단위로 합친다: 내가 고친 행은 내 값, 안 고친 행은 서버 값,
+// 남이 새로 넣은 행은 추가, 내가 지운 행은 지움. 그래서 같은 카드를 여럿이 고쳐도 서로의 내용을 덮어쓰지 않는다.
+const corpCardBase = {};   // cardId -> Map(rowId -> JSON)
+function corpCardBaseOf(obj){
+  const m = new Map();
+  Object.values(obj||{}).forEach(rows=>(rows||[]).forEach(r=>{ if(r && r.id) m.set(r.id, JSON.stringify(r)); }));
+  return m;
+}
+// 합친 결과를 지금 쓰는 배열·행 객체에 그대로 덮어 넣는다 — 화면의 입력칸들이 들고 있는 행 객체가
+// 바뀌지 않아야, 합친 뒤에도 그 칸에 치는 내용이 사라지지 않는다.
+function applyCorpCardRowsInPlace(cardId, merged){
+  const local = corpCardState.rowsByCard[cardId] || (corpCardState.rowsByCard[cardId] = {});
+  const objById = new Map(); Object.values(local).forEach(rows=>(rows||[]).forEach(r=>{ if(r && r.id) objById.set(r.id, r); }));
+  Object.keys(merged).forEach(m=>{
+    const mapped = (merged[m]||[]).map(r=>{
+      const o = r && r.id ? objById.get(r.id) : null;
+      if(o && o !== r){ Object.keys(o).forEach(k=>{ if(!(k in r)) delete o[k]; }); Object.assign(o, r); return o; }
+      return r;
+    });
+    if(Array.isArray(local[m])) local[m].splice(0, local[m].length, ...mapped); else local[m] = mapped;
+  });
+  Object.keys(local).forEach(m=>{ if(!(m in merged)) local[m].splice(0, local[m].length); });
+}
+function mergeCorpCardRows(cardId, server){
+  const local = corpCardState.rowsByCard[cardId] || {};
+  const base = corpCardBase[cardId];
+  if(!base) return server || {};
+  server = server || {};
+  const changed = r => base.get(r.id) !== JSON.stringify(r);
+  const localById = new Map(); Object.values(local).forEach(rows=>(rows||[]).forEach(r=>{ if(r && r.id) localById.set(r.id, r); }));
+  const serverIds = new Set(); Object.values(server).forEach(rows=>(rows||[]).forEach(r=>{ if(r && r.id) serverIds.add(r.id); }));
+  const out = {};
+  const months = [...new Set([...Object.keys(server), ...Object.keys(local)])];
+  months.forEach(m=>{
+    const res = [];
+    const placed = new Set();
+    (server[m]||[]).forEach(r=>{
+      if(!r || !r.id){ res.push(r); return; }
+      const lr = localById.get(r.id);
+      if(lr){
+        if(changed(lr)){ return; }   // 내가 고친 행은 아래에서 내 달(month) 자리에 넣는다
+        res.push(r); placed.add(r.id);
+      } else if(!base.has(r.id)){ res.push(r); placed.add(r.id); }   // 다른 사람이 새로 넣은 행
+      // (base에 있었는데 내 쪽에 없으면 내가 지운 행 → 뺀다)
+    });
+    // 내 쪽 행: 내가 고친 행, 내가 새로 넣은 행. 서버 순서 안에서 원래 자리에 가깝게 끼운다.
+    (local[m]||[]).forEach((lr, idx)=>{
+      if(!lr || !lr.id || placed.has(lr.id)) return;
+      const isNew = !base.has(lr.id);
+      if(!isNew && !changed(lr)) return;              // 안 고쳤고 서버에서 지워진 행 → 다른 사람이 지움
+      const prev = idx > 0 ? (local[m][idx-1] && local[m][idx-1].id) : null;
+      const at = prev ? res.findIndex(x=>x && x.id===prev) : -1;
+      if(at >= 0) res.splice(at+1, 0, lr); else if(idx === 0) res.unshift(lr); else res.push(lr);
+      placed.add(lr.id);
+    });
+    if(res.length || server[m] || local[m]) out[m] = res;
+  });
+  return out;
+}
 let corpCardSaveQueue = Promise.resolve();
 function saveCorpCardRows(cardId){
-  corpCardSaveQueue = corpCardSaveQueue.catch(()=>{}).then(
-    () => saveWithGenericHistory('corp-card-rows:'+cardId, JSON.stringify(corpCardState.rowsByCard[cardId]||{}))
-  );
+  corpCardSaveQueue = corpCardSaveQueue.catch(()=>{}).then(async () => {
+    const key = 'corp-card-rows:'+cardId;
+    // 저장 직전에 서버의 최신 내용을 받아 행 단위로 합친다(그 사이 남이 저장한 내용을 지우지 않게).
+    if(corpCardBase[cardId]){
+      try{
+        const txt = await loadFileFromStorage(key);
+        if(txt){ const server = JSON.parse(txt); applyCorpCardRowsInPlace(cardId, mergeCorpCardRows(cardId, server)); }
+      }catch(e){ console.warn('법인카드 저장 전 최신 내용 확인 실패', e); }
+    }
+    const value = JSON.stringify(corpCardState.rowsByCard[cardId]||{});
+    const r = await saveWithGenericHistory(key, value);
+    if(!r || r.ok !== false) corpCardBase[cardId] = corpCardBaseOf(corpCardState.rowsByCard[cardId]);
+    return r;
+  });
   // 연결된 통합본 PC 파일에도 자동으로 쓴다(15초 모아서, 바뀐 달만).
   if(typeof queueCardMasterAutoWrite === 'function' && !cardMasterSuppressAuto) queueCardMasterAutoWrite();
   return corpCardSaveQueue;
