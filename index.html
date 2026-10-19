@@ -14084,7 +14084,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 44;
+const EXCEL_HELPER_VERSION = 45;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -21389,7 +21389,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '44'
+$Version = '45'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21546,10 +21546,16 @@ function Handle-Read($body){
   }
   return @{ ok=$true; name=[IO.Path]::GetFileName($path); wasOpen=$wasOpen; bytes=$bytes }
 }
-# 덮어쓰기 전에 원본을 이 PC(%LOCALAPPDATA%\ExcelHelper\backup)에 복사해 둔다 — 최근 50개만 남긴다.
+# 자동 갱신 전 사본을 모으는 폴더. 지정한 폴더를 만들 수 없는 PC면 %LOCALAPPDATA%\ExcelHelper\backup 에 둔다.
+$BackupRootWanted = 'C:\Users\여분\Downloads\찬호용\엑셀 자동갱신 전 사본모음'
+function Get-BackupRoot(){
+  try { [void](New-Item -ItemType Directory -Force -Path $BackupRootWanted -ErrorAction Stop); return $BackupRootWanted } catch {}
+  return (Join-Path $env:LOCALAPPDATA 'ExcelHelper\backup')
+}
+# 덮어쓰기 전에 원본을 사본 폴더에 복사해 둔다 — 최근 50개만 남긴다.
 function Backup-File([string]$path){
   if(-not (Test-Path -LiteralPath $path)){ return $null }
-  $dir = Join-Path $env:LOCALAPPDATA 'ExcelHelper\backup'
+  $dir = Get-BackupRoot
   [void](New-Item -ItemType Directory -Force -Path $dir)
   $name = [IO.Path]::GetFileNameWithoutExtension($path) + '_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + [IO.Path]::GetExtension($path)
   $dest = Join-Path $dir $name
@@ -22062,7 +22068,7 @@ function Handle-OMListWrite($body){
 function Backup-FileThrottled([string]$path, [string]$sub, [int]$minutes){
   try {
     if(-not (Test-Path -LiteralPath $path)){ return }
-    $dir = Join-Path $env:LOCALAPPDATA ('ExcelHelper\backup\' + $sub)
+    $dir = Join-Path (Get-BackupRoot) $sub
     [void](New-Item -ItemType Directory -Force -Path $dir)
     $base = [IO.Path]::GetFileNameWithoutExtension($path)
     $recent = Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name.StartsWith($base + '_') -and $_.LastWriteTime -gt (Get-Date).AddMinutes(-$minutes) } | Select-Object -First 1
