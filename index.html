@@ -11114,6 +11114,7 @@ async function checkCardMasterFileChanges(force){
         const [numS, l4] = key.split('|'); const num = Number(numS);
         const card = cardForMasterKey(num, l4);
         if(!card) continue;
+        if(!touchedCards.has(card.id) && !(await refreshCorpCardRowsFromServer(card.id))) continue;   // 최신 내역 위에 반영
         if(JSON.stringify(appCardMonthNorm(card, num)) === fsig) continue;   // 이미 같음
         const r = await applyCardMasterRowsToCard(card, num, fileMap.get(key) || []);
         changes.push(`${num}월 카드 ${l4}: ${r.before}건 → ${r.after}건`);
@@ -13675,9 +13676,22 @@ function sortRowsByDateAndTime(rows){
 // 승인내역을 새로 올린 직후, 모든 카드·모든 달의 행에 승인시각을 채워 넣고
 // 날짜·시각 순으로 다시 줄 세운다 — 버튼을 따로 누르지 않아도 올리기만 하면
 // 실제 사용 순서대로 보이게 하기 위함이다.
+// 이 PC가 가진 카드 내역은 앱을 연 시점의 것이라, 그 뒤 다른 사람이 고친 내용이 빠져 있을 수 있다.
+// 자동 작업(승인내역 순서 정리, 통합본 파일 반영)이 카드 내역을 통째로 다시 저장하기 전에는 서버의 최신
+// 내역을 다시 받아 그 위에 작업한다 — 안 그러면 예전 내역으로 덮어써서 남이 쓴 내용이 사라졌다.
+// 이 PC에서 아직 저장 안 된 수정이 있으면 먼저 저장한다.
+async function refreshCorpCardRowsFromServer(cardId){
+  if(corpCardDirty) await flushCorpCardSave({ silent:true });
+  await corpCardSaveQueue.catch(()=>{});
+  const txt = await loadFileFromStorage('corp-card-rows:'+cardId);
+  if(txt === null || txt === undefined) return false;   // 못 읽었으면(네트워크 등) 그대로 둔다
+  try{ corpCardState.rowsByCard[cardId] = JSON.parse(txt) || {}; return true; }catch(e){ return false; }
+}
 async function applyApprovalTimeOrderToAllCards(){
   let changedCards = 0, changedRows = 0;
   for(const card of corpCardState.cards){
+    const fresh = await refreshCorpCardRowsFromServer(card.id);
+    if(!fresh) continue;   // 최신 내역을 못 받았으면 이 카드는 건드리지 않는다
     const byMonth = corpCardState.rowsByCard[card.id];
     if(!byMonth) continue;
     let touched = false;
@@ -13693,7 +13707,7 @@ async function applyApprovalTimeOrderToAllCards(){
       await saveCorpCardRows(card.id);
     }
   }
-  if(changedCards) renderCorpCardMain();
+  if(changedCards && state.activeTab === 'corpCard' && !document.querySelector('#main input:focus, #main textarea:focus, #main select:focus')) renderCorpCardMain();
   return { changedCards, changedRows };
 }
 async function sortCorpCardMonthByApprovalTime(cardId, monthLabel){
