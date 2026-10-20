@@ -10816,7 +10816,8 @@ function bindCardMasterLinkButtons(rerender){
       const months = buildCardMasterWritePayload(onlyMonth);
       if(!months.length){
         await flushHipassToCardMaster();
-        alert(`법인카드 탭에서 ${onlyMonth ? onlyMonth+'월 ' : ''}내역(날짜가 적힌 행)을 찾지 못했습니다.`);
+        const diag = corpCardState.cards.map(c=>{ const labs = Object.entries(corpCardState.rowsByCard[c.id]||{}).filter(([,rs])=>(rs||[]).some(r=>r.date)).map(([l])=>l); return `${String(c.cardNumber||'').slice(-4) || c.label}${cardParts(c.cardNumber) ? '' : '(카드번호 형식 이상)'}: ${labs.join(',') || '-'}`; }).join('\n');
+        alert(`법인카드 탭에서 ${onlyMonth ? onlyMonth+'월 ' : ''}내역(날짜가 적힌 행)을 찾지 못했습니다.\n\n(확인용 — 카드 ${corpCardState.cards.length}장, 불러옴=${corpCardState.loaded})\n${diag}`);
         return;
       }
       await resolveLinkedPath(key);
@@ -13343,8 +13344,15 @@ function corpCardSupplyVat(amount){
   const supply = vat===0 ? n : Math.round(n - vat);
   return { supply, vat };
 }
-async function ensureCorpCardLoaded(){
-  if(corpCardState.loaded || corpCardState.loading) return;
+// 이미 불러오는 중이면(다른 곳에서 먼저 시작) 끝날 때까지 기다린다 — 예전엔 바로 돌아와서 빈 내역으로 일을 했다.
+let corpCardLoadPromise = null;
+function ensureCorpCardLoaded(){
+  if(corpCardState.loaded) return Promise.resolve();
+  if(!corpCardLoadPromise) corpCardLoadPromise = ensureCorpCardLoadedInner().finally(()=>{ corpCardLoadPromise = null; });
+  return corpCardLoadPromise;
+}
+async function ensureCorpCardLoadedInner(){
+  if(corpCardState.loaded) return;
   corpCardState.loading = true;
   try{
     const listText = await loadFileFromStorage(CORP_CARD_LIST_KEY);
