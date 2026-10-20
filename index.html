@@ -13019,10 +13019,10 @@ let corpCardState = { cards:[], activeCardId:'', activeMonth:'', rowsByCard:{}, 
 const CORP_CARD_APPROVAL_KEY = 'corp-card-approval-entries';
 let corpCardTemplates = {}; // cardId -> { buffer, fileName, savedAt, months }
 
-const CORP_CARD_DEFAULT_CORP = '(에스피)';
-// 2026년 9월부터 법인이 (안성) → (에스피)로 바뀌었다. 9월 이후 달에 (안성)으로 적힌 내역과 카드의 법인 고정값을
-// 한 번만 (에스피)로 고친다(모든 PC 통틀어 한 번 — 그 뒤 일부러 (안성)으로 적은 건 그대로 둔다).
-const CORP_ESP_MIGRATION_KEY = 'migration-corpcard-esp-v1';
+const CORP_CARD_DEFAULT_CORP = '에스피';
+// 2026년 9월부터 법인이 (안성) → 에스피(괄호 없이)로 바뀌었다. 9월 이후 달에 (안성)·(에스피)로 적힌 내역과 카드의 법인 고정값을
+// 한 번만 에스피로 고친다(모든 PC 통틀어 한 번 — 그 뒤 일부러 (안성)으로 적은 건 그대로 둔다).
+const CORP_ESP_MIGRATION_KEY = 'migration-corpcard-esp-v2';
 async function migrateCorpCardCorpToEsp(){
   try{
     if(localStorage.getItem(CORP_ESP_MIGRATION_KEY)) return;
@@ -13034,9 +13034,9 @@ async function migrateCorpCardCorpToEsp(){
       Object.entries(corpCardState.rowsByCard[card.id]||{}).forEach(([label, rows])=>{
         const n = monthNumFromLabel(label);
         if(!n || n < 9) return;
-        (rows||[]).forEach(r=>{ if(String(r.corp||'').replace(/\s/g,'') === '(안성)'){ r.corp = CORP_CARD_DEFAULT_CORP; touched = true; rowsFixed++; } });
+        (rows||[]).forEach(r=>{ if(['(안성)','(에스피)'].includes(String(r.corp||'').replace(/\s/g,''))){ r.corp = CORP_CARD_DEFAULT_CORP; touched = true; rowsFixed++; } });
       });
-      if(String(card.fixedCorp||'').replace(/\s/g,'') === '(안성)'){ card.fixedCorp = CORP_CARD_DEFAULT_CORP; cardsFixed++; }
+      if(['(안성)','(에스피)'].includes(String(card.fixedCorp||'').replace(/\s/g,''))){ card.fixedCorp = CORP_CARD_DEFAULT_CORP; cardsFixed++; }
       if(touched) await saveCorpCardRows(card.id);
     }
     if(cardsFixed) await saveCorpCardList();
@@ -13048,7 +13048,7 @@ async function migrateCorpCardCorpToEsp(){
 function newCorpCardRow(){
   const row = { id: rid() };
   CORP_CARD_COLUMNS.forEach(([f])=>{ row[f] = f==='amount' ? 0 : (f==='date' ? isoDate(new Date()) : ''); });
-  // 부서·법인은 거의 항상 같은 값(경기지사 / (에스피) — 2026년 9월부터 (안성)에서 바뀜)이라 매번 새로 치지
+  // 부서·법인은 거의 항상 같은 값(경기지사 / 에스피 — 2026년 9월부터 (안성)에서 바뀜)이라 매번 새로 치지
   // 않아도 되게 기본값을 채워둔다 — "고정값" 모드를 켜서 다른 값을
   // 지정하면 아래에서 그 값으로 덮어쓴다.
   row.dept = '경기지사';
