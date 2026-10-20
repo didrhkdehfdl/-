@@ -2261,6 +2261,7 @@ async function deleteCaseStorage(id){
 // 새 상수를 만들지 않아도 자동으로 구분된다.
 const GENERIC_HISTORY_LIMIT = 20;
 const GENERIC_HISTORY_MIN_INTERVAL_MS = 60*1000;
+const GENERIC_HISTORY_MAX_CHARS = 6*1024*1024;
 function genericHistoryKey(storageKey){ return 'history:'+storageKey; }
 async function recordGenericHistoryBeforeSave(storageKey){
   try{
@@ -2275,7 +2276,11 @@ async function recordGenericHistoryBeforeSave(storageKey){
     if(lastEntry && lastEntry.data === prevRaw) return;
     history.push({ timestamp: now, data: prevRaw });
     while(history.length > GENERIC_HISTORY_LIMIT) history.shift();
-    await saveFileToStorage(hKey, JSON.stringify(history));
+    // 너무 커지면(내용이 큰 항목) 오래된 것부터 줄인다 — 저장할 때마다 이력 전체를 받아오기 때문.
+    let size = history.reduce((n,h)=>n+String(h.data||'').length, 0);
+    while(history.length > 1 && size > GENERIC_HISTORY_MAX_CHARS){ size -= String(history[0].data||'').length; history.shift(); }
+    const r = await saveFileToStorage(hKey, JSON.stringify(history));
+    if(r && r.ok === false) console.error('변경 이력 저장 실패', storageKey, r.reason);
   }catch(e){ console.error(e); }
 }
 async function loadGenericHistory(storageKey){
@@ -2529,6 +2534,20 @@ const FIRESTORE_VALUE_LIMIT = 900*1024; // Firestore 문서당 1MiB 제한에 �
 function appDataDoc(key){ return fbDb.collection('app_data').doc(key.replace(/\//g,'__')); }
 function fileStorageRef(key){ return fbStorage.ref('files/'+key.replace(/\//g,'__')); }
 
+function isPlainBase64(v){ return /^[A-Za-z0-9+/]+=*$/.test(v); }
+// Storage에 올린 내용 받기 — 글로 올린 것(encoding:'text')은 글 그대로, 파일은 base64로 돌려준다.
+async function readStorageBody(url, data){
+  const resp = await fetch(url);
+  if(!resp.ok) throw new Error(`파일 다운로드 실패 (HTTP ${resp.status})`);
+  if(data && data.encoding === 'text') return await resp.text();
+  const blob = await resp.blob();
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
 let lastStorageLoadError = ''; // "파일을 불러오지 못했습니다" 대화상자에 구체적인 원인을 함께 보여주기 위함
 async function loadFileFromStorage(key, timeoutMs){
   try{
@@ -2538,15 +2557,7 @@ async function loadFileFromStorage(key, timeoutMs){
     if(data.storedIn === 'storage'){
       const url = await withTimeoutRethrow(fileStorageRef(key).getDownloadURL(), timeoutMs || 20000, 'Storage 다운로드 URL 요청 시간 초과');
       if(!url) return null;
-      const resp = await fetch(url);
-      if(!resp.ok) throw new Error(`파일 다운로드 실패 (HTTP ${resp.status})`);
-      const blob = await resp.blob();
-      return await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+      return await readStorageBody(url, data);
     }
     return data.value;
   }catch(e){
@@ -2570,9 +2581,16 @@ async function saveFileToStorage(key, value, timeoutMs){
     if(value.length > FIRESTORE_VALUE_LIMIT){
       // 파일용량이 커서 Firestore 문서 한도를 넘으므로, 실제 내용은 Firebase
       // Storage에 올리고 Firestore에는 "저장 위치" 표시만 남긴다.
-      const base64Data = value.includes(',') && value.startsWith('data:') ? value.split(',')[1] : value;
-      await withTimeoutRethrow(fileStorageRef(key).putString(base64Data, 'base64'), timeoutMs, 'Storage 업로드 시간 초과');
-      await withTimeoutRethrow(appDataDoc(key).set({ storedIn:'storage', updatedAt: firebase.firestore.FieldValue.serverTimestamp() }), timeoutMs, 'Firestore 저장 시간 초과');
+      // 파일(base64)이 아니라 큰 글(JSON — 변경 이력 등)이면 글 그대로 올린다. 예전엔 글도 base64로
+      // 올리려다 실패해서, 커진 변경 이력이 그 뒤로 조용히 저장되지 않았다.
+      const isText = !(value.startsWith('data:') || isPlainBase64(value));
+      if(isText){
+        await withTimeoutRethrow(fileStorageRef(key).putString(value, 'raw', { contentType:'text/plain;charset=utf-8' }), Math.max(timeoutMs, 60000), 'Storage 업로드 시간 초과');
+      } else {
+        const base64Data = value.includes(',') && value.startsWith('data:') ? value.split(',')[1] : value;
+        await withTimeoutRethrow(fileStorageRef(key).putString(base64Data, 'base64'), timeoutMs, 'Storage 업로드 시간 초과');
+      }
+      await withTimeoutRethrow(appDataDoc(key).set({ storedIn:'storage', encoding: isText ? 'text' : 'base64', updatedAt: firebase.firestore.FieldValue.serverTimestamp() }), timeoutMs, 'Firestore 저장 시간 초과');
     } else {
       await withTimeoutRethrow(appDataDoc(key).set({ storedIn:'firestore', value, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }), timeoutMs, 'Firestore 저장 시간 초과');
     }
@@ -2602,15 +2620,7 @@ function subscribeListToStorage(key, targetState, opts){
         const data = snap.data();
         if(data.storedIn === 'storage'){
           const url = await fileStorageRef(key).getDownloadURL();
-          const resp = await fetch(url);
-          if(!resp.ok) throw new Error(`파일 다운로드 실패 (HTTP ${resp.status})`);
-          const blob = await resp.blob();
-          raw = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
+          raw = await readStorageBody(url, data);
         } else {
           raw = data.value;
         }
@@ -10791,16 +10801,27 @@ function bindCardMasterLinkButtons(rerender){
       await ensureCorpCardLoaded();
       await flushCorpCardSave({ silent:true });
       const link = await resolveLinkedPath(cardMasterLinkKey(t.id));
-      const res = await excelHelperCall('/cardmaster/read', { path: link.path }, 3*60*1000);
-      const fileMap = parseCardMasterFileSheets(res.sheets);
-      const plan = [];
-      fileMap.forEach((rows, key)=>{
-        const [nS, l4] = key.split('|'); if(Number(nS) !== num || !rows.length) return;
-        const card = cardForMasterKey(num, l4); if(!card) return;
-        const have = appCardMonthNorm(card, num).length;
-        if(have === 0) plan.push({ card, l4, rows });
-      });
-      if(!plan.length){ alert(`${num}월: 앱에 내역이 비어 있는데 파일에는 있는 카드가 없습니다(되살릴 것 없음).`); return; }
+      const planFrom = async (path)=>{
+        const res = await excelHelperCall('/cardmaster/read', { path }, 3*60*1000);
+        const fileMap = parseCardMasterFileSheets(res.sheets);
+        const plan = [], diag = [];
+        fileMap.forEach((rows, key)=>{
+          const [nS, l4] = key.split('|'); if(Number(nS) !== num) return;
+          const card = cardForMasterKey(num, l4);
+          const have = card ? appCardMonthNorm(card, num).length : 0;
+          if(rows.length || have) diag.push(`${l4}: 파일 ${rows.length}건 / 앱 ${card ? have+'건' : '(앱에 없는 카드)'}`);
+          if(card && rows.length && have === 0) plan.push({ card, l4, rows });
+        });
+        return { plan, diag };
+      };
+      let { plan, diag } = await planFrom(link.path);
+      if(!plan.length){
+        const other = prompt(`${num}월: 앱에 내역이 비어 있는데 지금 파일에는 있는 카드가 없습니다.\n\n카드별 ${num}월 건수:\n${diag.join('\n') || '(파일 ${num}월 시트에 내역 없음)'}\n\n파일 쪽 내역도 지워졌다면, 자동 갱신 전 사본(엑셀 자동갱신 전 사본모음\\통합본 폴더)의 파일 경로를 아래에 붙여 넣고 확인을 누르면 그 사본에서 가져옵니다.\n(파일을 Shift+오른쪽 클릭 → "경로로 복사")`, '');
+        const p2 = String(other||'').trim().replace(/^"|"$/g,'');
+        if(!p2) return;
+        ({ plan, diag } = await planFrom(p2));
+        if(!plan.length){ alert(`그 사본에도 되살릴 내역이 없습니다.\n\n카드별 ${num}월 건수:\n${diag.join('\n') || '(없음)'}`); return; }
+      }
       if(!confirm(`통합본 파일의 ${num}월 시트에서, 앱에 ${num}월 내역이 비어 있는 카드 ${plan.length}장의 내역을 법인카드 탭으로 가져옵니다.\n\n${plan.map(p=>`${p.l4}: ${p.rows.length}건`).join('\n')}\n\n(앱에 이미 내역이 있는 카드는 건드리지 않습니다) 계속할까요?`)) return;
       cardMasterSuppressAuto = true;
       try{
