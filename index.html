@@ -13019,14 +13019,40 @@ let corpCardState = { cards:[], activeCardId:'', activeMonth:'', rowsByCard:{}, 
 const CORP_CARD_APPROVAL_KEY = 'corp-card-approval-entries';
 let corpCardTemplates = {}; // cardId -> { buffer, fileName, savedAt, months }
 
+const CORP_CARD_DEFAULT_CORP = '(에스피)';
+// 2026년 9월부터 법인이 (안성) → (에스피)로 바뀌었다. 9월 이후 달에 (안성)으로 적힌 내역과 카드의 법인 고정값을
+// 한 번만 (에스피)로 고친다(모든 PC 통틀어 한 번 — 그 뒤 일부러 (안성)으로 적은 건 그대로 둔다).
+const CORP_ESP_MIGRATION_KEY = 'migration-corpcard-esp-v1';
+async function migrateCorpCardCorpToEsp(){
+  try{
+    if(localStorage.getItem(CORP_ESP_MIGRATION_KEY)) return;
+    const done = await loadFileFromStorage(CORP_ESP_MIGRATION_KEY);
+    if(done){ localStorage.setItem(CORP_ESP_MIGRATION_KEY, '1'); return; }
+    let rowsFixed = 0, cardsFixed = 0;
+    for(const card of corpCardState.cards){
+      let touched = false;
+      Object.entries(corpCardState.rowsByCard[card.id]||{}).forEach(([label, rows])=>{
+        const n = monthNumFromLabel(label);
+        if(!n || n < 9) return;
+        (rows||[]).forEach(r=>{ if(String(r.corp||'').replace(/\s/g,'') === '(안성)'){ r.corp = CORP_CARD_DEFAULT_CORP; touched = true; rowsFixed++; } });
+      });
+      if(String(card.fixedCorp||'').replace(/\s/g,'') === '(안성)'){ card.fixedCorp = CORP_CARD_DEFAULT_CORP; cardsFixed++; }
+      if(touched) await saveCorpCardRows(card.id);
+    }
+    if(cardsFixed) await saveCorpCardList();
+    await saveFileToStorage(CORP_ESP_MIGRATION_KEY, JSON.stringify({ at: new Date().toISOString(), rowsFixed, cardsFixed }));
+    localStorage.setItem(CORP_ESP_MIGRATION_KEY, '1');
+    if(rowsFixed || cardsFixed) console.log(`법인 (안성)→(에스피): 내역 ${rowsFixed}건, 고정값 ${cardsFixed}개`);
+  }catch(e){ console.warn('법인 (에스피) 바꾸기 실패', e); }
+}
 function newCorpCardRow(){
   const row = { id: rid() };
   CORP_CARD_COLUMNS.forEach(([f])=>{ row[f] = f==='amount' ? 0 : (f==='date' ? isoDate(new Date()) : ''); });
-  // 부서·법인은 거의 항상 같은 값(경기지사 / (안성))이라 매번 새로 치지
+  // 부서·법인은 거의 항상 같은 값(경기지사 / (에스피) — 2026년 9월부터 (안성)에서 바뀜)이라 매번 새로 치지
   // 않아도 되게 기본값을 채워둔다 — "고정값" 모드를 켜서 다른 값을
   // 지정하면 아래에서 그 값으로 덮어쓴다.
   row.dept = '경기지사';
-  row.corp = '(안성)';
+  row.corp = CORP_CARD_DEFAULT_CORP;
   // 직급·사용장소는 원본 엑셀 양식에는 없는 칸이라 CORP_CARD_COLUMNS(엑셀
   // B~Q열 매핑)에는 넣지 않는다 — 앱에서만 입력받아 사용내역서 출력에만 쓴다.
   row.position = '';
@@ -13289,6 +13315,7 @@ async function ensureCorpCardLoaded(){
       setTimeout(()=>alert(`화면에 안 보이던 법인카드 내역을 제 달 탭으로 되돌렸습니다.\n\n${recovered.join('\n')}\n\n각 카드의 해당 월 탭에서 확인해주세요.`), 300);
     }
     await fixCorpCard2025Dates();
+    await migrateCorpCardCorpToEsp();
     await ensureCorpCardViewAllLoaded();
     recomputeCorpCardMismatches();
   }catch(e){ console.error('법인카드 목록 불러오기 실패', e); }
