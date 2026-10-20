@@ -10770,6 +10770,7 @@ function cardMasterLinkHtml(t){
   return `<span style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; padding:3px 6px; border-radius:8px; border:1px dashed var(--sky); max-width:100%;">
       <span style="font-size:11px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:320px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}</span>
       ${btn('cardmaster-link-restore', '📥 통합본에서 이 달 내역 되살리기', '#d9822b', '선택한 달에 앱(법인카드 탭) 내역이 비어 있는 카드만, 통합본 파일의 그 달 시트 내용으로 법인카드 탭에 다시 채웁니다. 앱에 내역이 있는 카드는 건드리지 않습니다.')}
+      ${btn('cardmaster-link-carmap', '🚗 사용차량 자동', 'var(--sky)', '통합본 최신 월 시트 오른쪽에 "차량매핑" 탭(차량번호 → 사용차량)을 만들고, 월 시트의 사용차량 칸에 차량번호로 그 탭을 찾아 채우는 함수(VLOOKUP)를 넣습니다. 새 차는 차량매핑 탭에 한 줄 더 적으면 바로 반영됩니다.')}
       ${btn('cardmaster-link-layout', '🔍 양식 정보 파일 받기', 'var(--muted)', '연결된 통합본의 월 시트 내용(값)을 엑셀 도우미로 읽어 파일 하나(JSON)로 내려받습니다. 양식 확인이 필요할 때 이 파일을 개발 담당(Claude)에게 보내주세요. 파일은 바뀌지 않습니다.')}
       ${btn('cardmaster-link-save', '💾 최신 데이터로 PC 파일 갱신', '#2e9e5b', '연결된 PC 파일의 지금 내용을 바탕으로 카드 블록만 법인카드 탭의 최신 내역으로 채워 그 파일에 저장합니다. 엑셀에 열려 있으면 잠깐 닫았다 다시 엽니다. 덮어쓰기 전 원본은 이 PC에 자동 백업됩니다.')}
       ${btn('cardmaster-link-pick', '바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
@@ -10835,6 +10836,15 @@ function bindCardMasterLinkButtons(rerender){
       rememberCardMasterWritten(t.id, buildCardMasterWritePayload(num));
       if(typeof recomputeCorpCardMismatches === 'function') recomputeCorpCardMismatches();
       alert(`${num}월 내역을 되살렸습니다.\n${plan.map(p=>`${p.l4}: ${p.rows.length}건`).join('\n')}\n\n법인카드 탭에서 확인해주세요(직급·사용장소처럼 통합본에 없는 칸은 비어 있습니다).`);
+    }catch(e){ alert(linkedFileErrorMessage(e)); }
+    finally{ btn.disabled = false; btn.textContent = label; }
+  }));
+  document.querySelectorAll('.cardmaster-link-carmap').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const t = tOf(btn); if(!t) return;
+    const label = btn.textContent; btn.disabled = true; btn.textContent = '엑셀에서 넣는 중…';
+    try{
+      const r = await writeCardMasterCarMap(t.id);
+      if(r) alert(`통합본에 "차량매핑" 탭과 사용차량 함수를 넣었습니다.\n(차량매핑 탭에 새로 더한 차량번호 ${r.added}개, 함수를 넣은 월 시트 ${r.sheets}개)\n\n차량매핑 탭에서 사용차량이 비어 있는 번호는 직접 적어주시면 바로 반영됩니다.`);
     }catch(e){ alert(linkedFileErrorMessage(e)); }
     finally{ btn.disabled = false; btn.textContent = label; }
   }));
@@ -11256,6 +11266,16 @@ function buildHipassPayload(){
     num, cards: [...cards.entries()].map(([last4, items])=>({ last4, items: items.sort((x,y)=>x.day-y.day || String(x.t).localeCompare(String(y.t))).map(({day,amount})=>({day,amount})) }))
   }));
 }
+// 통합본에 차량매핑 탭 + 사용차량 함수(도우미 v49 이상). 성공하면 결과, 도우미가 예전 버전이면 null.
+async function writeCardMasterCarMap(tmplId){
+  await checkExcelHelper();
+  if(!excelHelperRunning) throw new Error('엑셀 도우미가 실행돼 있지 않습니다.');
+  if(excelHelperVersion < 49){ alert('엑셀 도우미가 예전 버전입니다. 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.'); return null; }
+  const link = await resolveLinkedPath(cardMasterLinkKey(tmplId));
+  const r = await excelHelperCall('/cardmaster/carmap', { path: link.path, items: carMapItems() }, 5*60*1000);
+  await rebaseCardMasterFile(tmplId);
+  return r;
+}
 async function flushHipassToCardMaster(){
   if(hipassWriteBusy) return;
   await ensureCardMasterLoaded();
@@ -11308,6 +11328,15 @@ setInterval(async ()=>{
         }catch(e){}
         flushCardMasterAutoWrite();                  // 앱(다른 PC에서 고친 것 포함) → 파일
         await flushHipassToCardMaster();             // 하이패스 카드 승인내역 → 파일(바뀐 달만)
+        // 차량매핑 탭·사용차량 함수를 이 PC에서 한 번 넣는다(목록이 바뀌면 다시).
+        try{
+          const sig = 'cardmaster-carmap:' + JSON.stringify(carMapItems());
+          if(excelHelperRunning && excelHelperVersion >= 49 && localStorage.getItem('cardmaster-carmap-sig') !== sig){
+            for(const t of corpCardMasterTemplates.filter(t=>getLinkedFile(cardMasterLinkKey(t.id)))) await writeCardMasterCarMap(t.id);
+            localStorage.setItem('cardmaster-carmap-sig', sig);
+            showLedgerToast('통합본에 "차량매핑" 탭과 사용차량 자동 함수를 넣었습니다.');
+          }
+        }catch(e){ if(!(e && e.helperBusy)) console.warn('차량매핑 넣기 실패', e); }
       }catch(e){ console.warn('통합본 백그라운드 동기화 실패', e); }
     }
   }finally{ linkedBgSyncBusy = false; }
@@ -14371,7 +14400,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 48;
+const EXCEL_HELPER_VERSION = 49;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -17574,7 +17603,13 @@ const VEHICLE_TYPE_LABEL_BY_PLATE_SUFFIX = {
   '2507': '(흰색 투싼)',
   '3180': '(흰색 투싼)',
   '9308': '(흰색 아반떼)',
+  '4601': '(K8)',
+  '6622': '(소나타)',
 };
+// 통합본 "차량매핑" 탭에 넣을 차량번호(끝 4자리) → 사용차량 목록 — 위 라벨에서 괄호만 뺀다.
+function carMapItems(){
+  return Object.entries(VEHICLE_TYPE_LABEL_BY_PLATE_SUFFIX).map(([no, label])=>({ no, car: String(label).replace(/^\(|\)$/g,'').trim() }));
+}
 function vehicleTypeLabel(plate){
   return VEHICLE_TYPE_LABEL_BY_PLATE_SUFFIX[String(plate||'').slice(-4)] || '';
 }
@@ -21676,7 +21711,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '48'
+$Version = '49'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -22647,6 +22682,111 @@ function Find-MonthSheetForNum($wb, [int]$num){
   if(-not $ws){ $ws = $sheets | Where-Object { $_.Name -match '(\d{1,2})\s*월' -and [int]$Matches[1] -eq $num -and $_.Name -notmatch '보고용' -and ((([string]$_.Range('B1').Text) -replace '\s','') -eq '날짜') } | Select-Object -First 1 }
   return $ws
 }
+# ---- 사용차량 자동: 최신 월 시트 오른쪽 "차량매핑" 탭(차량번호 → 사용차량) + 월 시트 사용차량 칸에 VLOOKUP 함수 ----
+$CarMapSheetName = '차량매핑'
+function Get-ColLetter([int]$n){ $s=''; while($n -gt 0){ $m=($n-1)%26; $s=[char](65+$m)+$s; $n=[Math]::Floor(($n-1)/26) }; return $s }
+function Get-CarCols($ws){
+  $hv = $ws.Range('A1:AZ1').Value2
+  $car = 0; $no = 0
+  for($c=1; $c -le 52; $c++){ $t = ([string]$hv[1,$c]) -replace '\s',''; if($t -eq '사용차량' -and -not $car){ $car = $c }; if($t -eq '차량번호' -and -not $no){ $no = $c } }
+  return @($car, $no)
+}
+function Get-MonthSheets($wb){ $out = @(); foreach($s in $wb.Worksheets){ if([string]$s.Name -match '^\s*(\d{1,2})\s*월\s*$'){ $out += $s } }; return $out }
+function Get-CarMapSheet($wb){ foreach($s in $wb.Worksheets){ if([string]$s.Name -eq $CarMapSheetName){ return $s } }; return $null }
+function Get-CarNoText($v){
+  if($null -eq $v){ return '' }
+  if($v -is [double]){ return ([string][int64]$v) }
+  return ([string]$v).Trim()
+}
+# 차량매핑 탭을 만들거나(최신 월 시트 바로 오른쪽) 자리를 맞추고, 없는 차량번호만 아래에 더한다(이미 적힌 사용차량은 그대로).
+function Ensure-CarMapSheet($wb, $items){
+  $months = @(Get-MonthSheets $wb)
+  $latest = $null; $best = -1
+  foreach($s in $months){ if([string]$s.Name -match '(\d{1,2})'){ $n=[int]$Matches[1]; if($n -gt $best){ $best=$n; $latest=$s } } }
+  $map = Get-CarMapSheet $wb
+  $missing = [Reflection.Missing]::Value
+  if(-not $map){
+    $map = if($latest){ Invoke-Retry { $wb.Worksheets.Add($missing, $latest) } } else { Invoke-Retry { $wb.Worksheets.Add() } }
+    Invoke-Retry { $map.Name = $CarMapSheetName } | Out-Null
+    Invoke-Retry { $map.Range('A1').Value2 = '차량번호'; $map.Range('B1').Value2 = '사용차량' } | Out-Null
+    try { $map.Range('A1:B1').Font.Bold = $true; $map.Columns.Item(1).NumberFormat = '@'; $map.Columns.Item(1).ColumnWidth = 12; $map.Columns.Item(2).ColumnWidth = 18 } catch {}
+  } elseif($latest -and $map.Index -ne $latest.Index + 1){
+    try { Invoke-Retry { $map.Move($missing, $latest) } | Out-Null } catch {}
+  }
+  $last = [int]$map.Cells.Item($map.Rows.Count, 1).End(-4162).Row
+  $have = @{}
+  for($r=2; $r -le $last; $r++){ $k = Get-CarNoText $map.Cells.Item($r,1).Value2; if($k){ $have[$k] = $r } }
+  $want = New-Object System.Collections.ArrayList
+  foreach($it in @($items)){ $k = [string]$it.no; if($k){ [void]$want.Add(@($k, [string]$it.car)) } }
+  # 월 시트 차량번호 칸에 적힌 번호도 모은다(사용차량은 비워 두고 직접 적게).
+  foreach($ws in $months){
+    $cc = Get-CarCols $ws; if(-not $cc[0] -or -not $cc[1]){ continue }
+    $used = $ws.UsedRange; $lr = $used.Row + $used.Rows.Count - 1; if($lr -lt 2){ continue }
+    $vals = $ws.Range($ws.Cells.Item(2,$cc[1]), $ws.Cells.Item($lr,$cc[1])).Value2
+    if($lr -eq 2){ $k = Get-CarNoText $vals; if($k -and $k -ne '0'){ [void]$want.Add(@($k, '')) }; continue }
+    for($i=1; $i -le $lr-1; $i++){ $k = Get-CarNoText $vals[$i,1]; if($k -and $k -ne '0'){ [void]$want.Add(@($k, '')) } }
+  }
+  $added = 0
+  foreach($w in $want){
+    $k = $w[0]
+    if($have.ContainsKey($k)){
+      $r = $have[$k]
+      if($w[1] -and -not ([string]$map.Cells.Item($r,2).Value2).Trim()){ Invoke-Retry { $map.Cells.Item($r,2).Value2 = $w[1] } | Out-Null }
+      continue
+    }
+    $last++
+    Invoke-Retry { $map.Cells.Item($last,1).NumberFormat = '@'; $map.Cells.Item($last,1).Value2 = $k; if($w[1]){ $map.Cells.Item($last,2).Value2 = $w[1] } } | Out-Null
+    $have[$k] = $last; $added++
+  }
+  return $added
+}
+# 월 시트의 사용차량 칸(비었거나 예전에 넣은 이 함수인 칸만)에 차량번호로 차량매핑 탭을 찾아보는 함수를 넣는다.
+function Apply-CarFormulas($wb){
+  if(-not (Get-CarMapSheet $wb)){ return 0 }
+  $done = 0
+  foreach($ws in @(Get-MonthSheets $wb)){
+    $cc = Get-CarCols $ws; $carC = $cc[0]; $noC = $cc[1]
+    if(-not $carC -or -not $noC){ continue }
+    $used = $ws.UsedRange; $lr = $used.Row + $used.Rows.Count - 1
+    if($lr -lt 2){ continue }
+    $L = Get-ColLetter $noC
+    $rng = $ws.Range($ws.Cells.Item(2,$carC), $ws.Cells.Item($lr,$carC))
+    $f = $rng.Formula
+    $cnt = $lr - 1
+    $arr = New-Object 'object[,]' $cnt,1
+    $changed = $false
+    for($i=0; $i -lt $cnt; $i++){
+      $cur = if($cnt -eq 1){ [string]$f } else { [string]$f[($i+1),1] }
+      $r = $i + 2
+      $want = "=IF(`$$L$r=`"`",`"`",IFERROR(VLOOKUP(`$$L$r&`"`",'$CarMapSheetName'!`$A:`$B,2,FALSE)&`"`",`"`"))"
+      if($cur -eq '' -or ($cur.StartsWith('=') -and $cur.Contains($CarMapSheetName))){ $arr[$i,0] = $want; if($cur -ne $want){ $changed = $true } }
+      else { $arr[$i,0] = $cur }
+    }
+    if($changed){ Invoke-Retry { $rng.Formula = $arr } | Out-Null; $done++ }
+  }
+  return $done
+}
+function Handle-CardMasterCarMap($body){
+  $path = [string]$body.path
+  $xl = Get-Excel $true
+  $wb = Find-OpenWorkbook $xl $path
+  $openedHere = $false
+  if(-not $wb){
+    if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
+    $wb = Open-Workbook $xl $path $false
+    $openedHere = $true
+  }
+  try {
+    Backup-FileThrottled $path '통합본' 30
+    $wb = Ensure-Writable $xl $wb $path
+    $added = Ensure-CarMapSheet $wb @($body.items)
+    $sheets = Apply-CarFormulas $wb
+    Invoke-Retry { $wb.Save() } | Out-Null
+    return @{ ok=$true; added=$added; sheets=$sheets }
+  } finally {
+    Release-Workbook $xl $wb $openedHere
+  }
+}
 function Handle-CardMasterHipass($body){
   $path = [string]$body.path
   $xl = Get-Excel $true
@@ -22710,6 +22850,7 @@ function Handle-CardMasterHipass($body){
     }
     if($null -ne $prevCalc){ try { Invoke-Retry { $xl.Calculation = $prevCalc } | Out-Null } catch {} }
     Invoke-Retry { $xl.ScreenUpdating = $true } | Out-Null
+    try { [void](Apply-CarFormulas $wb) } catch { Log "사용차량 함수 넣기 실패: $($_.Exception.Message)" }
     Invoke-Retry { $wb.Save() } | Out-Null
     return @{ ok=$true; done=$done; skipped=$skipped }
   } finally {
@@ -22838,7 +22979,10 @@ function Handle-CardMasterWrite($body){
     # 저장 전에 계산 방식을 되돌려 합계가 다시 계산된 상태로 저장되게 한다.
     Set-Progress 95 100 '합계 계산·저장 중'
     if($null -ne $prevCalc){ try { Invoke-Retry { $xl.Calculation = $prevCalc } | Out-Null; $prevCalc = $null } catch {} }
-    if($applied -gt 0 -or $created.Count -gt 0){ Invoke-Retry { $wb.Save() } | Out-Null }
+    if($applied -gt 0 -or $created.Count -gt 0){
+      try { [void](Apply-CarFormulas $wb) } catch { Log "사용차량 함수 넣기 실패: $($_.Exception.Message)" }
+      Invoke-Retry { $wb.Save() } | Out-Null
+    }
     return @{ ok=$true; applied=$applied; report=$report; created=$created; skipped=$skipped; noBlock=$noBlock; newBlocks=$newBlocks; wasOpen=(-not $openedHere) }
   } finally {
     if($null -ne $prevCalc){ try { $xl.Calculation = $prevCalc } catch {} }
@@ -23113,6 +23257,7 @@ function Handle-Context($ctx){
       '/corpcard/write' { Handle-CorpCardWrite $body }
       '/cardmaster/write' { Handle-CardMasterWrite $body }
       '/cardmaster/hipass' { Handle-CardMasterHipass $body }
+      '/cardmaster/carmap' { Handle-CardMasterCarMap $body }
       '/sagup/write'      { Handle-SagupWrite $body }
       '/profitledger/write' { Handle-ProfitLedgerWrite $body }
       '/omlist/write'     { Handle-OMListWrite $body }
