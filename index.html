@@ -10770,6 +10770,7 @@ function cardMasterLinkHtml(t){
   return `<span style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; padding:3px 6px; border-radius:8px; border:1px dashed var(--sky); max-width:100%;">
       <span style="font-size:11px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:320px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}</span>
       ${btn('cardmaster-link-restore', '📥 통합본에서 이 달 내역 되살리기', '#d9822b', '선택한 달에 앱(법인카드 탭) 내역이 비어 있는 카드만, 통합본 파일의 그 달 시트 내용으로 법인카드 탭에 다시 채웁니다. 앱에 내역이 있는 카드는 건드리지 않습니다.')}
+      ${btn('cardmaster-link-align', '📐 이 달 시트 양식 맞추기', 'var(--sky)', '오른쪽 위에서 고른 달 시트를 다른 달(기본 최신 달) 시트의 1행 머리글 순서대로 맞춥니다. 없는 열(임원·지사 등)을 끼워 넣기만 하고 값·수식은 그대로 옮겨집니다. 바꾸기 전에 바뀔 내용을 먼저 보여주고, 원본은 자동 백업됩니다.')}
       ${btn('cardmaster-link-carmap', '🚗 사용차량 자동', 'var(--sky)', '통합본 최신 월 시트 오른쪽에 "차량매핑" 탭(차량번호 → 사용차량)을 만들고, 월 시트의 사용차량 칸에 차량번호로 그 탭을 찾아 채우는 함수(VLOOKUP)를 넣습니다. 새 차는 차량매핑 탭에 한 줄 더 적으면 바로 반영됩니다.')}
       ${btn('cardmaster-link-layout', '🔍 양식 정보 파일 받기', 'var(--muted)', '연결된 통합본의 월 시트 내용(값)을 엑셀 도우미로 읽어 파일 하나(JSON)로 내려받습니다. 양식 확인이 필요할 때 이 파일을 개발 담당(Claude)에게 보내주세요. 파일은 바뀌지 않습니다.')}
       ${btn('cardmaster-link-save', '💾 최신 데이터로 PC 파일 갱신', '#2e9e5b', '연결된 PC 파일의 지금 내용을 바탕으로 카드 블록만 법인카드 탭의 최신 내역으로 채워 그 파일에 저장합니다. 엑셀에 열려 있으면 잠깐 닫았다 다시 엽니다. 덮어쓰기 전 원본은 이 PC에 자동 백업됩니다.')}
@@ -10836,6 +10837,30 @@ function bindCardMasterLinkButtons(rerender){
       rememberCardMasterWritten(t.id, buildCardMasterWritePayload(num));
       if(typeof recomputeCorpCardMismatches === 'function') recomputeCorpCardMismatches();
       alert(`${num}월 내역을 되살렸습니다.\n${plan.map(p=>`${p.l4}: ${p.rows.length}건`).join('\n')}\n\n법인카드 탭에서 확인해주세요(직급·사용장소처럼 통합본에 없는 칸은 비어 있습니다).`);
+    }catch(e){ alert(linkedFileErrorMessage(e)); }
+    finally{ btn.disabled = false; btn.textContent = label; }
+  }));
+  document.querySelectorAll('.cardmaster-link-align').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const t = tOf(btn); if(!t) return;
+    const to = cardMasterSelectedMonth(t.id);
+    if(!to){ alert('양식을 맞출 달을 오른쪽 위 선택칸에서 골라주세요(예: 9월).'); return; }
+    const fromTxt = prompt(`${to}월 시트를 몇 월 시트 양식에 맞출까요?`, String(Math.min(12, Math.max(to+1, new Date().getMonth()+1))));
+    const from = Number(String(fromTxt||'').replace(/[^0-9]/g,''));
+    if(!from || from === to) return;
+    const label = btn.textContent; btn.disabled = true; btn.textContent = '양식 비교 중…';
+    try{
+      await checkExcelHelper();
+      if(!excelHelperRunning) throw new Error('엑셀 도우미가 실행돼 있지 않습니다.');
+      if(excelHelperVersion < 50){ alert('엑셀 도우미가 예전 버전입니다. 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요.'); return; }
+      const link = await resolveLinkedPath(cardMasterLinkKey(t.id));
+      const dry = await excelHelperCall('/cardmaster/alignlayout', { path: link.path, from, to, dryRun: true }, 3*60*1000);
+      if(!dry.dryRun){ alert((dry.report||[]).join('\n')); return; }
+      if(!confirm(`${to}월 시트를 ${from}월 시트 양식에 맞춥니다.\n\n${(dry.report||[]).join('\n')}\n\n(열을 끼워 넣기만 하고 기존 값·수식은 그대로 옮겨집니다. 바꾸기 전 원본은 사본 폴더에 백업됩니다) 진행할까요?`)) return;
+      btn.textContent = '엑셀에서 바꾸는 중…';
+      const r = await excelHelperCall('/cardmaster/alignlayout', { path: link.path, from, to }, 5*60*1000);
+      await rebaseCardMasterFile(t.id);
+      try{ localStorage.removeItem('cardmaster-carmap-sig'); }catch(e){}   // 새 차량번호 열에도 사용차량 함수가 들어가게
+      alert(`${to}월 시트를 ${from}월 양식으로 맞췄습니다.\n\n${(r.report||[]).join('\n')}`);
     }catch(e){ alert(linkedFileErrorMessage(e)); }
     finally{ btn.disabled = false; btn.textContent = label; }
   }));
@@ -14400,7 +14425,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 49;
+const EXCEL_HELPER_VERSION = 50;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -21711,7 +21736,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '49'
+$Version = '50'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -22766,6 +22791,80 @@ function Apply-CarFormulas($wb){
   }
   return $done
 }
+# ---- 월 시트 양식 맞추기: 기준 월(예: 10월) 시트 1행 머리글 순서대로, 대상 월(예: 9월) 시트에 없는 열을 끼워 넣는다 ----
+# 열을 "끼워 넣기"만 하므로 기존 값·수식은 그대로 따라 옮겨지고(엑셀이 다른 시트의 참조까지 고쳐 줌), 지우는 열은 없다.
+# 예전 양식의 "사용차량" 열은 실제로 차량번호가 들어 있어서, 기준 양식에 "차량번호"가 따로 있으면 그 열 이름을 "차량번호"로 바꾼다.
+function Get-HeaderList($ws, [int]$maxCol){
+  $hv = $ws.Range($ws.Cells.Item(1,1), $ws.Cells.Item(1,$maxCol)).Value2
+  $out = @(); for($c=1; $c -le $maxCol; $c++){ $out += (([string]$hv[1,$c]) -replace '\s','') }
+  $last = 0; for($c=0; $c -lt $out.Count; $c++){ if($out[$c]){ $last = $c + 1 } }
+  if($last -eq 0){ return @() }
+  return $out[0..($last-1)]
+}
+function Handle-CardMasterAlignLayout($body){
+  $path = [string]$body.path
+  $xl = Get-Excel $true
+  $wb = Find-OpenWorkbook $xl $path
+  $openedHere = $false
+  if(-not $wb){
+    if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
+    $wb = Open-Workbook $xl $path $false
+    $openedHere = $true
+  }
+  try {
+    $src = Find-MonthSheetForNum $wb ([int]$body.from)
+    $dst = Find-MonthSheetForNum $wb ([int]$body.to)
+    if(-not $src){ throw "$($body.from)월 시트를 찾지 못했습니다." }
+    if(-not $dst){ throw "$($body.to)월 시트를 찾지 못했습니다." }
+    $want = @(Get-HeaderList $src 60)
+    $have = @(Get-HeaderList $dst 60)
+    if(-not $want.Count){ throw "$($src.Name) 시트 1행 머리글이 비어 있습니다." }
+    $plan = New-Object System.Collections.ArrayList
+    $renameCar = ($want -contains '차량번호') -and -not ($have -contains '차량번호') -and ($have -contains '사용차량')
+    if($renameCar){ $have[[array]::IndexOf($have, '사용차량')] = '차량번호' }
+    $cur = New-Object System.Collections.ArrayList; foreach($h in $have){ [void]$cur.Add($h) }
+    for($i=0; $i -lt $want.Count; $i++){
+      $t = $want[$i]
+      $c = if($i -lt $cur.Count){ $cur[$i] } else { $null }
+      if($c -eq $t){ continue }
+      $later = $false; for($k=$i+1; $k -lt $cur.Count; $k++){ if($cur[$k] -eq $t -and $t){ $later = $true; break } }
+      if($later){ throw "$($dst.Name) 시트의 '$t' 열이 $($src.Name) 시트와 다른 순서에 있어 자동으로 맞추지 못했습니다(열을 끼워 넣기만 할 수 있음). 지금까지 바꾼 것 없음." }
+      if($i -ge $cur.Count){ [void]$plan.Add(@(($i+1), $t, 'append')); [void]$cur.Add($t); continue }
+      if($c -and ($want -notcontains $c)){ throw "$($dst.Name) 시트의 '$c' 열이 $($src.Name) 양식에 없어 자동으로 맞추지 못했습니다. 지금까지 바꾼 것 없음." }
+      [void]$plan.Add(@(($i+1), $t, 'insert')); $cur.Insert($i, $t)
+    }
+    if(-not $plan.Count -and -not $renameCar){ return @{ ok=$true; changed=$false; report=@("$($dst.Name) 시트가 이미 $($src.Name) 양식과 같습니다.") } }
+    if($body.dryRun){
+      $rep = @(); if($renameCar){ $rep += "'사용차량' 열 이름 → '차량번호'(차량번호가 들어 있는 열)" }
+      foreach($p in $plan){ $rep += "$(Get-ColLetter $p[0])열에 '$($p[1])' 열 끼워 넣기" }
+      return @{ ok=$true; changed=$false; dryRun=$true; report=$rep }
+    }
+    Backup-File $path | Out-Null
+    $wb = Ensure-Writable $xl $wb $path
+    $dst = Find-MonthSheetForNum $wb ([int]$body.to); $src = Find-MonthSheetForNum $wb ([int]$body.from)
+    $rep = @()
+    if($renameCar){
+      for($c=1; $c -le 60; $c++){ if((([string]$dst.Cells.Item(1,$c).Value2) -replace '\s','') -eq '사용차량'){ Invoke-Retry { $dst.Cells.Item(1,$c).Value2 = '차량번호' } | Out-Null; break } }
+      $rep += "'사용차량' 열 이름 → '차량번호'"
+    }
+    foreach($p in $plan){
+      $col = [int]$p[0]
+      if($p[2] -eq 'insert'){ Invoke-Retry { [void]$dst.Columns.Item($col).Insert(-4161, 0) } | Out-Null }
+      Invoke-Retry { $dst.Cells.Item(1,$col).Value2 = [string]$src.Cells.Item(1,$col).Value2 } | Out-Null
+      $rep += "$(Get-ColLetter $col)열에 '$($p[1])' 열 끼워 넣음"
+    }
+    # 열 너비·머리글 모양도 기준 시트와 같게
+    for($c=1; $c -le $want.Count; $c++){
+      try { $dst.Columns.Item($c).ColumnWidth = $src.Columns.Item($c).ColumnWidth } catch {}
+      try { [void]$src.Cells.Item(1,$c).Copy(); [void]$dst.Cells.Item(1,$c).PasteSpecial(-4122) } catch {}
+    }
+    try { $xl.CutCopyMode = $false } catch {}
+    Invoke-Retry { $wb.Save() } | Out-Null
+    return @{ ok=$true; changed=$true; report=$rep }
+  } finally {
+    Release-Workbook $xl $wb $openedHere
+  }
+}
 function Handle-CardMasterCarMap($body){
   $path = [string]$body.path
   $xl = Get-Excel $true
@@ -23258,6 +23357,7 @@ function Handle-Context($ctx){
       '/cardmaster/write' { Handle-CardMasterWrite $body }
       '/cardmaster/hipass' { Handle-CardMasterHipass $body }
       '/cardmaster/carmap' { Handle-CardMasterCarMap $body }
+      '/cardmaster/alignlayout' { Handle-CardMasterAlignLayout $body }
       '/sagup/write'      { Handle-SagupWrite $body }
       '/profitledger/write' { Handle-ProfitLedgerWrite $body }
       '/omlist/write'     { Handle-OMListWrite $body }
