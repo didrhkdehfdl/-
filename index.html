@@ -10759,6 +10759,7 @@ function cardMasterLinkHtml(t){
   if(!link) return btn('cardmaster-link-pick', '🔗 PC 엑셀 파일 연결', 'var(--sky)', '내 PC(W: 같은 네트워크 드라이브 포함)의 이 통합본 파일을 연결하면, 다운로드 없이 그 파일에 바로 최신 데이터를 채워 저장합니다. PC에서 엑셀 도우미가 실행돼 있어야 합니다.');
   return `<span style="display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; padding:3px 6px; border-radius:8px; border:1px dashed var(--sky); max-width:100%;">
       <span style="font-size:11px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:320px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}</span>
+      ${btn('cardmaster-link-layout', '🔍 양식 정보 파일 받기', 'var(--muted)', '연결된 통합본의 월 시트 내용(값)을 엑셀 도우미로 읽어 파일 하나(JSON)로 내려받습니다. 양식 확인이 필요할 때 이 파일을 개발 담당(Claude)에게 보내주세요. 파일은 바뀌지 않습니다.')}
       ${btn('cardmaster-link-save', '💾 최신 데이터로 PC 파일 갱신', '#2e9e5b', '연결된 PC 파일의 지금 내용을 바탕으로 카드 블록만 법인카드 탭의 최신 내역으로 채워 그 파일에 저장합니다. 엑셀에 열려 있으면 잠깐 닫았다 다시 엽니다. 덮어쓰기 전 원본은 이 PC에 자동 백업됩니다.')}
       ${btn('cardmaster-link-pick', '바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
       ${btn('cardmaster-link-unlink', '✕', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
@@ -10778,6 +10779,20 @@ function bindCardMasterLinkButtons(rerender){
     const t = tOf(btn); if(!t) return;
     if(!confirm(`"${t.label}" 통합본과 PC 엑셀 파일의 연결을 해제할까요? (파일 자체는 그대로 남습니다)`)) return;
     unlinkFile(cardMasterLinkKey(t.id)); rerender();
+  }));
+  document.querySelectorAll('.cardmaster-link-layout').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const t = tOf(btn); if(!t) return;
+    const label = btn.textContent; btn.disabled = true; btn.textContent = '읽는 중…';
+    try{
+      const link = await resolveLinkedPath(cardMasterLinkKey(t.id));
+      const res = await excelHelperCall('/cardmaster/read', { path: link.path }, 3*60*1000);
+      const colName = n => { let s=''; n++; while(n>0){ const m=(n-1)%26; s=String.fromCharCode(65+m)+s; n=Math.floor((n-1)/26); } return s; };
+      const sheets = (res.sheets||[]).map(sh=>({ name: sh.name, rows: (sh.rows||[]).map((r,i)=>{ const o = { row: i+1 }; (r||[]).forEach((v,c)=>{ if(v!==null && v!=='' && v!==undefined) o[colName(c)] = v; }); return o; }).filter(o=>Object.keys(o).length>1) }));
+      const blob = new Blob([JSON.stringify({ file: link.name, readAt: new Date().toISOString(), sheets }, null, 1)], { type:'application/json' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `통합본_양식정보_${isoDate(new Date())}.json`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 60000);
+    }catch(e){ alert(linkedFileErrorMessage(e)); }
+    finally{ btn.disabled = false; btn.textContent = label; }
   }));
   document.querySelectorAll('.cardmaster-link-save').forEach(btn=>btn.addEventListener('click', async ()=>{
     const t = tOf(btn); if(!t) return;
