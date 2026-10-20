@@ -10809,9 +10809,13 @@ function bindCardMasterLinkButtons(rerender){
         alert('엑셀 도우미가 예전 버전입니다. 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).');
         return;
       }
+      await ensureCorpCardLoaded();   // 카드관리 탭에서 바로 누르면 법인카드 내역이 아직 안 불러와져 있다
       await flushCorpCardSave({ silent:true });
+      // 하이패스 카드(승인내역 → 통합본)는 이번에 다시 쓴다.
+      try{ const sg = JSON.parse(localStorage.getItem(HIPASS_SIG_KEY)||'{}')||{}; if(sg[t.id]){ if(onlyMonth) delete sg[t.id][onlyMonth]; else delete sg[t.id]; } localStorage.setItem(HIPASS_SIG_KEY, JSON.stringify(sg)); }catch(e){}
       const months = buildCardMasterWritePayload(onlyMonth);
       if(!months.length){
+        await flushHipassToCardMaster();
         alert(`법인카드 탭에서 ${onlyMonth ? onlyMonth+'월 ' : ''}내역(날짜가 적힌 행)을 찾지 못했습니다.`);
         return;
       }
@@ -10823,6 +10827,7 @@ function bindCardMasterLinkButtons(rerender){
       finally{ stopProgress(); }
       rememberCardMasterWritten(t.id, months);
       await rebaseCardMasterFile(t.id);
+      await flushHipassToCardMaster();   // 하이패스 카드 승인내역도 이어서
       alert(`${r.applied ? `${r.applied}개 카드 블록을 채워 "${getLinkedFile(key).name}" 파일에 저장했습니다.` : '채운 카드 블록이 없습니다.'}${r.wasOpen ? '\n(엑셀에 열려 있던 파일에 바로 넣고 저장했습니다)' : ''}\n\n${cardMasterWriteResultLines(r).join('\n\n')}`);
     }catch(e){
       alert(linkedFileErrorMessage(e));
@@ -10856,6 +10861,7 @@ async function downloadCardMasterViaHelper(tmplId, onlyMonth, onStatus){
     if(!b64) return false;
     buf = base64ToArrayBuffer(b64); tmpl.buffer = buf;
   }
+  await ensureCorpCardLoaded();   // 카드관리 탭에서 바로 누르면 법인카드 내역이 아직 안 불러와져 있다
   await flushCorpCardSave({ silent:true });
   const months = buildCardMasterWritePayload(onlyMonth);
   if(!months.length){ alert(`법인카드 탭에서 ${onlyMonth ? onlyMonth+'월 ' : ''}내역(날짜가 적힌 행)을 찾지 못했습니다.`); return true; }
@@ -11266,6 +11272,7 @@ async function resolveLinkedPath(key){
   return next;
 }
 async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
+  await ensureCorpCardLoaded();
   const tmpl = corpCardMasterTemplates.find(t=>t.id===tmplId);
   if(!tmpl) return;
   await loadXlsxLib(); await loadJSZipLib();
