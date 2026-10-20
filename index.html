@@ -14364,7 +14364,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 47;
+const EXCEL_HELPER_VERSION = 48;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -21669,7 +21669,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '47'
+$Version = '48'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -21768,6 +21768,28 @@ function Find-OpenWorkbook($xl, [string]$path){
   $hits = @($xl.Workbooks | Where-Object { [string]::Equals($_.Name, $name, [StringComparison]::OrdinalIgnoreCase) })
   if($hits.Count -eq 1){ return $hits[0] }
   return $null
+}
+# 일이 끝난 통합문서 정리 — 도우미가 연 파일, 또는 화면에 안 보이는(도우미가 띄운) 엑셀에 열려 있는 파일은 닫는다.
+# 예전엔 닫기가 한 번 실패하면 안 보이는 엑셀에 파일이 계속 열린 채 남아, 다음부터는 "이미 열려 있음"으로 보고
+# 닫지 않아서 다른 사람·내 엑셀에서 그 파일이 계속 "편집 중이라 잠김(읽기 전용)"으로 열렸다.
+function Release-Workbook($xl, $wb, [bool]$openedHere){
+  if($null -eq $wb){ return }
+  $app = $null; try { $app = $wb.Application } catch {}
+  $hidden = $false; try { $hidden = ($null -ne $app) -and (-not $app.Visible) } catch {}
+  if($openedHere -or $hidden){
+    try { Invoke-Retry { $wb.Close($false) } | Out-Null } catch { Log "파일 닫기 실패: $($_.Exception.Message)" }
+  }
+  foreach($a in @($app, $xl)){ try { if($a -and -not $a.Visible -and $a.Workbooks.Count -eq 0){ $a.Quit() } } catch {} }
+}
+# 도우미가 띄운 안 보이는 엑셀에 남아 있는 파일을 모두 닫는다(시작할 때·주기적으로). 사용자가 보는 엑셀은 건드리지 않는다.
+function Close-HiddenExcelLeftovers(){
+  try {
+    $a = [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application')
+    if($a -and -not $a.Visible){
+      foreach($w in @($a.Workbooks)){ $n = ''; try { $n = $w.Name; $w.Close($false); Log "안 보이는 엑셀에 남은 파일 닫음: $n" } catch {} }
+      try { if($a.Workbooks.Count -eq 0){ $a.Quit() } } catch {}
+    }
+  } catch {}
 }
 function Invoke-Retry([scriptblock]$fn){
   # 엑셀에서 셀을 편집 중이면 COM 호출이 거절된다(RPC_E_CALL_REJECTED) — 잠깐씩 기다렸다 다시 해 본다.
@@ -21983,7 +22005,7 @@ function Handle-CorpCardWrite($body){
     return @{ ok=$true; report=$report; wasOpen=(-not $openedHere) }
   } finally {
     try { $xl.ScreenUpdating = $true } catch {}
-    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+    Release-Workbook $xl $wb $openedHere
   }
 }
 
@@ -22238,7 +22260,7 @@ function Handle-SagupWrite($body){
     if($written.Count){ Invoke-Retry { $wb.Save() } | Out-Null }
     return @{ ok=$true; written=$written; notFound=$notFound; rows=$rowsOut; wasOpen=(-not $openedHere) }
   } finally {
-    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+    Release-Workbook $xl $wb $openedHere
   }
 }
 
@@ -22334,7 +22356,7 @@ function Handle-OMListWrite($body){
     if($written.Count -or $added.Count -or $deleted.Count){ Invoke-Retry { $wb.Save() } | Out-Null }
     return @{ ok=$true; written=$written; added=$added; deleted=$deleted; notFound=$notFound; wasOpen=(-not $openedHere) }
   } finally {
-    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+    Release-Workbook $xl $wb $openedHere
   }
 }
 
@@ -22464,7 +22486,7 @@ function Handle-ProfitLedgerWrite($body){
     if($changed){ Invoke-Retry { $wb.Save() } | Out-Null }
     return @{ ok=$true; results=$results; wasOpen=(-not $openedHere) }
   } finally {
-    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+    Release-Workbook $xl $wb $openedHere
   }
 }
 
@@ -22685,7 +22707,7 @@ function Handle-CardMasterHipass($body){
     return @{ ok=$true; done=$done; skipped=$skipped }
   } finally {
     try { $xl.ScreenUpdating = $true } catch {}
-    if($openedHere){ try { $wb.Close($false) } catch {} }
+    Release-Workbook $xl $wb $openedHere
   }
 }
 function Handle-CardMasterWrite($body){
@@ -22814,7 +22836,7 @@ function Handle-CardMasterWrite($body){
   } finally {
     if($null -ne $prevCalc){ try { $xl.Calculation = $prevCalc } catch {} }
     try { $xl.ScreenUpdating = $true } catch {}
-    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+    Release-Workbook $xl $wb $openedHere
   }
 }
 
@@ -22925,7 +22947,7 @@ function Handle-CardMasterRead($body){
     [void]$sb.Append(']}')
     return $sb.ToString()
   } finally {
-    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+    Release-Workbook $xl $wb $openedHere
     if($tmpCopy){ try { Remove-Item -LiteralPath $tmpCopy -Force -ErrorAction SilentlyContinue } catch {} }
   }
 }
@@ -22985,7 +23007,7 @@ function Handle-ReadValues($body){
     [void]$sb.Append('}}')
     return $sb.ToString()
   } finally {
-    if($openedHere){ try { $wb.Close($false) } catch {} ; if($xl.Workbooks.Count -eq 0 -and -not $xl.Visible){ try { $xl.Quit() } catch {} } }
+    Release-Workbook $xl $wb $openedHere
     if($tmpCopy){ try { Remove-Item -LiteralPath $tmpCopy -Force -ErrorAction SilentlyContinue } catch {} }
   }
 }
@@ -23162,6 +23184,7 @@ if(-not $started){
   [void][System.Windows.Forms.MessageBox]::Show("엑셀 도우미를 시작하지 못했습니다(이미 실행 중인 도우미를 끄지 못함).`n작업 관리자 → 세부 정보에서 powershell.exe를 끝낸 뒤 다시 실행해주세요.", '엑셀 도우미')
   exit 1
 }
+Close-HiddenExcelLeftovers   # 예전 도우미가 안 보이는 엑셀에 열어 둔 채 남긴 파일(다른 곳에서 "편집 중이라 잠김")을 닫는다
 
 # 창은 숨기고, 작업표시줄 오른쪽 아래(알림 영역)에 아이콘만 둔다. 끌 때는 아이콘 오른쪽 클릭 → 종료.
 $global:helperRunning = $true
