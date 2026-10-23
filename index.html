@@ -1607,16 +1607,91 @@ async function storageDelete(key, shared){
   }catch(e){ return null; }
 }
 
+// 정산 건 목록(영업비·이윤정산)은 문서 하나에 모든 건의 요약이 들어 있다. 예전엔 PC마다 자기가 들고 있던 목록
+// 전체로 덮어써서, 오래된 목록(또는 불러오기 실패로 빈 목록)을 가진 PC가 저장하면 다른 사람이 만든 건이 목록에서
+// 사라졌다(건 내용 'case:id'는 남아 있음). 이제 저장할 때마다 서버 목록과 건별로 합치고, 지운 건은 따로 기록한다.
+const CASES_DELETED_KEY = 'cases-deleted';
+// 못 읽었으면 null(빈 목록과 구분) — 부르는 쪽은 지금 목록을 그대로 둔다.
 async function loadIndex(){
   try{
-    const value = await loadFileFromStorage(STORE_INDEX);
+    const value = await loadFileFromStorage(STORE_INDEX, 30000);
+    if(lastLoadMeta[STORE_INDEX] && lastLoadMeta[STORE_INDEX].error) return null;
     return value ? JSON.parse(value) : [];
-  }catch(e){ return []; }
+  }catch(e){ return null; }
 }
-async function saveIndex(list){
+async function loadDeletedCaseIds(){
+  const raw = await loadFileFromStorage(CASES_DELETED_KEY);
+  const ids = new Set();
+  try{ (raw ? JSON.parse(raw) : []).forEach(d=>{ if(d && d.id) ids.add(d.id); }); }catch(e){}
+  return ids;
+}
+async function markCaseDeleted(id){
   try{
-    await saveFileToStorage(STORE_INDEX, JSON.stringify(list));
+    const raw = await loadFileFromStorage(CASES_DELETED_KEY);
+    if(lastLoadMeta[CASES_DELETED_KEY] && lastLoadMeta[CASES_DELETED_KEY].error) return;
+    const list = raw ? JSON.parse(raw) : [];
+    if(!list.some(d=>d.id===id)) list.push({ id, at: Date.now(), by: (fbAuth.currentUser && fbAuth.currentUser.email) || '' });
+    await saveFileToStorage(CASES_DELETED_KEY, JSON.stringify(list));
   }catch(e){ console.error(e); }
+}
+function mergeCaseIndex(server, local, deleted){
+  const byId = new Map();
+  (server||[]).forEach(e=>{ if(e && e.id && !deleted.has(e.id)) byId.set(e.id, e); });
+  (local||[]).forEach(e=>{
+    if(!e || !e.id || deleted.has(e.id)) return;
+    const sv = byId.get(e.id);
+    if(!sv || (Number(e.updated)||0) >= (Number(sv.updated)||0)) byId.set(e.id, e);
+  });
+  return [...byId.values()];
+}
+let saveIndexQueue = Promise.resolve();
+let saveIndexRetry = null;
+function saveIndex(list){
+  saveIndexQueue = saveIndexQueue.catch(()=>{}).then(async ()=>{
+    try{
+      const server = await loadIndex();
+      if(server === null){   // 서버 목록을 못 읽으면 덮어쓰지 않고 잠시 뒤 다시
+        clearTimeout(saveIndexRetry); saveIndexRetry = setTimeout(()=>saveIndex(state.cases), 15000);
+        return;
+      }
+      const deleted = await loadDeletedCaseIds();
+      sessionDeletedCaseIds.forEach(id=>deleted.add(id));
+      const merged = mergeCaseIndex(server, list, deleted);
+      const before = JSON.stringify(server);
+      if(JSON.stringify(merged) !== before) await saveWithGenericHistory(STORE_INDEX, JSON.stringify(merged));
+      // 화면 목록도 합친 결과로(다른 사람이 만든 건도 보이게)
+      if(list === state.cases){ state.cases.splice(0, state.cases.length, ...merged); }
+    }catch(e){ console.error(e); }
+  });
+  return saveIndexQueue;
+}
+const sessionDeletedCaseIds = new Set();
+// 목록에서 빠졌지만 건 내용('case:id')은 남아 있는 건을 찾아 목록에 다시 넣는다(지운 건 제외).
+async function recoverOrphanCases(){
+  const list = await loadIndex();
+  if(list === null) return [];
+  const have = new Set(list.map(e=>e.id));
+  const deleted = await loadDeletedCaseIds();
+  const FP = firebase.firestore.FieldPath.documentId();
+  const snap = await fbDb.collection('app_data').where(FP, '>=', 'case:').where(FP, '<', 'case:\uf8ff').get();
+  const found = [];
+  for(const d of snap.docs){
+    const id = d.id.slice('case:'.length);
+    if(!id || have.has(id) || deleted.has(id) || sessionDeletedCaseIds.has(id)) continue;
+    let c = null;
+    try{ const data = d.data(); c = JSON.parse(data.storedIn === 'firestore' ? data.value : await loadFileFromStorage('case:'+id)); }catch(e){}
+    if(!c || !c.id) continue;
+    const entry = indexEntry(c);
+    try{ const t = d.data().updatedAt; if(t && t.toMillis) entry.updated = t.toMillis(); }catch(e){}
+    found.push(entry);
+  }
+  if(found.length){
+    const merged = (state.cases||[]).slice();
+    found.forEach(e=>{ if(!merged.some(x=>x.id===e.id)) merged.push(e); });
+    state.cases.splice(0, state.cases.length, ...merged);
+    await saveIndex(state.cases);
+  }
+  return found;
 }
 async function loadCase(id){
   try{
@@ -3493,8 +3568,8 @@ function switchTab(tab){
   // 불러오기" 방식이라 최신 상태가 자연스럽게 반영된다).
   if(tab === 'sales' || tab === 'profit'){
     loadIndex().then(list => {
-      if(state.activeTab !== tab) return; // 불러오는 동안 다른 탭으로 이동했으면 무시
-      state.cases = list;
+      if(state.activeTab !== tab || !list) return; // 불러오는 동안 다른 탭으로 이동했거나 못 읽었으면 무시
+      state.cases.splice(0, state.cases.length, ...mergeCaseIndex(list, state.cases, sessionDeletedCaseIds));
       renderSidebar();
     });
   }
@@ -3553,6 +3628,8 @@ function removeActiveCase(){
 // removeActiveCase()와 같은 삭제 로직을 확인창은 호출한 쪽에서 이미 띄운
 // 뒤에 id만 받아 수행한다 — 가로 목록처럼 activeCase가 아닌 건도 지울 수 있어야 해서.
 function deleteProfitCaseById(id){
+  sessionDeletedCaseIds.add(id);
+  markCaseDeleted(id);
   delete caseCache[id];
   deleteCaseStorage(id);
   state.cases = state.cases.filter(x=>x.id!==id);
@@ -5649,6 +5726,7 @@ function queueProfitLedgerAutoWrite(p){
     if(!profitLedgerUnlinkedWarned){ profitLedgerUnlinkedWarned = true; showLedgerToast('이 PC에는 사급 건별 정산 파일이 연결돼 있지 않아 엑셀에 자동으로 쓰지 않았습니다.\n사업 이윤정산 탭 위쪽 "🔗 PC 엑셀 파일 연결"로 파일을 연결해 주세요.', true); }
     return;
   }
+  if(profitLedgerSkipAutoOnce.has(p.id)){ profitLedgerSkipAutoOnce.delete(p.id); return; }
   profitLedgerAutoQueue.set(p.id, p);
   flushProfitLedgerAuto();
 }
@@ -10124,14 +10202,125 @@ function simpleHistoryTargets(){
       } },
   ];
 }
+// ---- 사라진 정산 건 찾기 ----
+async function unmarkCaseDeleted(id){
+  sessionDeletedCaseIds.delete(id);
+  try{
+    const raw = await loadFileFromStorage(CASES_DELETED_KEY);
+    if(!raw) return;
+    const list = JSON.parse(raw).filter(d=>d.id !== id);
+    await saveFileToStorage(CASES_DELETED_KEY, JSON.stringify(list));
+  }catch(e){ console.error(e); }
+}
+const profitLedgerSkipAutoOnce = new Set();   // 엑셀에서 되살린 건은 처음 저장할 때 엑셀에 다시 쓰지 않는다(엑셀 값 그대로 두기)
+async function findLostCases(btn){
+  const out = document.getElementById('lostCasesResult');
+  const label = btn.textContent; btn.disabled = true;
+  const say = t => { btn.textContent = t; };
+  const items = [];   // { kind, id?, name, type, when, detail, restore }
+  try{
+    say('① 서버에 남은 건 내용 찾는 중…');
+    const orphans = await recoverOrphanCases();
+    const list = (await loadIndex()) || state.cases;
+    const have = new Set(list.map(e=>e.id));
+    say('② 건별 변경 이력 찾는 중…');
+    const FP = firebase.firestore.FieldPath.documentId();
+    let last = null;
+    for(let page=0; page<200; page++){
+      let q = fbDb.collection('app_data').where(FP, '>=', 'case-history:').where(FP, '<', 'case-history:').orderBy(FP).limit(25);
+      if(last) q = q.startAfter(last);
+      const snap = await q.get();
+      if(snap.empty) break;
+      for(const d of snap.docs){
+        const id = d.id.slice('case-history:'.length);
+        if(!id || have.has(id)) continue;
+        try{
+          const data = d.data();
+          const raw = data.storedIn === 'firestore' ? data.value : await loadFileFromStorage('case-history:'+id);
+          const h = raw ? JSON.parse(raw) : [];
+          const lastEntry = h[h.length-1]; if(!lastEntry) continue;
+          const c = JSON.parse(lastEntry.data);
+          const type = c.caseType === 'profit' ? '이윤정산' : '영업비';
+          const name = c.caseType === 'profit' ? (c.customer || '(고객명 없음)') : (c.title || c.docNo || '(제목 없음)');
+          items.push({ kind:'history', id, name, type, when: fmtHistoryTimestamp(lastEntry.timestamp), restore: async ()=>{
+            let restored = Object.assign(c.caseType === 'profit' ? newProfitCase() : newCase(), c);
+            restored.id = id;
+            await unmarkCaseDeleted(id);
+            if(restored.caseType === 'profit') profitLedgerSkipAutoOnce.add(id);
+            persistCase(restored);
+            have.add(id);
+          }});
+        }catch(e){}
+      }
+      last = snap.docs[snap.docs.length-1];
+      if(snap.size < 25) break;
+    }
+    // ③ 사급 건별 정산 엑셀에만 있는 고객(이윤정산 건이 없는 고객) — 이력·건 내용으로 찾은 고객은 뺀다
+    const link = getLinkedFile(PROFIT_LEDGER_LINK_KEY);
+    let ledgerNote = '';
+    if(link){
+      say('③ 사급 건별 정산 엑셀 읽는 중…');
+      try{
+        await checkExcelHelper();
+        if(!excelHelperRunning) throw new Error('엑셀 도우미가 꺼져 있음');
+        const r = await excelHelperCall('/readvalues', { path: link.path, sheet: PROFIT_LEDGER_SHEET }, 5*60*1000);
+        const rows = r.rows || [];
+        const idx = col => xlsxColToIdx(col);
+        const profitsNow = await loadAllProfitCases();
+        const known = new Set([...profitsNow.map(p=>String(p.customer||'').replace(/\s+/g,'')), ...items.filter(x=>x.type==='이윤정산').map(x=>x.name.replace(/\s+/g,''))]);
+        for(let i=5; i<rows.length; i++){
+          const cust = String((rows[i]||[])[idx('C')] ?? '').trim();
+          if(!cust || known.has(cust.replace(/\s+/g,''))) continue;
+          known.add(cust.replace(/\s+/g,''));
+          const rowNum = i+1, rv = rows[i];
+          items.push({ kind:'ledger', name: cust, type:'이윤정산', when: `엑셀 ${rowNum}행`, restore: async ()=>{
+            const p = newProfitCase();
+            p.customer = cust;
+            const fields = [];
+            PROFIT_LEDGER_READ_MAP.forEach(([col, field, type])=>{
+              const raw = normLedgerVal((rv||[])[idx(col)], type);
+              if(raw === '') return;
+              let val;
+              if(type === 'number') val = Number(raw);
+              else if(type === 'vat') val = Math.round(Number(raw)/1.1);
+              else if(type === 'date'){ const v = (rv||[])[idx(col)]; val = typeof v === 'number' ? isoDate(new Date(Math.round((v-25569)*86400000))) : raw; }
+              else val = raw;
+              p[field] = val; fields.push(field);
+            });
+            if(p.moduleModel && PROFIT_MODULE_PRICES[p.moduleModel]){ p.moduleBuy = PROFIT_MODULE_PRICES[p.moduleModel].buy; p.moduleSell = PROFIT_MODULE_PRICES[p.moduleModel].sell; }
+            p.touchedFields = fields;
+            p.ledgerCustomer = cust;
+            profitLedgerSkipAutoOnce.add(p.id);
+            persistCase(p);
+          }});
+        }
+      }catch(e){ ledgerNote = `사급 건별 정산 엑셀은 읽지 못했습니다(${linkedFileErrorMessage(e).split('\n')[0]}).`; }
+    } else ledgerNote = '이 PC에는 사급 건별 정산 엑셀이 연결돼 있지 않아 ③은 건너뛰었습니다(이윤정산 탭에서 연결한 PC에서 하면 엑셀도 찾습니다).';
+    const head = orphans.length ? `<div style="font-size:12.5px; margin-bottom:8px; color:var(--pos,#2e9e5b);">① 서버에 내용이 남아 있던 건 ${orphans.length}개를 목록에 바로 되살렸습니다: ${orphans.map(e=>escapeHtml(e.title||e.docNo||e.id)).join(', ')}</div>` : `<div style="font-size:12px; color:var(--muted); margin-bottom:6px;">① 목록에서 빠진 채 남아 있는 건 내용은 없었습니다.</div>`;
+    const kindLabel = { history:'② 변경 이력', ledger:'③ 사급 건별 정산 엑셀' };
+    out.innerHTML = head + (items.length ? `<div style="font-size:12px; color:var(--muted); margin-bottom:6px;">아래는 목록에 없는 건입니다(일부는 일부러 지운 건일 수 있습니다). 되살릴 건만 누르세요. 엑셀에서 되살린 이윤정산 건은 엑셀에 있는 칸만 채워집니다.</div>` +
+      items.map((it,i)=>`<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:7px 10px; border:1px solid var(--line); border-radius:7px; margin-bottom:6px;">
+        <div style="font-size:12.5px;">[${it.type}] <b>${escapeHtml(it.name)}</b> <span style="color:var(--muted); font-size:11.5px;">${kindLabel[it.kind]} · ${escapeHtml(it.when)}</span></div>
+        <button class="lost-case-restore" data-i="${i}" style="font-size:11.5px; padding:5px 10px; border-radius:6px; border:1px solid var(--gold); background:transparent; color:var(--gold); cursor:pointer; white-space:nowrap;">되살리기</button></div>`).join('')
+      : `<div style="font-size:12px; color:var(--muted);">②③ 목록에 없는 건을 찾지 못했습니다.</div>`) + (ledgerNote ? `<div style="font-size:11.5px; color:var(--muted); margin-top:6px;">${escapeHtml(ledgerNote)}</div>` : '');
+    out.querySelectorAll('.lost-case-restore').forEach(b=>b.addEventListener('click', async ()=>{
+      const it = items[Number(b.dataset.i)]; if(!it) return;
+      if(!confirm(`[${it.type}] ${it.name} 건을 되살릴까요?`)) return;
+      b.disabled = true; b.textContent = '되살리는 중…';
+      try{ await it.restore(); b.textContent = '✅ 되살림'; renderSidebar(); }
+      catch(e){ b.disabled = false; b.textContent = '되살리기'; alert('되살리지 못했습니다: ' + (e && e.message || e)); }
+    }));
+  }catch(e){ out.innerHTML = `<div style="color:var(--neg); font-size:12px;">찾지 못했습니다: ${escapeHtml(e && e.message || String(e))}</div>`; }
+  finally{ btn.disabled = false; btn.textContent = label; }
+}
 async function renderHistoryMain(){
   const main = document.getElementById('main');
   main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
-  const list = await loadIndex(); // 사이드바용 캐시(state.cases)가 오래됐을 수 있으니 항상 새로 불러온다
+  const list = (await loadIndex()) || state.cases; // 사이드바용 캐시(state.cases)가 오래됐을 수 있으니 항상 새로 불러온다
   // 카드별/차량별 이력 목록을 만들려면 그 목록도 먼저 불러와야 한다.
   await Promise.all([ ensureCorpCardLoaded(), ensureVehicleLoaded() ]);
   if(state.activeTab !== 'history') return; // 불러오는 동안 다른 탭으로 이동했으면 무시
-  state.cases = list;
+  state.cases.splice(0, state.cases.length, ...mergeCaseIndex(list, state.cases, sessionDeletedCaseIds));
 
   const section = (filterType, icon, typeLabel) => {
     const sorted = list.filter(c => (c.caseType||'sales')===filterType).sort((a,b)=>b.updated-a.updated);
@@ -10201,6 +10390,11 @@ async function renderHistoryMain(){
       모든 탭의 변경 이력을 한 곳에서 확인하고, 필요하면 이전 시점으로 되돌릴 수 있습니다.
       수정할 때마다(최소 1분 간격으로) 자동으로 기록되며, 최근 20개 버전까지 보관됩니다.
     </p>
+    <div style="margin:0 0 18px; padding:10px 12px; border:1px dashed var(--gold-dim); border-radius:8px;">
+      <button id="findLostCasesBtn" style="font-size:12.5px; padding:8px 14px; border-radius:7px; border:1px solid var(--gold); background:transparent; color:var(--gold); cursor:pointer; font-weight:700;">🔎 사라진 정산 건 찾기</button>
+      <span style="font-size:11.5px; color:var(--muted); margin-left:8px;">영업비·이윤정산 목록에서 사라진 건을 ① 서버에 남은 건 내용 ② 건별 변경 이력 ③ 사급 건별 정산 엑셀(이윤정산)에서 찾아 되살립니다.</span>
+      <div id="lostCasesResult" style="margin-top:10px;"></div>
+    </div>
     ${section('sales', '💰', '영업비 정산')}
     ${section('profit', '📊', '사업 이윤정산')}
     ${corpCardSectionHtml}
@@ -10208,6 +10402,8 @@ async function renderHistoryMain(){
     ${simpleSectionHtml}
   `;
 
+  const flBtn = document.getElementById('findLostCasesBtn');
+  if(flBtn) flBtn.addEventListener('click', ()=>findLostCases(flBtn));
   main.querySelectorAll('.history-view-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       state.activeId = btn.dataset.id; // openCaseHistoryOverlay의 "다른 곳으로 이동했는지" 확인 로직과 맞춰준다
@@ -21286,7 +21482,11 @@ document.getElementById('pdfSaveBtn').addEventListener('click', savePdf);
 let manualRowsSub = null;
 let importRowsSub = null;
 async function init(){
-  state.cases = await loadIndex();
+  state.cases = (await loadIndex()) || [];
+  // 목록에서 빠진 건(내용은 남아 있음)을 찾아 되살린다 — 백그라운드에서.
+  setTimeout(()=>{ recoverOrphanCases().then(found=>{
+    if(found.length){ showLedgerToast(`목록에서 빠져 있던 정산 건 ${found.length}개를 되살렸습니다:\n${found.map(e=>e.title||e.docNo||e.id).join('\n')}`); renderSidebar(); }
+  }).catch(e=>console.warn('사라진 정산 건 찾기 실패', e)); }, 5000);
   // 실적리스트(엑셀 업로드/직접 입력)는 여러 명이 같이 쓰는 핵심 표라 실시간
   // 구독으로 불러온다 — 다른 사람이 값을 고치면 이 화면도 자동으로 따라간다.
   manualRowsSub = subscribeListToStorage(PERF_ROWS_KEY, importState, {
