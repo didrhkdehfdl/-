@@ -10315,7 +10315,19 @@ async function findLostCases(btn){
 }
 async function renderHistoryMain(){
   const main = document.getElementById('main');
-  main.innerHTML = `<div class="no-case"><div class="big">불러오는 중…</div></div>`;
+  // 사라진 건 찾기 버튼은 아래 목록(이력 개수 세기 등, 오래 걸림)을 기다리지 않고 바로 보여준다.
+  main.innerHTML = `    <h2 class="section-title">변동내역</h2>
+    <p style="font-size:12.5px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
+      모든 탭의 변경 이력을 한 곳에서 확인하고, 필요하면 이전 시점으로 되돌릴 수 있습니다.
+      수정할 때마다(최소 1분 간격으로) 자동으로 기록되며, 최근 20개 버전까지 보관됩니다.
+    </p>
+    <div style="margin:0 0 18px; padding:10px 12px; border:1px dashed var(--gold-dim); border-radius:8px;">
+      <button id="findLostCasesBtn" style="font-size:12.5px; padding:8px 14px; border-radius:7px; border:1px solid var(--gold); background:transparent; color:var(--gold); cursor:pointer; font-weight:700;">🔎 사라진 정산 건 찾기</button>
+      <span style="font-size:11.5px; color:var(--muted); margin-left:8px;">영업비·이윤정산 목록에서 사라진 건을 ① 서버에 남은 건 내용 ② 건별 변경 이력 ③ 사급 건별 정산 엑셀(이윤정산)에서 찾아 되살립니다.</span>
+      <div id="lostCasesResult" style="margin-top:10px;"></div>
+    </div><div id="historyBody"><div class="no-case"><div class="big">불러오는 중…</div></div></div>`;
+  const flBtn = document.getElementById('findLostCasesBtn');
+  if(flBtn) flBtn.addEventListener('click', ()=>findLostCases(flBtn));
   const list = (await loadIndex()) || state.cases; // 사이드바용 캐시(state.cases)가 오래됐을 수 있으니 항상 새로 불러온다
   // 카드별/차량별 이력 목록을 만들려면 그 목록도 먼저 불러와야 한다.
   await Promise.all([ ensureCorpCardLoaded(), ensureVehicleLoaded() ]);
@@ -10384,17 +10396,9 @@ async function renderHistoryMain(){
         vehicleState.vehicles.map((v,i)=>simpleRowHtml('🚗', v.plate, vehicleCounts[i], 'vehicle-rows:'+v.id)).join('')}
     </div>`;
 
-  main.innerHTML = `
-    <h2 class="section-title">변동내역</h2>
-    <p style="font-size:12.5px; color:var(--muted); line-height:1.7; margin:0 0 16px;">
-      모든 탭의 변경 이력을 한 곳에서 확인하고, 필요하면 이전 시점으로 되돌릴 수 있습니다.
-      수정할 때마다(최소 1분 간격으로) 자동으로 기록되며, 최근 20개 버전까지 보관됩니다.
-    </p>
-    <div style="margin:0 0 18px; padding:10px 12px; border:1px dashed var(--gold-dim); border-radius:8px;">
-      <button id="findLostCasesBtn" style="font-size:12.5px; padding:8px 14px; border-radius:7px; border:1px solid var(--gold); background:transparent; color:var(--gold); cursor:pointer; font-weight:700;">🔎 사라진 정산 건 찾기</button>
-      <span style="font-size:11.5px; color:var(--muted); margin-left:8px;">영업비·이윤정산 목록에서 사라진 건을 ① 서버에 남은 건 내용 ② 건별 변경 이력 ③ 사급 건별 정산 엑셀(이윤정산)에서 찾아 되살립니다.</span>
-      <div id="lostCasesResult" style="margin-top:10px;"></div>
-    </div>
+  const body = document.getElementById('historyBody');
+  if(!body) return;
+  body.innerHTML = `
     ${section('sales', '💰', '영업비 정산')}
     ${section('profit', '📊', '사업 이윤정산')}
     ${corpCardSectionHtml}
@@ -10402,8 +10406,6 @@ async function renderHistoryMain(){
     ${simpleSectionHtml}
   `;
 
-  const flBtn = document.getElementById('findLostCasesBtn');
-  if(flBtn) flBtn.addEventListener('click', ()=>findLostCases(flBtn));
   main.querySelectorAll('.history-view-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       state.activeId = btn.dataset.id; // openCaseHistoryOverlay의 "다른 곳으로 이동했는지" 확인 로직과 맞춰준다
