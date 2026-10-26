@@ -14807,7 +14807,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 50;
+const EXCEL_HELPER_VERSION = 51;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -22124,7 +22124,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '50'
+$Version = '51'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -23325,11 +23325,15 @@ function Handle-CardMasterHipass($body){
         for($i=0; $i -lt $items.Count; $i++){
           $r = $first + $i
           $amt = [double]$items[$i].amount; $sup = [Math]::Round($amt / 1.1); $vat = $amt - $sup
-          $dayVal = if($dayIsText){ ([string][int]$items[$i].day).PadLeft(2,'0') } else { [double][int]$items[$i].day }
-          Invoke-Retry { $ws.Cells.Item($r, $dayC).Value2 = $dayVal } | Out-Null
+          # 날짜 칸에 쓰기 — 칸 객체를 먼저 받고(행·열은 정수로) 값은 [object]로 넘긴다(형식 변환 오류 방지).
+          $dayCell = $ws.Cells.Item([int]$r, [int]$dayC)
+          [object]$dayVal = $null
+          if($dayIsText){ $dayVal = [string](([string][int]$items[$i].day).PadLeft(2,'0')) } else { $dayVal = [double][int]$items[$i].day }
+          try { Invoke-Retry { $dayCell.Value2 = $dayVal } | Out-Null }
+          catch { Invoke-Retry { $dayCell.Formula = [string]$dayVal } | Out-Null }   # 그래도 형식 오류가 나면 글자로 넣는다(엑셀이 숫자로 알아봄)
           foreach($pair in @(@($supC, $sup), @($vatC, $vat), @($amtC, $amt))){
-            $cell = $ws.Cells.Item($r, [int]$pair[0])
-            if(-not ([string]$cell.Formula).StartsWith('=')){ Invoke-Retry { $cell.Value2 = [double]$pair[1] } | Out-Null }
+            $cell = $ws.Cells.Item([int]$r, [int]$pair[0])
+            if(-not ([string]$cell.Formula).StartsWith('=')){ [object]$nv = [double]$pair[1]; Invoke-Retry { $cell.Value2 = $nv } | Out-Null }
           }
         }
         $done += "$($ws.Name) · 카드 $last4 $($items.Count)줄"
