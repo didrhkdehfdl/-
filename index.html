@@ -10944,7 +10944,7 @@ async function ensureCorpCardMonthExists(card, monthNum){
   const label = /\d\s+월/.test(sample) ? `${monthNum} 월` : `${monthNum}월`;
   tmpl.months.push(label);
   corpCardState.rowsByCard[card.id] = corpCardState.rowsByCard[card.id] || {};
-  corpCardState.rowsByCard[card.id][label] = [];
+  corpCardState.rowsByCard[card.id][label] = corpCardState.rowsByCard[card.id][label] || [];   // 이미 있는 내역은 그대로
   await saveCorpCardTemplate(card.id, tmpl.buffer, tmpl.fileName, tmpl.months);
   await saveCorpCardRows(card.id);
   return label;
@@ -11439,21 +11439,29 @@ async function checkCardMasterFileChanges(force){
       const sigs = {};
       fileMap.forEach((v,k)=>{ sigs[k] = JSON.stringify(v); });
       if(!snap || !snap.sigs){ cardMasterFileSnapSet(t.id, { mtime: st.mtime, sigs }); continue; }   // 처음: 기준만
-      const changes = [], touchedCards = new Set(), touchedMonths = new Set();
+      const changes = [], touchedCards = new Set(), touchedMonths = new Set(), blocked = [];
       const keys = new Set([...Object.keys(sigs), ...Object.keys(snap.sigs)]);
       for(const key of keys){
         const fsig = sigs[key] || '[]';
         if(fsig === (snap.sigs[key] || '[]')) continue;          // 파일에서 안 바뀜
         const [numS, l4] = key.split('|'); const num = Number(numS);
+        if(HIPASS_CARD_LAST4.includes(l4)) continue;            // 하이패스 카드 줄은 앱 → 파일 한 방향
         const card = cardForMasterKey(num, l4);
         if(!card) continue;
         if(!touchedCards.has(card.id) && !(await refreshCorpCardRowsFromServer(card.id))) continue;   // 최신 내역 위에 반영
         if(JSON.stringify(appCardMonthNorm(card, num)) === fsig) continue;   // 이미 같음
+        // 파일 쪽 블록이 비었거나 크게 줄었으면(실수로 지움·양식 바꾸는 중 등) 앱 내역을 자동으로 줄이지 않는다.
+        const appN = appCardMonthNorm(card, num).length, fileN = (fileMap.get(key) || []).length;
+        if(appN > 0 && (fileN === 0 || appN - fileN >= 3)){
+          blocked.push(`${num}월 카드 ${l4}: 앱 ${appN}건 → 파일 ${fileN}건`);
+          continue;
+        }
         const r = await applyCardMasterRowsToCard(card, num, fileMap.get(key) || []);
         changes.push(`${num}월 카드 ${l4}: ${r.before}건 → ${r.after}건`);
         touchedCards.add(card.id); touchedMonths.add(num);
       }
       cardMasterFileSnapSet(t.id, { mtime: st.mtime, sigs });
+      if(blocked.length) showLedgerToast(`통합본 파일에서 내역이 비었거나 크게 줄어든 곳은 법인카드 탭에 자동 반영하지 않았습니다(앱 내역 보호):\n${blocked.join('\n')}\n정말 지운 것이면 법인카드 탭에서 직접 지워주세요.`, true);
       if(!changes.length) continue;
       cardMasterSuppressAuto = true;
       try{ for(const id of touchedCards) await saveCorpCardRows(id); }
@@ -15049,10 +15057,20 @@ async function importCorpCardFile(file, expectCardId){
       const last4 = (meta.cardNumber.match(/(\d{4})\D*$/)||[])[1] || meta.cardNumber;
       if(existing){ existing.label = last4; }
       else { corpCardState.cards.push({ id, cardNumber: meta.cardNumber, label: last4, category: corpCardDefaultCategory(last4), assignedTo: CORP_CARD_ASSIGNED_NAMES[meta.cardNumber] || [] }); }
-      corpCardState.rowsByCard[id] = {};
+      // 같은 카드 파일을 다시 올려도 앱에서 입력한 내역은 지우지 않는다 — 앱에 내역이 있는 달은 그대로 두고,
+      // 앱에 내역이 없는 달만 파일 내용으로 채운다(예전엔 카드 전체를 파일 내용으로 바꿔서 앱 입력이 사라졌다).
+      if(existing && !(await refreshCorpCardRowsFromServer(id)) && corpCardLoadFailed.has(id)){
+        alert('서버의 이 카드 내역을 확인하지 못해 파일을 반영하지 않았습니다. 인터넷 연결을 확인한 뒤 다시 올려주세요.'); return false;
+      }
+      const cur = corpCardState.rowsByCard[id] || (corpCardState.rowsByCard[id] = {});
+      const kept = [];
       meta.months.forEach(monthName => {
-        corpCardState.rowsByCard[id][monthName] = parseCorpCardMonthRows(wb.Sheets[monthName]);
+        const num = monthNumFromLabel(monthName);
+        const appLabel = Object.keys(cur).find(l => l === monthName || (num && monthNumFromLabel(l) === num));
+        if(appLabel && (cur[appLabel]||[]).some(r=>r && (r.date || Number(r.amount)))){ kept.push(appLabel); return; }
+        cur[monthName] = parseCorpCardMonthRows(wb.Sheets[monthName]);
       });
+      if(kept.length) showLedgerToast(`앱에 이미 내역이 있는 달(${kept.join(', ')})은 그대로 두고, 빈 달만 파일 내용으로 채웠습니다.`);
       corpCardState.activeCardId = id;
       corpCardState.activeMonth = pickDefaultCorpCardMonth(meta.months);
       await saveCorpCardTemplate(id, buf, file.name, meta.months);
@@ -17083,7 +17101,7 @@ async function renderCorpCardMain(){
   main.querySelectorAll('.corpcard-del-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!confirm('이 행을 삭제할까요?')) return;
-      s.rowsByCard[activeCard.id][s.activeMonth] = rows.filter(r=>r.id!==btn.dataset.id);
+      s.rowsByCard[activeCard.id][s.activeMonth] = (s.rowsByCard[activeCard.id][s.activeMonth] || rows).filter(r=>r.id!==btn.dataset.id);   // 화면을 그린 뒤 들어온 다른 사람의 행도 남게 지금 목록에서 뺀다
       await saveCorpCardRows(activeCard.id);
       recomputeCorpCardMismatches();
       renderCorpCardMain();
