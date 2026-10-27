@@ -16496,6 +16496,7 @@ async function renderCorpCardMain(){
       ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedCorpInput" placeholder="법인 고정값" value="${escapeHtml(activeCard.fixedCorp||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
       ${(()=>{ const used = rows.filter(r=>r.date || Number(r.amount)); const sum = used.reduce((t,r)=>t+(Number(r.amount)||0),0);
         return `<span id="corpCardTotalsBadge" style="margin-left:auto; font-size:13px; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); white-space:nowrap;">총 <b>${used.length}</b>건 · 총사용액 <b style="color:var(--gold);">${sum.toLocaleString('ko-KR')}</b>원</span>`; })()}
+ <button id="corpCardHistoryBtn" title="이 카드 내역의 변경 이력(최근 20개, 1분 간격)을 보고 원하는 시점으로 되돌립니다" style="font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:600;">🕒 변경 이력</button>
  <button id="corpCardBackupBtn" title="이 카드의 날짜별 자동 백업(하루 한 번·내역이 크게 줄어들 때)에서 빠진 행을 되살립니다" style="font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:600;">🛟 백업</button>
       <button id="corpCardSaveBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:700;">✅ 저장됨</button>
       ${s.approvalEntries.length ? `<button id="corpCardApprovalViewBtn" style=" font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--sky); background:rgba(90,155,213,.1); color:var(--sky); cursor:pointer; font-weight:600;">💳 이 카드 승인내역 보기</button>` : ''}
@@ -17085,6 +17086,11 @@ async function renderCorpCardMain(){
   });
   const backupBtn = document.getElementById('corpCardBackupBtn');
   if(backupBtn) backupBtn.addEventListener('click', ()=>openCorpCardBackupOverlay(activeCard.id));
+  const historyBtn = document.getElementById('corpCardHistoryBtn');
+  if(historyBtn) historyBtn.addEventListener('click', async ()=>{
+    await flushCorpCardSave({ silent:true });   // 지금 고친 내용까지 이력 비교에 들어가게
+    openGenericHistoryOverlay('corp-card-rows:'+activeCard.id, `법인카드 - ${activeCard.label||activeCard.cardNumber}`, corpCardHistoryOnRestore(activeCard.id));
+  });
   const saveBtn = document.getElementById('corpCardSaveBtn');
   if(saveBtn) saveBtn.addEventListener('click', async ()=>{
     if(!corpCardDirty){
