@@ -18626,7 +18626,17 @@ function renderUploadMode(){
       const row = capped[Number(cb.dataset.idx)];
       if(cb.checked) importState.selected.add(row.id);
       else importState.selected.delete(row.id);
-      keepScrollWhile(renderImportMain);
+      // 화면을 다시 그리지 않고 그 행 표시와 버튼 글자만 바꾼다(다시 그리면 화면이 움직임).
+      const tr = cb.closest('tr'); if(tr) tr.classList.toggle('row-selected', cb.checked);
+      const n = importState.selected.size;
+      const bs = document.getElementById('importBulkSalesBtn'), bp = document.getElementById('importBulkProfitBtn');
+      if(n > 0 && bs && bp){
+        bs.textContent = `선택한 ${n}명 한꺼번에 영업비 정산 만들기`;
+        bp.textContent = `선택한 ${n}명 건건으로 이윤정산 만들기`;
+        const all = document.getElementById('importSelectAll'); if(all) all.checked = capped.length>0 && capped.every(r=>importState.selected.has(r.id));
+        return;
+      }
+      keepScrollWhile(renderImportMain);   // 버튼이 처음 생기거나 사라질 때만 다시 그림
     });
   });
   const selectAll = document.getElementById('importSelectAll');
