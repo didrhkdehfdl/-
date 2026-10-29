@@ -16140,6 +16140,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     if(st.color) css.push(`color:${st.color}`);
     if(isData && r !== totalRowNum) css.push(`font-size:${cq((fontSize || 8.5) * corpDataFontScale * 96 / 72)}`);
     else if(fontSize) css.push(`font-size:${cq(fontSize * 96 / 72)}`);
+    // 맨 아래 "총 사용금액 합계" 줄의 공급가·부가세·금액 숫자는 크게(줄 높이도 그만큼 늘어남).
+    if(r === totalRowNum && (c === COL_L || c === COL_M || c === COL_N)) css.push(`font-size:${cq(Math.max(fontSize || 9, 9) * 1.6 * 96 / 72)}`, 'font-weight:700', 'white-space:nowrap', 'padding-top:4px', 'padding-bottom:4px');
     // 글꼴 이름도 양식 그대로 — 없으면 표 전체 기본 글꼴을 쓴다.
     if(st.name) css.push(`font-family:'${String(st.name).replace(/'/g,'')}','Malgun Gothic','Noto Sans KR',sans-serif`);
     // 정렬을 따로 지정하지 않은 칸(일반)은 엑셀처럼 숫자는 오른쪽, 글자는 왼쪽.
@@ -16264,7 +16266,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   const rowHtml = (r, opts) => {
     let tds = '';
     for(let c=minCol; c<=maxCol; c++) tds += cellHtml(r, c, opts);
-    return `<tr${htAttr(r)}>${tds}</tr>`;
+    return `<tr${r === totalRowNum ? '' : htAttr(r)}>${tds}</tr>`;   // 합계 줄은 큰 숫자에 맞게 높이가 늘어나게
   };
   let body = '';
   // 머리글(데이터 시작 행 앞까지)
