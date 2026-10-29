@@ -18626,7 +18626,7 @@ function renderUploadMode(){
       const row = capped[Number(cb.dataset.idx)];
       if(cb.checked) importState.selected.add(row.id);
       else importState.selected.delete(row.id);
-      renderImportMain();
+      keepScrollWhile(renderImportMain);
     });
   });
   const selectAll = document.getElementById('importSelectAll');
@@ -18877,6 +18877,26 @@ function renderPerfRowHtml(r, i){
   `;
 }
 
+// 화면을 다시 그려도 보던 위치(페이지·표 안의 가로·세로 스크롤)가 그대로 있게 한다 — 행 체크할 때 화면이 튀지 않게.
+function keepScrollWhile(fn){
+  const main = document.getElementById('main');
+  const win = [window.scrollX, window.scrollY];
+  const boxes = main ? [main, ...main.querySelectorAll('*')].filter(el=>el.scrollTop || el.scrollLeft).map(el=>({ id: el.id, cls: el.className, idx: [...main.querySelectorAll('*')].indexOf(el), top: el.scrollTop, left: el.scrollLeft, self: el===main })) : [];
+  const r = fn();
+  const restore = ()=>{
+    if(main){
+      const all = [...main.querySelectorAll('*')];
+      boxes.forEach(b=>{
+        const el = b.self ? main : (b.id && document.getElementById(b.id)) || (all[b.idx] && all[b.idx].className === b.cls ? all[b.idx] : null);
+        if(el){ el.scrollTop = b.top; el.scrollLeft = b.left; }
+      });
+    }
+    window.scrollTo(win[0], win[1]);
+  };
+  if(r && typeof r.then === 'function') r.then(restore, restore); else restore();
+  requestAnimationFrame(restore);
+  return r;
+}
 function wirePerfRowEvents(){
   const tbody = document.getElementById('perfRowBody');
   if(!tbody) return;
@@ -18886,7 +18906,7 @@ function wirePerfRowEvents(){
       const id = cb.dataset.id;
       if(cb.checked) importState.selectedManual.add(id);
       else importState.selectedManual.delete(id);
-      renderManualEntry();
+      keepScrollWhile(renderManualEntry);
     });
   });
   const selectAll = document.getElementById('perfSelectAll');
