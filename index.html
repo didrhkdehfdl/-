@@ -5620,6 +5620,9 @@ function profitLedgerCellsFor(profitCase, salesMatch){
   const salesCase = salesMatch ? salesMatch.salesCase : null;
   const structureSell = computeLedgerStructureSell(profitCase, rec);
   const lv = resolveProfitLedgerValues(profitCase, rec, salesCase);
+  // 구조물은 화면과 같은 값으로 — 부착형인데 단가가 저장돼 있지 않은 건은 화면에서 자동 단가(3kw당)를 보여주므로
+  // 엑셀에도 그 값을 쓴다(예전엔 저장된 값만 써서 엑셀 구조물 칸이 비었다).
+  const eff = computeProfitCase(profitCase);
   const plain = {
     C: profitCase.customer || '', D: profitCase.branch || '',
     E: profitCase.constructionDate ? isoDate(new Date(profitCase.constructionDate)) : '',
@@ -5627,7 +5630,7 @@ function profitLedgerCellsFor(profitCase, salesMatch){
     K: Number(profitCase.capacityKw)||0, L: Math.round((Number(profitCase.totalBusinessCost)||0)*1.1), O: '사무실',
     P: lv.moduleModel, Q: Number(profitCase.moduleQty)||0, R: lv.moduleBuy, S: lv.moduleSell,
     U: profitCase.inverterModel || '', V: Number(profitCase.inverterQty)||0, W: Number(profitCase.inverterBuy)||0, X: Number(profitCase.inverterSell)||0,
-    Z: profitCase.structureNote || '', AA: roundStructureQty(profitCase.structureQty), AB: Number(profitCase.structureBuy)||0, AC: structureSell,
+    Z: profitCase.structureNote || '', AA: eff.effStructureQty, AB: eff.effStructureBuy, AC: (Number(profitCase.structureSell)||Number(profitCase.structureBuy)) ? structureSell : eff.effStructureSell,
     AE: Number(profitCase.etcMaterial)||0, AG: Number(profitCase.structureReviewCost)||0, AH: Number(profitCase.designSupervisionCost)||0,
     AI: Number(profitCase.inspectionFeeCost)||0, AJ: Number(profitCase.constructionCost)||0, AK: Number(profitCase.etcAgencyCost)||0,
     AP: lv.companyPrice, AQ: lv.salesDeduction, AS: formatLedgerNote(lv.salesDeductionNote), AU: Number(profitCase.maintenanceCost)||0,
