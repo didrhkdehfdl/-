@@ -2467,7 +2467,11 @@ function colFilterIconHtml(tabKey, field){
 let colFilterCtx = null;
 function colFilterVisibleValues(){
   const term = document.getElementById('colFilterSearch').value.trim();
-  return term ? colFilterCtx.allValues.filter(v=>v.includes(term)) : colFilterCtx.allValues;
+  if(!term) return colFilterCtx.allValues;
+  // 날짜는 2026-10-16 / 2026.10.16 / 20261016 어느 쪽으로 쳐도 찾게 구분 기호·공백을 빼고도 비교한다.
+  const norm = x => String(x).toLowerCase().replace(/[\s.\-\/]/g,'');
+  const t = term.toLowerCase(), tn = norm(term);
+  return colFilterCtx.allValues.filter(v=>String(v).toLowerCase().includes(t) || (tn && norm(v).includes(tn)));
 }
 function renderColFilterList(){
   const listEl = document.getElementById('colFilterList');
@@ -2516,6 +2520,7 @@ document.body.addEventListener('click', (e)=>{
   if(dd.style.display!=='none' && !dd.contains(e.target)) closeColFilterDropdown();
 }, true);
 document.getElementById('colFilterSearch').addEventListener('input', renderColFilterList);
+document.getElementById('colFilterSearch').addEventListener('keydown', e=>{ if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('colFilterApplyBtn').click(); } });
 document.getElementById('colFilterSelectAll').addEventListener('click', ()=>{
   colFilterVisibleValues().forEach(v=>colFilterCtx.pendingSelected.add(v));
   renderColFilterList();
@@ -2526,7 +2531,13 @@ document.getElementById('colFilterSelectNone').addEventListener('click', ()=>{
 });
 document.getElementById('colFilterCancelBtn').addEventListener('click', closeColFilterDropdown);
 document.getElementById('colFilterApplyBtn').addEventListener('click', ()=>{
-  const { tabKey, field, allValues, pendingSelected, provider } = colFilterCtx;
+  const { tabKey, field, allValues, provider } = colFilterCtx;
+  let pendingSelected = colFilterCtx.pendingSelected;
+  // 검색어를 넣고 적용하면(엑셀처럼) 검색에 걸린 값 중 체크된 것만 남긴다 — 예전엔 검색해도 전체가 그대로 나왔다.
+  if(document.getElementById('colFilterSearch').value.trim()){
+    const vis = new Set(colFilterVisibleValues());
+    pendingSelected = new Set([...pendingSelected].filter(v=>vis.has(v)));
+  }
   if(pendingSelected.size >= allValues.length){
     if(columnFilters[tabKey]) delete columnFilters[tabKey][field];
   } else {
