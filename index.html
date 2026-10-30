@@ -15963,8 +15963,13 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
           const t = String(rows[r].cells[c].text||'').replace(/\s/g,'');
           if(!/^(사용건수|합계사용금액)/.test(t)) return;
           const sp = spanAt.get(`${r},${c}`) || { cs:1, rs:1 };
-          const vStart = c + sp.cs;
-          if(vStart > maxCol || !rows[r].cells[vStart]) return;
+          // 값 칸 = 설명칸 오른쪽에서 처음 나오는 값(수식)이 있는 칸(사이에 빈 칸이 끼어 있는 양식도 있다)
+          let vStart = -1;
+          for(let cc = c + sp.cs; cc <= maxCol; cc++){
+            const cell = rows[r].cells[cc];
+            if(cell && (cell.formula || String(cell.text||'').trim() || (cell.num !== null && cell.num !== undefined))){ vStart = cc; break; }
+          }
+          if(vStart < 0) return;
           const vsp = spanAt.get(`${r},${vStart}`) || { cs:1, rs:sp.rs };
           const vEnd = vStart + vsp.cs - 1;
           if(hpCol < c || hpCol >= vEnd) return;
