@@ -15951,6 +15951,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
         if(!(r===r1 && c===c1)) covered.add(`${r},${c}`);
   });
 
+  const summaryValueKeys = new Set(); let summaryValueFont = 0, summaryValueBold = false;   // 건수·금액 값 칸은 같은 글자 크기로
   // 오른쪽 위 "사용건수"·"합계사용금액" 설명칸은 아래 표의 하이패스 사용여부 열에서 끝나게 줄이고,
   // 그 오른쪽(차량번호~비고 열)을 값 칸으로 넓힌다 — 비고가 좁은 카드에서 금액이 작게 나오던 것.
   try{
@@ -15984,6 +15985,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
           const put = (c1, c2) => { spanAt.set(`${r},${c1}`, { cs: c2-c1+1, rs }); for(let rr=r; rr<r+rs; rr++) for(let cc=c1; cc<=c2; cc++) if(!(rr===r && cc===c1)) covered.add(`${rr},${cc}`); };
           put(c, hpCol);
           put(nv, vEnd);
+          summaryValueKeys.add(`${r},${nv}`);
+          try{ const st0 = styles.xf(rows[r].cells[nv].s) || {}; summaryValueFont = Math.max(summaryValueFont, Number(st0.size)||0); summaryValueBold = summaryValueBold || !!st0.bold; }catch(e){}
         });
       });
     }
@@ -16165,6 +16168,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       bg = cs.bg;
       if(cs.size) fontSize = cs.size;
     }
+    const isSummaryValue = summaryValueKeys.has(`${r},${c}`);
+    if(isSummaryValue && summaryValueFont) fontSize = summaryValueFont;
     // 표 맨 오른쪽·왼쪽 칸의 바깥 선은 엑셀에서 옆 칸(인쇄 범위 밖)의 선으로 그어져
     // 있는 경우가 많다. 그 칸은 그리지 않으므로 선만 가져온다.
     const spEdge = spanAt.get(`${r},${c}`);
@@ -16186,7 +16191,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     css.push(`border-top:${b.t?`${bw(b.t)} solid #000`:'0'}`);
     css.push(`border-bottom:${b.b?`${bw(b.b)} solid #000`:'0'}`);
     if(bg) css.push(`background:${bg}`);
-    if(st.bold) css.push('font-weight:700');
+    if(st.bold || (isSummaryValue && summaryValueBold)) css.push('font-weight:700');
+    if(isSummaryValue) css.push('white-space:nowrap');
     if(st.italic) css.push('font-style:italic');
     if(st.underline) css.push('text-decoration:underline');
     if(st.color) css.push(`color:${st.color}`);
