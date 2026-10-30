@@ -14831,7 +14831,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 51;
+const EXCEL_HELPER_VERSION = 52;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -22319,7 +22319,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '51'
+$Version = '52'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -22368,7 +22368,19 @@ function Get-Excel([bool]$create){
 }
 # 파일 열기 — 열 때 뜨는 확인 창(외부 링크 업데이트, 경고 등)이 화면에 안 보이는 엑셀에서 떠서 도우미가
 # 하염없이 기다리는 일이 없게, 링크는 업데이트하지 않고 확인 창은 잠시 끈 채로 연다(사용자의 엑셀이어도 열고 나면 되돌린다).
-function Open-Workbook($xl, [string]$path, [bool]$readOnly){
+# 도우미 전용 안 보이는 엑셀 — 사용자가 엑셀을 쓰고 있어도 그 화면에 파일을 열지 않고(화면·포커스를 안 가져감) 여기서 연다.
+$script:HiddenXl = $null
+function Get-HiddenExcel(){
+  try { if($script:HiddenXl -and $null -ne $script:HiddenXl.Workbooks){ return $script:HiddenXl } } catch {}
+  $h = New-Object -ComObject Excel.Application
+  $h.Visible = $false; $h.DisplayAlerts = $false; $h.ScreenUpdating = $false
+  try { $h.UserControl = $false } catch {}
+  $script:HiddenXl = $h
+  return $h
+}
+function Open-Workbook($xl, [string]$path, [bool]$readOnly, [bool]$inUserExcel = $false){
+  # 사용자가 보고 있는 엑셀(화면에 보임)에 열면 그 창이 앞으로 튀어나오므로, 열려 있지 않은 파일은 안 보이는 엑셀에서 연다.
+  if(-not $inUserExcel){ try { if($xl -and $xl.Visible){ $xl = Get-HiddenExcel } } catch { $xl = Get-HiddenExcel } }
   Log "파일 여는 중: $path"
   $prevAlerts = $true; $prevAsk = $true
   try { $prevAlerts = $xl.DisplayAlerts } catch {}
@@ -22525,17 +22537,17 @@ function Handle-WriteFile([string]$path, [byte[]]$bytes){
   $wb = Find-OpenWorkbook $xl $path
   $reopen = $null
   if($wb){
-    $wb = Ensure-Writable $xl $wb $path
+    $wb = Ensure-Writable $xl $wb $path; $xl = $wb.Application
     $reopen = $wb.FullName
     Invoke-Retry { $wb.Close($false) } | Out-Null
   }
   $backup = Backup-File $path
   try { [IO.File]::WriteAllBytes($path, $bytes) }
   catch {
-    if($reopen){ try { [void](Open-Workbook $xl $reopen $false) } catch {} }
+    if($reopen){ try { [void](Open-Workbook $xl $reopen $false $true) } catch {} }
     throw "파일에 쓸 수 없습니다(다른 사람이 이 파일을 열고 있을 수 있습니다): $($_.Exception.Message)"
   }
-  if($reopen){ [void](Open-Workbook $xl $reopen $false) }
+  if($reopen){ [void](Open-Workbook $xl $reopen $false $true) }
   return @{ ok=$true; reopened=[bool]$reopen; backup=$backup }
 }
 
@@ -22565,12 +22577,12 @@ function Handle-CorpCardWrite($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Open-Workbook $xl $path $false
+    $wb = Open-Workbook $xl $path $false; $xl = $wb.Application
     $openedHere = $true
   }
   $prevScreen = $xl.ScreenUpdating
   try {
-    $wb = Ensure-Writable $xl $wb $path
+    $wb = Ensure-Writable $xl $wb $path; $xl = $wb.Application
     # 카드번호 확인 — 첫 번째 월 시트의 B9
     $monthSheets = @()
     foreach($ws in $wb.Worksheets){
@@ -22722,7 +22734,7 @@ function Handle-CorpCardReportPdf($body){
     # (쓰기가 끝나면 엑셀이 닫혔을 수 있으니 다시 잡는다)
     $step = '복사본 열기'
     $xl = Get-Excel $true
-    $wb = Open-Workbook $xl $tmp $false
+    $wb = Open-Workbook $xl $tmp $false; $xl = $wb.Application
     $sheets = @(); foreach($s in $wb.Worksheets){ $sheets += $s }
     $reports = @($sheets | Where-Object { $_.Name -match '보고용' } | ForEach-Object {
       $n = if($_.Name -match '(\d{1,2})\s*월'){ [int]$Matches[1] } else { $null }
@@ -22853,12 +22865,12 @@ function Handle-SagupWrite($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Open-Workbook $xl $path $false
+    $wb = Open-Workbook $xl $path $false; $xl = $wb.Application
     $openedHere = $true
   }
   try {
     Backup-FileThrottled $path '실적리스트' 30   # 쓰기 전 원본 사본(30분에 한 번)
-    $wb = Ensure-Writable $xl $wb $path
+    $wb = Ensure-Writable $xl $wb $path; $xl = $wb.Application
     $ws = $null; foreach($s in $wb.Worksheets){ if([string]$s.Name -eq [string]$body.sheet){ $ws = $s } }
     if(-not $ws){ throw """$($body.sheet)"" 시트를 찾지 못했습니다." }
     $cc = [int]$body.customerCol; $dc = [int]$body.dateCol
@@ -22943,12 +22955,12 @@ function Handle-OMListWrite($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Open-Workbook $xl $path $false
+    $wb = Open-Workbook $xl $path $false; $xl = $wb.Application
     $openedHere = $true
   }
   try {
     Backup-FileThrottled $path 'OM리스트' 30   # 쓰기 전 원본 사본(30분에 한 번)
-    $wb = Ensure-Writable $xl $wb $path
+    $wb = Ensure-Writable $xl $wb $path; $xl = $wb.Application
     $ws = $null; foreach($sh in $wb.Worksheets){ if([string]$sh.Name -eq [string]$body.sheet){ $ws = $sh } }
     if(-not $ws){ throw """$($body.sheet)"" 시트를 찾지 못했습니다." }
     $start = [int]$body.dataStart; $cc = [int]$body.customerCol; $dc = [int]$body.dateCol
@@ -23039,12 +23051,12 @@ function Handle-ProfitLedgerWrite($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Open-Workbook $xl $path $false
+    $wb = Open-Workbook $xl $path $false; $xl = $wb.Application
     $openedHere = $true
   }
   try {
     Backup-FileThrottled $path '사급정산' 30   # 쓰기 전 원본 사본(30분에 한 번)
-    $wb = Ensure-Writable $xl $wb $path
+    $wb = Ensure-Writable $xl $wb $path; $xl = $wb.Application
     $sheetName = [string]$body.sheet
     $ws = $null; foreach($s in $wb.Worksheets){ if([string]$s.Name -eq $sheetName){ $ws = $s } }
     if(-not $ws){ throw """$sheetName"" 시트를 찾을 수 없습니다." }
@@ -23391,7 +23403,7 @@ function Handle-CardMasterAlignLayout($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Open-Workbook $xl $path $false
+    $wb = Open-Workbook $xl $path $false; $xl = $wb.Application
     $openedHere = $true
   }
   try {
@@ -23423,7 +23435,7 @@ function Handle-CardMasterAlignLayout($body){
       return @{ ok=$true; changed=$false; dryRun=$true; report=$rep }
     }
     Backup-File $path | Out-Null
-    $wb = Ensure-Writable $xl $wb $path
+    $wb = Ensure-Writable $xl $wb $path; $xl = $wb.Application
     $dst = Find-MonthSheetForNum $wb ([int]$body.to); $src = Find-MonthSheetForNum $wb ([int]$body.from)
     $rep = @()
     if($renameCar){
@@ -23455,12 +23467,12 @@ function Handle-CardMasterCarMap($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Open-Workbook $xl $path $false
+    $wb = Open-Workbook $xl $path $false; $xl = $wb.Application
     $openedHere = $true
   }
   try {
     Backup-FileThrottled $path '통합본' 30
-    $wb = Ensure-Writable $xl $wb $path
+    $wb = Ensure-Writable $xl $wb $path; $xl = $wb.Application
     $added = Ensure-CarMapSheet $wb @($body.items)
     $sheets = Apply-CarFormulas $wb
     Invoke-Retry { $wb.Save() } | Out-Null
@@ -23476,13 +23488,13 @@ function Handle-CardMasterHipass($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Open-Workbook $xl $path $false
+    $wb = Open-Workbook $xl $path $false; $xl = $wb.Application
     $openedHere = $true
   }
   $done = @(); $skipped = @()
   try {
     Backup-FileThrottled $path '통합본' 30
-    $wb = Ensure-Writable $xl $wb $path
+    $wb = Ensure-Writable $xl $wb $path; $xl = $wb.Application
     Invoke-Retry { $xl.ScreenUpdating = $false } | Out-Null
     try { $prevCalc = $xl.Calculation; Invoke-Retry { $xl.Calculation = -4135 } | Out-Null } catch { $prevCalc = $null }
     foreach($m in @($body.months)){
@@ -23551,12 +23563,12 @@ function Handle-CardMasterWrite($body){
   $openedHere = $false
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
-    $wb = Open-Workbook $xl $path $false
+    $wb = Open-Workbook $xl $path $false; $xl = $wb.Application
     $openedHere = $true
   }
   try {
     Backup-FileThrottled $path '통합본' 30   # 쓰기 전 원본 사본(30분에 한 번)
-    $wb = Ensure-Writable $xl $wb $path
+    $wb = Ensure-Writable $xl $wb $path; $xl = $wb.Application
     Invoke-Retry { $xl.ScreenUpdating = $false } | Out-Null
     # 한 칸 쓸 때마다 엑셀이 통째로 다시 계산하면 바빠서 쓰기를 거절한다(0x800AC472) — 쓰는 동안만 수동 계산으로 둔다.
     try { $prevCalc = $xl.Calculation; Invoke-Retry { $xl.Calculation = -4135 } | Out-Null } catch { $prevCalc = $null }
@@ -23766,7 +23778,7 @@ function Handle-CardMasterRead($body){
   if(-not $wb){
     if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
     $tmpCopy = Copy-ForRead $path
-    $wb = Open-Workbook $xl $tmpCopy $true
+    $wb = Open-Workbook $xl $tmpCopy $true; $xl = $wb.Application
     $openedHere = $true
   }
   try {
@@ -23801,7 +23813,7 @@ function Handle-ReadValues($body){
     Set-Progress 5 100 '파일 복사 중'
     $tmpCopy = Copy-ForRead $path
     Set-Progress 15 100 '엑셀로 여는 중'
-    $wb = Open-Workbook $xl $tmpCopy $true
+    $wb = Open-Workbook $xl $tmpCopy $true; $xl = $wb.Application
     $openedHere = $true
   }
   try {
