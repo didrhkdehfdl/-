@@ -15996,6 +15996,38 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
           try{ const st0 = styles.xf(rows[r].cells[nv].s) || {}; summaryValueFont = Math.max(summaryValueFont, Number(st0.size)||0); summaryValueBold = summaryValueBold || !!st0.bold; }catch(e){}
         });
       });
+      // 위에서 못 맞춘 값 칸(설명칸 글자가 병합 안 다른 칸에 있거나 줄이 어긋난 양식) — 값 칸에서 거꾸로 왼쪽 설명칸을 찾는다.
+      const anchorOf = (r, c) => {
+        for(const [k, sp] of spanAt){ const [ar, ac] = k.split(',').map(Number); if(r >= ar && r < ar + sp.rs && c >= ac && c < ac + sp.cs) return { ar, ac, sp }; }
+        return null;
+      };
+      rowNums.filter(r => r < headerRowNum && rows[r]).forEach(r => {
+        Object.keys(rows[r].cells).map(Number).filter(v => v > hpCol).forEach(v => {
+          if(covered.has(`${r},${v}`) || summaryValueKeys.has(`${r},${v}`)) return;
+          const cell = rows[r].cells[v];
+          if(!cell || !(cell.formula || String(cell.text||'').trim())) return;
+          if(/[가-힣]/.test(String(cell.text||'')) && !/[0-9]/.test(String(cell.text||''))) return;   // 글자 칸(설명)은 값이 아님
+          let lab = null;
+          for(let cc = v - 1; cc >= minCol && !lab; cc--){
+            const a = anchorOf(r, cc);
+            const ar = a ? a.ar : r, ac = a ? a.ac : cc;
+            const t = String((rows[ar] && rows[ar].cells[ac] && rows[ar].cells[ac].text) || '').replace(/\s/g,'');
+            if(t) lab = /사용건수|사용금액|합계금액/.test(t) ? { ar, ac, sp: a ? a.sp : { cs:1, rs:1 } } : 'stop';
+          }
+          if(!lab || lab === 'stop' || lab.ac > hpCol) return;
+          const { ar, ac } = lab, rs = Math.max(lab.sp.rs, (r - ar) + ((spanAt.get(`${r},${v}`)||{rs:1}).rs));
+          for(let rr=ar; rr<ar+rs; rr++) for(let cc=ac; cc<=maxCol; cc++){ covered.delete(`${rr},${cc}`); spanAt.delete(`${rr},${cc}`); }
+          const nv = hpCol + 1;
+          rows[ar] = { ...rows[ar], cells: { ...rows[ar].cells } };
+          if(ar !== r) rows[r] = { ...rows[r], cells: { ...rows[r].cells } };
+          const moved = rows[r].cells[v]; delete rows[r].cells[v]; rows[ar].cells[nv] = moved;
+          const put = (c1, c2) => { spanAt.set(`${ar},${c1}`, { cs: c2-c1+1, rs }); for(let rr=ar; rr<ar+rs; rr++) for(let cc=c1; cc<=c2; cc++) if(!(rr===ar && cc===c1)) covered.add(`${rr},${cc}`); };
+          put(ac, hpCol);
+          put(nv, maxCol);
+          summaryValueKeys.add(`${ar},${nv}`);
+          try{ const st0 = styles.xf(moved.s) || {}; summaryValueFont = Math.max(summaryValueFont, Number(st0.size)||0); summaryValueBold = summaryValueBold || !!st0.bold; }catch(e){}
+        });
+      });
     }
   }catch(e){ console.warn('사용건수 칸 조정 건너뜀', e); }
 
@@ -16176,7 +16208,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       if(cs.size) fontSize = cs.size;
     }
     const isSummaryValue = summaryValueKeys.has(`${r},${c}`);
-    if(isSummaryValue && summaryValueFont) fontSize = summaryValueFont;
+    if(isSummaryValue) fontSize = Math.max(summaryValueFont || 11, 11) * 1.4;   // 건수·금액 숫자는 크게, 둘이 같은 크기로
     // 표 맨 오른쪽·왼쪽 칸의 바깥 선은 엑셀에서 옆 칸(인쇄 범위 밖)의 선으로 그어져
     // 있는 경우가 많다. 그 칸은 그리지 않으므로 선만 가져온다.
     const spEdge = spanAt.get(`${r},${c}`);
