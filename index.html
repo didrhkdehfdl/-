@@ -13479,7 +13479,9 @@ async function migrateCorpCardCorpToEsp(){
   try{
     let rowsFixed = 0, cardsFixed = 0;
     for(const card of corpCardState.cards){
-      const n = normalizeCorpCardEsp(card.id);
+      let n = normalizeCorpCardEsp(card.id);
+      // 예전에 PDF로 내보낸 행(PDF✓)은 금액 노란색 표시도 켠다(직접 끈 적이 없는 행만)
+      Object.values(corpCardState.rowsByCard[card.id]||{}).forEach(rows=>(rows||[]).forEach(r=>{ if(r && r.pdfExportedAt && r.hl === undefined){ r.hl = true; n++; } }));
       if(corpEspNeedsFix(card.fixedCorp)){ card.fixedCorp = CORP_CARD_DEFAULT_CORP; cardsFixed++; }
       if(n){ rowsFixed += n; await saveCorpCardRows(card.id); }
     }
@@ -16929,7 +16931,7 @@ async function renderCorpCardMain(){
     // 인쇄·PDF 저장을 실제로 누르면 내보낸 행에 날짜를 남겨서 "어디까지 출력했는지" 보이게 한다.
     const markExported = ()=>{
       const at = new Date().toISOString();
-      exportRows.forEach(r=>{ r.pdfExportedAt = at; });
+      exportRows.forEach(r=>{ r.pdfExportedAt = at; r.hl = true; });   // PDF로 내보낸 행은 금액도 노란색 표시
       markCorpCardDirty(cardId);
       flushCorpCardSave();
       if(state.activeTab === 'corpCard' && corpCardState.activeCardId === cardId) renderCorpCardMain();
