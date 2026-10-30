@@ -16281,13 +16281,13 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   }
   // "총 사용금액 합계" 줄은 양식 칸 너비에 맞추면 큰 숫자가 잘려서, 표 전체 폭을 한 칸으로 쓰고 글자를 크게 넣는다(세로줄은 안 맞춤).
   const nCols = (colgroup.match(/<col\b/g) || []).length || (maxCol - minCol + 1);
-  const big = cq(13 * 96 / 72);
+  const big = cq(13 * 96 / 72), bigNum = cq(20 * 96 / 72);   // 글자 13pt, 합계 숫자 20pt
   body += `<tr><td colspan="${nCols}" style="border:1px solid #000; padding:6px 12px; font-weight:700; font-size:${big}; white-space:nowrap;">
     <div style="display:flex; justify-content:flex-end; align-items:center; gap:28px; flex-wrap:wrap;">
       <span style="margin-right:auto;">총 사용금액 합계</span>
-      <span>공급가 ${fmtNum(supplyTotal)}</span>
-      <span>부가세 ${fmtNum(vatTotal)}</span>
-      <span style="background:#ffff00; padding:2px 8px;">금액 ${fmtNum(total)}원</span>
+      <span>공급가 <span style="font-size:${bigNum};">${fmtNum(supplyTotal)}</span></span>
+      <span>부가세 <span style="font-size:${bigNum};">${fmtNum(vatTotal)}</span></span>
+      <span style="background:#ffff00; padding:2px 10px;">금액 <span style="font-size:${bigNum};">${fmtNum(total)}</span>원</span>
     </div></td></tr>`;
 
   return `
