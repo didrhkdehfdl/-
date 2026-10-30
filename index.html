@@ -16553,7 +16553,7 @@ async function renderCorpCardMain(){
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">사용장소${colFilterIconHtml(colFilterTabKey,'venue')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">법인${colFilterIconHtml(colFilterTabKey,'corp')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">사업분류${colFilterIconHtml(colFilterTabKey,'bizCategory')}</th>
-          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">프로젝트${colFilterIconHtml(colFilterTabKey,'project')}</th>
+          <th data-xlmemo="${escapeHtml(CORP_PROJECT_MEMO)}" style="padding:6px 4px; color:var(--muted); white-space:nowrap; position:relative; cursor:help;">프로젝트${colFilterIconHtml(colFilterTabKey,'project')}<span style="position:absolute; top:0; right:0; width:0; height:0; border-top:7px solid #d00; border-left:7px solid transparent;"></span></th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">발전소명${colFilterIconHtml(colFilterTabKey,'plantName')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">사용처${colFilterIconHtml(colFilterTabKey,'place')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">업무내용${colFilterIconHtml(colFilterTabKey,'workDetail')}</th>
@@ -18912,6 +18912,28 @@ function renderPerfRowHtml(r, i){
   `;
 }
 
+// 법인카드 탭 "프로젝트" 머리글 메모(엑셀 메모처럼 마우스를 올리면 뜬다).
+const CORP_PROJECT_MEMO = '관리(안성)[사업분류가 사무실인 경우 사용]\n/기타(신사업)(해외사업 또는 신사업의 경우 사용)\n/발전소/정부사업/사급/AS/에너지자급자족/공공기관 등';
+// data-xlmemo가 붙은 칸에 마우스를 올리면 엑셀 메모처럼 노란 상자로 보여준다(표가 스크롤 상자 안에 있어도 잘리지 않게 화면 기준 위치).
+(function(){
+  let box = null;
+  document.addEventListener('mouseover', e=>{
+    const el = e.target.closest && e.target.closest('[data-xlmemo]');
+    if(!el){ if(box) box.style.display = 'none'; return; }
+    if(!box){
+      box = document.createElement('div');
+      box.style.cssText = 'position:fixed; z-index:10000; background:#ffffe1; color:#000; border:1px solid #000; padding:6px 8px; font-size:12.5px; line-height:1.5; white-space:pre; box-shadow:2px 2px 4px rgba(0,0,0,.35); pointer-events:none; font-family:"Malgun Gothic",sans-serif;';
+      document.body.appendChild(box);
+    }
+    box.textContent = el.dataset.xlmemo;
+    box.style.display = 'block';
+    const r = el.getBoundingClientRect();
+    let left = r.right + 6, top = r.top;
+    if(left + box.offsetWidth > window.innerWidth - 8) left = Math.max(8, r.left - box.offsetWidth - 6);
+    if(top + box.offsetHeight > window.innerHeight - 8) top = Math.max(8, window.innerHeight - box.offsetHeight - 8);
+    box.style.left = left + 'px'; box.style.top = top + 'px';
+  });
+})();
 // 화면을 다시 그려도 보던 위치(페이지·표 안의 가로·세로 스크롤)가 그대로 있게 한다 — 행 체크할 때 화면이 튀지 않게.
 function keepScrollWhile(fn){
   const main = document.getElementById('main');
