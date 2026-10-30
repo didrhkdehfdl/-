@@ -15965,13 +15965,20 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
           if(!/^(사용건수|합계사용금액)/.test(t)) return;
           const sp = spanAt.get(`${r},${c}`) || { cs:1, rs:1 };
           // 값 칸 = 설명칸 오른쪽에서 처음 나오는 값(수식)이 있는 칸(사이에 빈 칸이 끼어 있는 양식도 있다)
-          let vStart = -1;
-          for(let cc = c + sp.cs; cc <= maxCol; cc++){
-            const cell = rows[r].cells[cc];
-            if(cell && (cell.formula || String(cell.text||'').trim() || (cell.num !== null && cell.num !== undefined))){ vStart = cc; break; }
+          let vStart = -1, vRow = r;
+          for(let rr = r; rr < r + sp.rs && vStart < 0; rr++){   // 설명칸이 여러 줄 병합이면 그 줄들에서 찾는다
+            for(let cc = Math.max(c + 1, hpCol + 1); cc <= maxCol; cc++){
+              const cell = rows[rr] && rows[rr].cells[cc];
+              if(cell && (cell.formula || String(cell.text||'').trim())){ vStart = cc; vRow = rr; break; }
+            }
           }
           if(vStart < 0) return;
-          const vsp = spanAt.get(`${r},${vStart}`) || { cs:1, rs:sp.rs };
+          if(vRow !== r){   // 값이 아래 줄에 있으면 설명칸 첫 줄로 올린다
+            rows[r] = { ...rows[r], cells: { ...rows[r].cells } }; rows[vRow] = { ...rows[vRow], cells: { ...rows[vRow].cells } };
+            rows[r].cells[vStart] = rows[vRow].cells[vStart]; delete rows[vRow].cells[vStart];
+          }
+          const vsp0 = spanAt.get(`${vRow},${vStart}`) || { cs:1, rs:1 };
+          const vsp = { cs: maxCol - vStart + 1, rs: Math.max(sp.rs, vsp0.rs + (vRow - r)) };
           const vEnd = vStart + vsp.cs - 1;
           if(hpCol < c || hpCol >= vEnd) return;
           const rs = Math.max(sp.rs, vsp.rs);
