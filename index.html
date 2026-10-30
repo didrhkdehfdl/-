@@ -16131,7 +16131,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     if(lastC === maxCol && !b.r) b.r = neighborBorder(r, maxCol+1, 'l');
     if(c === minCol && !b.l) b.l = neighborBorder(r, minCol-1, 'r');
     if(r === firstRow && !b.t) b.t = neighborBorder(r-1, c, 'b');
-    const bw = n => n===2 ? '1.6px' : '0.8px';
+    const bw = n => n===2 ? '0.8px' : '0.4px';   // 출력 선 굵기(예전의 절반)
     const css = [`padding:${cq(1)} ${cq(3)}`, 'line-height:1.2'];
     // 비고 오른쪽 병합 칸을 거의 0폭으로 줄였으면 표 오른쪽 테두리는 비고 칸에 직접 긋는다.
     if(corpNoteExtraCols.size && headerRowNum && r >= headerRowNum){
@@ -16293,7 +16293,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   // "총 사용금액 합계" 줄은 양식 칸 너비에 맞추면 큰 숫자가 잘려서, 표 전체 폭을 한 칸으로 쓰고 글자를 크게 넣는다(세로줄은 안 맞춤).
   const nCols = (colgroup.match(/<col\b/g) || []).length || (maxCol - minCol + 1);
   const big = cq(13 * 96 / 72), bigNum = cq(20 * 96 / 72);   // 글자 13pt, 합계 숫자 20pt
-  body += `<tr><td colspan="${nCols}" style="border:1px solid #000; padding:6px 12px; font-weight:700; font-size:${big}; white-space:nowrap;">
+  body += `<tr><td colspan="${nCols}" style="border:0.4px solid #000; padding:6px 12px; font-weight:700; font-size:${big}; white-space:nowrap;">
     <div style="display:flex; justify-content:flex-end; align-items:center; gap:28px; flex-wrap:wrap;">
       <span style="margin-right:auto;">총 사용금액 합계</span>
       <span>공급가 <span style="font-size:${bigNum};">${fmtNum(supplyTotal)}</span></span>
