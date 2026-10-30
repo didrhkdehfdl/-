@@ -16603,7 +16603,7 @@ async function renderCorpCardMain(){
                 </select>
                 ${note('bizCategory')}
               </td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="project" value="${escapeHtml(row.project)}" ${isOfficeCategory?`readonly style="${lockedStyle}"`:`style="${issues.project?errBorder:''}"`}>${note('project')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="project" data-xlmemo="${escapeHtml(CORP_PROJECT_MEMO)}" value="${escapeHtml(row.project)}" ${isOfficeCategory?`readonly style="${lockedStyle}"`:`style="${issues.project?errBorder:''}"`}>${note('project')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="plantName" value="${escapeHtml(row.plantName)}" ${isOfficeCategory?`readonly style="${lockedStyle}"`:`style="${issues.plantName?errBorder:''}"`}>${note('plantName')}</td>
               <td style="padding:3px 4px;">
                 <input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="place" value="${escapeHtml(row.place)}" style="text-align:center; ${issues.place?errBorder:''}">
@@ -18917,9 +18917,14 @@ const CORP_PROJECT_MEMO = '관리(안성)[사업분류가 사무실인 경우 �
 // data-xlmemo가 붙은 칸에 마우스를 올리면 엑셀 메모처럼 노란 상자로 보여준다(표가 스크롤 상자 안에 있어도 잘리지 않게 화면 기준 위치).
 (function(){
   let box = null;
-  document.addEventListener('mouseover', e=>{
+  const show = (e)=>{
     const el = e.target.closest && e.target.closest('[data-xlmemo]');
-    if(!el){ if(box) box.style.display = 'none'; return; }
+    if(!el){
+      // 마우스가 벗어나도 입력 중인 칸에 메모가 있으면 계속 보여준다
+      const a = document.activeElement;
+      if(e.type === 'mouseover' && a && a.dataset && a.dataset.xlmemo) return;
+      if(box) box.style.display = 'none'; return;
+    }
     if(!box){
       box = document.createElement('div');
       box.style.cssText = 'position:fixed; z-index:10000; background:#ffffe1; color:#000; border:1px solid #000; padding:6px 8px; font-size:12.5px; line-height:1.5; white-space:pre; box-shadow:2px 2px 4px rgba(0,0,0,.35); pointer-events:none; font-family:"Malgun Gothic",sans-serif;';
@@ -18932,7 +18937,10 @@ const CORP_PROJECT_MEMO = '관리(안성)[사업분류가 사무실인 경우 �
     if(left + box.offsetWidth > window.innerWidth - 8) left = Math.max(8, r.left - box.offsetWidth - 6);
     if(top + box.offsetHeight > window.innerHeight - 8) top = Math.max(8, window.innerHeight - box.offsetHeight - 8);
     box.style.left = left + 'px'; box.style.top = top + 'px';
-  });
+  };
+  document.addEventListener('mouseover', show);
+  document.addEventListener('focusin', show);   // 칸에 입력할 때도(클릭·Tab으로 들어가면) 메모를 띄운다
+  document.addEventListener('focusout', ()=>{ setTimeout(()=>{ const a = document.activeElement; if(box && !(a && a.dataset && a.dataset.xlmemo)) box.style.display = 'none'; }, 0); });
 })();
 // 화면을 다시 그려도 보던 위치(페이지·표 안의 가로·세로 스크롤)가 그대로 있게 한다 — 행 체크할 때 화면이 튀지 않게.
 function keepScrollWhile(fn){
