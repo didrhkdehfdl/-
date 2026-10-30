@@ -15759,7 +15759,8 @@ function corpCardNoteLines(raw){
   return lines.join('\n');
 }
 function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
-  const { rows, merges, colWidths, styles } = layout;
+  const { merges, colWidths, styles } = layout;
+  const rows = { ...layout.rows };   // 아래에서 머리글 칸을 옮기므로 원본 양식은 건드리지 않게 복사본을 쓴다
   const rowNums = Object.keys(rows).map(Number).sort((a,b)=>a-b);
   // "총 사용금액 합계" 행을 찾아 데이터 칸의 범위를 정한다(엑셀 내보내기와 같은 기준).
   const totalRowNum = rowNums.find(r => Object.values(rows[r].cells).some(c => String(c.text||'').trim() === '총 사용금액 합계'))
@@ -15949,6 +15950,39 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
       for(let c=c1; c<=c2; c++)
         if(!(r===r1 && c===c1)) covered.add(`${r},${c}`);
   });
+
+  // 오른쪽 위 "사용건수"·"합계사용금액" 설명칸은 아래 표의 하이패스 사용여부 열에서 끝나게 줄이고,
+  // 그 오른쪽(차량번호~비고 열)을 값 칸으로 넓힌다 — 비고가 좁은 카드에서 금액이 작게 나오던 것.
+  try{
+    const hc = headerRowNum && rows[headerRowNum] ? rows[headerRowNum].cells : null;
+    const hk = hc ? Object.keys(hc).find(c => /하이패스/.test(String(hc[c].text||''))) : undefined;
+    const hpCol = hk === undefined ? -1 : Number(hk);
+    if(hpCol > 0 && hpCol < maxCol){
+      rowNums.filter(r => r < headerRowNum && rows[r]).forEach(r => {
+        Object.keys(rows[r].cells).map(Number).forEach(c => {
+          const t = String(rows[r].cells[c].text||'').replace(/\s/g,'');
+          if(!/^(사용건수|합계사용금액)/.test(t)) return;
+          const sp = spanAt.get(`${r},${c}`) || { cs:1, rs:1 };
+          const vStart = c + sp.cs;
+          if(vStart > maxCol || !rows[r].cells[vStart]) return;
+          const vsp = spanAt.get(`${r},${vStart}`) || { cs:1, rs:sp.rs };
+          const vEnd = vStart + vsp.cs - 1;
+          if(hpCol < c || hpCol >= vEnd) return;
+          const rs = Math.max(sp.rs, vsp.rs);
+          for(let rr=r; rr<r+rs; rr++) for(let cc=c; cc<=vEnd; cc++){ covered.delete(`${rr},${cc}`); spanAt.delete(`${rr},${cc}`); }
+          const nv = hpCol + 1;
+          if(nv !== vStart){
+            rows[r] = { ...rows[r], cells: { ...rows[r].cells } };
+            rows[r].cells[nv] = rows[r].cells[vStart];
+            delete rows[r].cells[vStart];
+          }
+          const put = (c1, c2) => { spanAt.set(`${r},${c1}`, { cs: c2-c1+1, rs }); for(let rr=r; rr<r+rs; rr++) for(let cc=c1; cc<=c2; cc++) if(!(rr===r && cc===c1)) covered.add(`${rr},${cc}`); };
+          put(c, hpCol);
+          put(nv, vEnd);
+        });
+      });
+    }
+  }catch(e){ console.warn('사용건수 칸 조정 건너뜀', e); }
 
   // 병합된 칸까지 고려해 (행, 열)의 글자를 얻는다.
   const textAt = (r, c) => {
