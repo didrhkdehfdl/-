@@ -14831,7 +14831,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 52;
+const EXCEL_HELPER_VERSION = 53;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -22319,7 +22319,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '52'
+$Version = '53'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -22420,6 +22420,13 @@ function Copy-ForRead([string]$path){
   return $tmp
 }
 function Find-OpenWorkbook($xl, [string]$path){
+  # 도우미의 안 보이는 엑셀에 이미 열려 있으면 그걸 쓴다(같은 파일을 두 번 열어 읽기 전용이 되지 않게).
+  try {
+    if($script:HiddenXl -and $null -ne $script:HiddenXl.Workbooks -and -not [object]::ReferenceEquals($script:HiddenXl, $xl)){
+      $fullH = [IO.Path]::GetFullPath($path)
+      foreach($w in $script:HiddenXl.Workbooks){ if([string]::Equals($w.FullName, $fullH, [StringComparison]::OrdinalIgnoreCase)){ return $w } }
+    }
+  } catch {}
   if(-not $xl){ return $null }
   $full = [IO.Path]::GetFullPath($path)
   foreach($wb in $xl.Workbooks){
@@ -22441,7 +22448,10 @@ function Release-Workbook($xl, $wb, [bool]$openedHere){
   if($openedHere -or $hidden){
     try { Invoke-Retry { $wb.Close($false) } | Out-Null } catch { Log "파일 닫기 실패: $($_.Exception.Message)" }
   }
-  foreach($a in @($app, $xl)){ try { if($a -and -not $a.Visible -and $a.Workbooks.Count -eq 0){ $a.Quit() } } catch {} }
+  # 도우미 전용 안 보이는 엑셀에 다른 파일이 남아 있으면(예전에 닫기가 실패한 것) 같이 닫는다 — 남아 있으면 다른 곳에서
+  # 그 파일이 "편집 중이라 잠김(읽기 전용)"으로 열린다.
+  try { if($script:HiddenXl -and $null -ne $script:HiddenXl.Workbooks){ foreach($w in @($script:HiddenXl.Workbooks)){ $n = ''; try { $n = $w.Name; $w.Close($false); Log "안 보이는 엑셀에 남은 파일 닫음: $n" } catch {} } } } catch {}
+  foreach($a in @($app, $xl, $script:HiddenXl)){ try { if($a -and -not $a.Visible -and $a.Workbooks.Count -eq 0){ $a.Quit(); if($a -eq $script:HiddenXl){ $script:HiddenXl = $null } } } catch {} }
 }
 # 도우미가 띄운 안 보이는 엑셀에 남아 있는 파일을 모두 닫는다(시작할 때·주기적으로). 사용자가 보는 엑셀은 건드리지 않는다.
 function Close-HiddenExcelLeftovers(){
@@ -24122,14 +24132,28 @@ $rcvPs.Runspace.Open()
 [void]$rcvPs.AddScript($receiver).AddArgument($listener).AddArgument($global:shared).AddArgument($global:reqQueue).AddArgument($AllowedOrigin).AddArgument($Version)
 $rcvHandle = $rcvPs.BeginInvoke()
 
+$lastWork = $null
 try {
   while($global:helperRunning -and $global:shared.running){
     [System.Windows.Forms.Application]::DoEvents()
     $ctx = $null
     if($global:reqQueue.TryDequeue([ref]$ctx)){
       $global:shared.busy = $ctx.Request.Url.AbsolutePath
-      try { Handle-Context $ctx } finally { $global:shared.busy = ''; $global:shared.progress = @{ active=$false; pct=0; text='' } }
-    } else { Start-Sleep -Milliseconds 40 }
+      try { Handle-Context $ctx } finally { $global:shared.busy = ''; $global:shared.progress = @{ active=$false; pct=0; text='' }; $lastWork = Get-Date }
+    } else {
+      Start-Sleep -Milliseconds 40
+      # 일이 끝나고 30초 넘게 쉬는 동안 도우미의 안 보이는 엑셀에 파일이 남아 있으면 닫는다(파일 잠김 방지).
+      if($lastWork -and ((Get-Date) - $lastWork).TotalSeconds -gt 30){
+        $lastWork = $null
+        try {
+          if($script:HiddenXl -and $null -ne $script:HiddenXl.Workbooks){
+            foreach($w in @($script:HiddenXl.Workbooks)){ $n=''; try { $n = $w.Name; $w.Close($false); Log "쉬는 동안 안 보이는 엑셀에 남은 파일 닫음: $n" } catch {} }
+            if($script:HiddenXl.Workbooks.Count -eq 0){ $script:HiddenXl.Quit(); $script:HiddenXl = $null }
+          }
+        } catch {}
+        Close-HiddenExcelLeftovers
+      }
+    }
   }
 } finally {
   $global:shared.running = $false
