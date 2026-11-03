@@ -14805,7 +14805,8 @@ function saveCorpCardRows(cardId){
   }
   async function maybeReload(){
     if(!pending) return;
-    if(Date.now() - lastActive < 2*60*1000) return;
+    // 화면을 보고 있으면 10분 넘게 손을 안 댔을 때만(작업하던 화면이 갑자기 처음으로 돌아가지 않게), 다른 창에 가려져 있으면 2분.
+    if(Date.now() - lastActive < (document.hidden ? 2 : 10)*60*1000) return;
     const a = document.activeElement;
     if(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && !document.hidden) return;
     if((typeof corpCardDirty !== 'undefined' && corpCardDirty) || (typeof cardMasterAutoBusy !== 'undefined' && cardMasterAutoBusy)) {
@@ -16484,7 +16485,13 @@ async function openCorpCardMonthPrintPreview(card, month, rows, onExported){
   pdfFilenameOverride = `법인카드_${card.label||card.cardNumber}_${month}_${isoDate(new Date())}`;
   printExportHook = onExported || null;
 }
-async function renderCorpCardMain(){
+// 법인카드 화면은 저장·다른 사람 변경·대사 결과 등으로 자주 다시 그려진다 — 다시 그릴 때마다 보던 위치(페이지·표의
+// 가로·세로 스크롤)가 맨 처음으로 돌아가지 않게 그대로 둔다.
+function renderCorpCardMain(){
+  // 다른 탭에서 넘어올 때는 위치를 이어받지 않는다(법인카드 화면이 이미 떠 있을 때만 유지).
+  return document.getElementById('corpCardSaveBtn') ? keepScrollWhile(renderCorpCardMainInner) : renderCorpCardMainInner();
+}
+async function renderCorpCardMainInner(){
   setTimeout(()=>checkCardMasterFileChanges(false).catch(()=>{}), 1500); // 통합본 파일에서 고친 것 확인(20초에 한 번까지)
   const main = document.getElementById('main');
   // 체크박스나 필터를 건드릴 때마다 표 전체를 다시 그리는데, innerHTML을
@@ -19032,7 +19039,8 @@ const CORP_PROJECT_MEMO = '관리(안성)[사업분류가 사무실인 경우 �
 function keepScrollWhile(fn){
   const main = document.getElementById('main');
   const win = [window.scrollX, window.scrollY];
-  const boxes = main ? [main, ...main.querySelectorAll('*')].filter(el=>el.scrollTop || el.scrollLeft).map(el=>({ id: el.id, cls: el.className, idx: [...main.querySelectorAll('*')].indexOf(el), top: el.scrollTop, left: el.scrollLeft, self: el===main })) : [];
+  const all0 = main ? [...main.querySelectorAll('*')] : [];
+  const boxes = main ? [main, ...all0].filter(el=>el.scrollTop || el.scrollLeft).map(el=>({ id: el.id, cls: el.className, idx: all0.indexOf(el), top: el.scrollTop, left: el.scrollLeft, self: el===main })) : [];
   const r = fn();
   const restore = ()=>{
     if(main){
