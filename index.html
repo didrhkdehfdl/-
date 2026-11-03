@@ -10944,7 +10944,12 @@ function monthNumFromLabel(label){
 function pickDefaultCorpCardMonth(months){
   if(!months || !months.length) return '';
   const curMonth = new Date().getMonth()+1;
-  return months.find(m=>monthNumFromLabel(m)===curMonth) || months[0];
+  // 오늘이 속한 달 → 없으면 그 전 달 중 가장 가까운 달 → 그것도 없으면 마지막 달
+  const exact = months.find(m=>monthNumFromLabel(m)===curMonth);
+  if(exact) return exact;
+  const before = months.filter(m=>{ const n = monthNumFromLabel(m); return n && n < curMonth; })
+    .sort((a,b)=>monthNumFromLabel(b)-monthNumFromLabel(a))[0];
+  return before || months[months.length-1];
 }
 // 통합본에는 있는 월 시트인데 그 카드의 법인카드 탭에는 아직 그 달 탭이 없으면,
 // 기존 월 이름 표기(예: "8 월"의 띄어쓰기)를 그대로 따라 새 월 탭을 맨 오른쪽에
@@ -16803,7 +16808,8 @@ async function renderCorpCardMainInner(){
       await flushCorpCardSave(); // 카드를 옮기기 전에 지금 카드 내용을 저장
       s.activeCardId = btn.dataset.id;
       const tmpl2 = corpCardTemplates[s.activeCardId];
-      s.activeMonth = pickDefaultCorpCardMonth(tmpl2 && tmpl2.months);
+      // 카드를 바꾸면 오늘이 속한 달(없으면 그 전 달)로 — 양식의 달과 실제 내역이 있는 달을 함께 본다.
+      s.activeMonth = pickDefaultCorpCardMonth([...new Set([...((tmpl2 && tmpl2.months) || []), ...Object.keys(s.rowsByCard[s.activeCardId] || {})])]);
       corpCardSelectedIds.clear();
       await saveCorpCardList();
       renderCorpCardMain();
