@@ -14837,7 +14837,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 53;
+const EXCEL_HELPER_VERSION = 54;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -14880,6 +14880,60 @@ async function excelHelperCall(route, body, timeoutMs){
   if(!data.ok && !data.cancelled) throw new Error(data.error || '엑셀 도우미 작업이 실패했습니다.');
   return data;
 }
+// ---- 엑셀 도우미 상태 표시(화면 왼쪽 아래) ----
+// 도우미가 지금 무슨 작업을 하는지, 어떤 파일을 열고 있는지, 몇 % 진행됐는지 보여준다. 다른 곳에서 엑셀 파일이
+// "○○이(가) 편집하고 있어서 잠겨 있습니다"로 열릴 때, 도우미가 잡고 있는 파일인지 바로 확인할 수 있게.
+const EXCEL_HELPER_ROUTE_LABELS = {
+  '/cardmaster/write':'사무실관리카드 통합본 갱신', '/cardmaster/hipass':'통합본 하이패스 카드 반영', '/cardmaster/read':'통합본 읽기',
+  '/cardmaster/carmap':'통합본 차량매핑', '/cardmaster/alignlayout':'통합본 양식 맞추기', '/omlist/write':'O&M 리스트 엑셀 반영',
+  '/sagup/write':'사급 실적리스트 엑셀 반영', '/profitledger/write':'사급 건별 정산 엑셀 반영', '/corpcard/write':'법인카드 PC 파일 저장',
+  '/corpcard/reportpdf':'사용내역서 PDF 만들기', '/readvalues':'엑셀 파일 읽기', '/read':'엑셀 파일 읽기', '/write':'엑셀 파일 저장',
+  '/pick':'파일 선택 창', '/latestfile':'최신 파일 찾기',
+};
+(function(){
+  let el = null, busy = false, expanded = false, lastPing = 0;
+  const short = p => String(p||'').split(/[\\/]/).pop();
+  function ensureEl(){
+    if(el) return el;
+    el = document.createElement('div');
+    el.id = 'excelHelperStatus';
+    el.style.cssText = 'position:fixed; left:10px; bottom:10px; z-index:9000; max-width:min(560px, calc(100vw - 20px)); font-size:11.5px; line-height:1.5; padding:6px 10px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--text); box-shadow:0 2px 8px rgba(0,0,0,.15); cursor:pointer; display:none;';
+    el.title = '눌러서 자세히 보기/접기';
+    el.addEventListener('click', ()=>{ expanded = !expanded; tick(); });
+    document.body.appendChild(el);
+    return el;
+  }
+  async function tick(){
+    if(busy || document.hidden) return;
+    if(!excelHelperVersion && Date.now() - lastPing > 30000){ lastPing = Date.now(); try{ await checkExcelHelper(); }catch(e){} }
+    if(excelHelperRunning === false || excelHelperVersion < 54){ if(el) el.style.display = 'none'; return; }
+    busy = true;
+    try{
+      const p = await excelHelperCall('/progress', {}, 3000);
+      const box = ensureEl();
+      const files = (p.openFiles || []).filter(Boolean);
+      const working = !!(p.busy || p.active);
+      const label = EXCEL_HELPER_ROUTE_LABELS[p.busy] || (p.busy ? p.busy : '');
+      let html;
+      if(working){
+        html = `<b style="color:var(--gold);">⏳ 엑셀 도우미 작업 중</b> ${escapeHtml(label)}${p.active ? ` · <b>${p.pct}%</b>` : ''}` +
+          (p.file ? `<div>📄 ${escapeHtml(expanded ? p.file : short(p.file))}</div>` : '') +
+          (p.text ? `<div style="color:var(--muted);">${escapeHtml(p.text)}</div>` : '');
+        if(p.active){ html += `<div style="height:4px; background:var(--line); border-radius:2px; margin-top:3px;"><div style="height:4px; width:${Math.max(0,Math.min(100,p.pct))}%; background:var(--gold); border-radius:2px;"></div></div>`; }
+      } else if(files.length){
+        html = `<b style="color:#d9822b;">📂 엑셀 도우미가 열고 있는 파일 ${files.length}개</b>` + files.map(f=>`<div>· ${escapeHtml(expanded ? f : short(f))}</div>`).join('') +
+          `<div style="color:var(--muted);">작업이 끝나면 30초 안에 자동으로 닫힙니다.</div>`;
+      } else {
+        html = expanded ? `<span style="color:#2e9e5b;">✔ 엑셀 도우미 대기 중 — 열고 있는 엑셀 파일 없음</span><div style="color:var(--muted);">다른 곳에서 "편집 중이라 잠김"이 뜨면 업무프로그램이 아니라 다른 엑셀 창이 그 파일을 열고 있는 것입니다.</div>` : `<span style="color:#2e9e5b;">✔ 도우미 대기 중 · 열린 파일 없음</span>`;
+      }
+      box.innerHTML = html;
+      box.style.display = 'block';
+      box.style.opacity = working || files.length ? '1' : '.7';
+    }catch(e){ if(el) el.style.display = 'none'; }
+    finally{ busy = false; }
+  }
+  setInterval(tick, 2000);
+})();
 // 도우미가 오래 걸리는 작업을 하는 동안 진행률(%)을 1초마다 물어 onText로 알려준다. 돌려주는 함수를 부르면 멈춘다.
 function watchExcelHelperProgress(onText){
   let stopped = false, busy = false;
@@ -22333,7 +22387,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '53'
+$Version = '54'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -22358,7 +22412,7 @@ trap {
 # 요청 받기는 별도 일꾼(백그라운드 runspace)이 맡는다 — 엑셀이 큰 파일을 여느라 몇십 초씩 걸려도
 # 연결 확인(/ping)·파일 저장 시각(/filestat)·진행률(/progress)·끄기(/shutdown)에는 일꾼이 바로 답하고,
 # 엑셀이 필요한 요청만 줄(queue)에 넣어 이 창(엑셀을 다루는 주 스레드)이 하나씩 처리한다.
-$global:shared = [hashtable]::Synchronized(@{ running=$true; busy=''; progress=@{ active=$false; pct=0; text='' } })
+$global:shared = [hashtable]::Synchronized(@{ running=$true; busy=''; file=''; openFiles=@(); progress=@{ active=$false; pct=0; text='' } })
 $global:reqQueue = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
 function Pump-Requests { try { [System.Windows.Forms.Application]::DoEvents() } catch {} }
 function Set-Progress([double]$done, [double]$total, [string]$text){
@@ -22396,6 +22450,11 @@ function Open-Workbook($xl, [string]$path, [bool]$readOnly, [bool]$inUserExcel =
   # 사용자가 보고 있는 엑셀(화면에 보임)에 열면 그 창이 앞으로 튀어나오므로, 열려 있지 않은 파일은 안 보이는 엑셀에서 연다.
   if(-not $inUserExcel){ try { if($xl -and $xl.Visible){ $xl = Get-HiddenExcel } } catch { $xl = Get-HiddenExcel } }
   Log "파일 여는 중: $path"
+  # 앱 화면에 "도우미가 지금 어떤 파일을 열고 있는지" 보여주기 위해 기록(읽기용 임시 복사본이면 원본은 잠기지 않음)
+  $isCopy = $path -like ((Join-Path ([IO.Path]::GetTempPath()) 'ExcelHelper') + '*')
+  $shown = [IO.Path]::GetFileName($path) -replace '^rd_[0-9a-f]{8}_',''
+  $global:shared.file = $(if($isCopy){ "$shown (읽기용 복사본 — 원본은 안 잠김)" } else { $path })
+  if(-not $global:shared.progress.active){ Set-Progress 5 100 ("파일 여는 중: " + $shown) }
   $prevAlerts = $true; $prevAsk = $true
   try { $prevAlerts = $xl.DisplayAlerts } catch {}
   try { $prevAsk = $xl.AskToUpdateLinks } catch {}
@@ -24121,8 +24180,8 @@ $receiver = {
       }
       if($route -eq '/progress'){
         $pg = $shared.progress
-        $t = ([string]$pg.text).Replace('\','\\').Replace('"','\"')
-        Reply $ctx 200 ('{"ok":true,"active":' + $(if($pg.active){ 'true' } else { 'false' }) + ',"pct":' + [int]$pg.pct + ',"text":"' + $t + '"}'); continue
+        $o = @{ ok=$true; active=[bool]$pg.active; pct=[int]$pg.pct; text=[string]$pg.text; busy=[string]$shared.busy; file=[string]$shared.file; openFiles=@($shared.openFiles) }
+        Reply $ctx 200 ($o | ConvertTo-Json -Compress -Depth 3); continue
       }
       if($route -eq '/shutdown'){ $shared.running = $false; Reply $ctx 200 '{"ok":true}'; continue }
       if($route -eq '/filestat'){
@@ -24146,16 +24205,24 @@ $rcvPs.Runspace.Open()
 [void]$rcvPs.AddScript($receiver).AddArgument($listener).AddArgument($global:shared).AddArgument($global:reqQueue).AddArgument($AllowedOrigin).AddArgument($Version)
 $rcvHandle = $rcvPs.BeginInvoke()
 
-$lastWork = $null
+$lastWork = $null; $lastSnap = [datetime]::MinValue
 try {
   while($global:helperRunning -and $global:shared.running){
     [System.Windows.Forms.Application]::DoEvents()
     $ctx = $null
     if($global:reqQueue.TryDequeue([ref]$ctx)){
       $global:shared.busy = $ctx.Request.Url.AbsolutePath
-      try { Handle-Context $ctx } finally { $global:shared.busy = ''; $global:shared.progress = @{ active=$false; pct=0; text='' }; $lastWork = Get-Date }
+      try { Handle-Context $ctx } finally { $global:shared.busy = ''; $global:shared.file = ''; $global:shared.progress = @{ active=$false; pct=0; text='' }; $lastWork = Get-Date; $lastSnap = [datetime]::MinValue }
     } else {
       Start-Sleep -Milliseconds 40
+      # 3초마다 도우미의 안 보이는 엑셀에 열려 있는 파일 목록을 남긴다(앱이 보여줌 — 다른 곳에서 "편집 중" 뜰 때 원인 확인용).
+      if(((Get-Date) - $lastSnap).TotalSeconds -gt 3){
+        $lastSnap = Get-Date
+        $names = @()
+        try { if($script:HiddenXl -and $null -ne $script:HiddenXl.Workbooks){ foreach($w in @($script:HiddenXl.Workbooks)){ try { $names += [string]$w.FullName } catch {} } } } catch {}
+        try { $a = [Runtime.InteropServices.Marshal]::GetActiveObject('Excel.Application'); if($a -and -not $a.Visible){ foreach($w in @($a.Workbooks)){ try { $n = [string]$w.FullName; if($names -notcontains $n){ $names += $n } } catch {} } } } catch {}
+        $global:shared.openFiles = @($names | ForEach-Object { $_ -replace '^.*\\ExcelHelper\\rd_[0-9a-f]{8}_','(읽기용 복사본) ' })
+      }
       # 일이 끝나고 30초 넘게 쉬는 동안 도우미의 안 보이는 엑셀에 파일이 남아 있으면 닫는다(파일 잠김 방지).
       if($lastWork -and ((Get-Date) - $lastWork).TotalSeconds -gt 30){
         $lastWork = $null
