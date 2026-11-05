@@ -11250,6 +11250,27 @@ function buildCardMasterWritePayload(onlyMonth){
       byMonth.get(num).push({ last4: parts.p4, cardNumber: monthNumber, owner: cardOwnerName(card), rows: dated.map(corpCardRowToBlock) });
     });
   });
+  // 승인내역이 올라온 달에, 앱에 그 달 내역이 없고 그 카드의 승인내역도 그 달에 하나도 없으면 — 파일 블록에 남은 줄
+  // (예: 지난달 시트를 복사해 새 달을 만들며 따라온 줄)은 승인내역에 없는 것이므로 비운다.
+  // 그 카드의 승인내역이 있는데 앱 내역이 없으면(아직 입력 전이거나 내역이 사라진 경우) 파일은 건드리지 않는다.
+  try{
+    const year = String(new Date().getFullYear());
+    const apprMonths = new Set((corpCardState.approvalEntries||[]).map(a=>String(a.isoDate||'')).filter(d=>d.startsWith(year+'-')).map(d=>Number(d.slice(5,7))));
+    apprMonths.forEach(num=>{
+      if(!num || (onlyMonth && num !== onlyMonth)) return;
+      const ym = `${year}-${String(num).padStart(2,'0')}`;
+      corpCardState.cards.forEach(card=>{
+        const monthNumber = cardNumberForMonth(card, num);
+        const parts = cardParts(monthNumber);
+        if(!parts || (typeof HIPASS_CARD_LAST4 !== 'undefined' && HIPASS_CARD_LAST4.includes(parts.p4))) return;
+        if((byMonth.get(num)||[]).some(c=>c.last4 === parts.p4)) return;
+        const hasAppr = (corpCardState.approvalEntries||[]).some(a=>String(a.isoDate||'').startsWith(ym) && cardMatchesApproval(card, a.cardNoStr));
+        if(hasAppr) return;
+        if(!byMonth.has(num)) byMonth.set(num, []);
+        byMonth.get(num).push({ last4: parts.p4, cardNumber: monthNumber, owner: cardOwnerName(card), rows: [] });
+      });
+    });
+  }catch(e){ console.warn('승인내역 없는 카드 블록 비우기 계산 실패', e); }
   return [...byMonth.entries()].sort((a,b)=>a[0]-b[0]).map(([num, cards])=>({ num, cards }));
 }
 // ---- 통합본 PC 파일 자동 갱신(실시간 연동) ----
@@ -14854,7 +14875,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 56;
+const EXCEL_HELPER_VERSION = 57;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -22407,7 +22428,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '56'
+$Version = '57'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -23765,6 +23786,7 @@ function Handle-CardMasterWrite($body){
           $blocks = Get-CardBlockRows $ws
           $newBlocks += "$($ws.Name) · 카드 $last4 $made"
         }
+        if(-not $blocks.ContainsKey($last4) -and $rows.Count -eq 0){ continue }   # 비울 블록이 원래 없으면 할 일 없음
         if(-not $blocks.ContainsKey($last4)){
           # 왜 못 찾았는지 알 수 있게, 시트 어디에 그 4자리가 적혀 있는지 찾아 함께 알려준다.
           $hint = ''
