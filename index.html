@@ -11505,7 +11505,7 @@ async function checkCardMasterFileChanges(force){
 // 넣는다(줄 모양은 통합본에 이미 있는 그 카드 줄 그대로 — 엑셀 도우미가 날짜·공급가·부가세·금액만 바꾼다).
 // 달마다 넣은 내용을 이 PC에 기억해 두고 바뀐 달만 다시 쓴다.
 const HIPASS_CARD_LAST4 = ['8958','8988','9903','9919','9923','9934','8940'];
-const HIPASS_SIG_KEY = 'cardmaster-hipass-sig-v1';
+const HIPASS_SIG_KEY = 'cardmaster-hipass-sig-v2';   // v2: 하이패스 블록 찾기 고침 — 모든 달 다시 씀
 let hipassWriteBusy = false;
 function buildHipassPayload(){
   const byMonth = new Map();
@@ -11550,7 +11550,7 @@ async function flushHipassToCardMaster(){
       const months = all.filter(m=>mine[m.num] !== JSON.stringify(m.cards));
       if(!months.length) continue;
       await checkExcelHelper();
-      if(!excelHelperRunning || excelHelperVersion < 47) return;
+      if(!excelHelperRunning || excelHelperVersion < 56) return;   // 56 미만은 8940처럼 일반 블록이 따로 있는 카드에 잘못 씀
       const link = await resolveLinkedPath(cardMasterLinkKey(t.id));
       const r = await excelHelperCall('/cardmaster/hipass', { path: link.path, months }, 10*60*1000);
       months.forEach(m=>{ mine[m.num] = JSON.stringify(m.cards); });
@@ -14837,7 +14837,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 55;
+const EXCEL_HELPER_VERSION = 56;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -22390,7 +22390,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '55'
+$Version = '56'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -23605,8 +23605,46 @@ function Handle-CardMasterHipass($body){
         # 카드번호합계용 열이 "8958/하이패스"·"8958"처럼 끝 4자리로 시작하는 줄 = 이 카드 줄
         $lv = $ws.Range($ws.Cells.Item(1,$l4C), $ws.Cells.Item($lastRow,$l4C)).Value2
         $dv = $ws.Range($ws.Cells.Item(1,$dayC), $ws.Cells.Item($lastRow,$dayC)).Value2
-        $blk = @(); for($r=2; $r -le $lastRow; $r++){ $t = Get-Last4Text $lv[$r,1]; if($t.StartsWith($last4)){ if($blk.Count -and $r -ne $blk[-1] + 1){ break }; $blk += $r } }
-        if(-not $blk.Count){ $skipped += "$($ws.Name) · 카드 ${last4}: 카드번호합계용 열에 이 카드 줄이 없음"; continue }
+        # 같은 끝 4자리 줄 묶음이 여러 곳일 수 있다(예: 8940은 일반 카드 블록과 아래쪽 하이패스 블록이 따로 있음).
+        # "/하이패스"가 적힌 묶음을 고르고, 없으면 맨 아래 묶음(하이패스 줄은 시트 아래쪽에 모여 있음)을 쓴다.
+        $groups = New-Object System.Collections.ArrayList; $cur = $null
+        for($r=2; $r -le $lastRow; $r++){
+          $t = Get-Last4Text $lv[$r,1]
+          if($t.StartsWith($last4)){
+            if($cur -and $r -eq $cur.rows[-1] + 1){ $cur.rows += $r } else { $cur = @{ rows=@($r); hp=$false }; [void]$groups.Add($cur) }
+            if($t -match '하이패스'){ $cur.hp = $true }
+          } else { $cur = $null }
+        }
+        if(-not $groups.Count){ $skipped += "$($ws.Name) · 카드 ${last4}: 카드번호합계용 열에 이 카드 줄이 없음"; continue }
+        $pick = @($groups | Where-Object { $_.hp }) | Select-Object -Last 1
+        if(-not $pick){ $pick = $groups[$groups.Count - 1] }
+        $blk = @($pick.rows)
+        # 예전 버전이 다른(일반 카드) 묶음에 잘못 써 넣은 하이패스 줄 정리 — 날짜·금액만 있고 부서·성명·사용처가 빈 줄
+        $cleaned = 0
+        $cC = $script:CardCols[1]; $nC = $script:CardCols[2]; $pC = $script:CardCols[7]
+        foreach($g in @($groups | Where-Object { $_ -ne $pick } | Sort-Object { $_.rows[0] } -Descending)){
+          $rowsG = @($g.rows)
+          for($k = $rowsG.Count - 1; $k -ge 0; $k--){
+            $r = $rowsG[$k]
+            $hasDay = ([string]$ws.Cells.Item($r, $dayC).Value2).Trim() -ne ''
+            $hasAmt = ([string]$ws.Cells.Item($r, $amtC).Value2).Trim() -ne ''
+            $empty = (([string]$ws.Cells.Item($r, $cC).Value2).Trim() -eq '') -and (([string]$ws.Cells.Item($r, $nC).Value2).Trim() -eq '') -and (([string]$ws.Cells.Item($r, $pC).Value2).Trim() -eq '')
+            if(-not ($hasDay -and $hasAmt -and $empty)){ continue }
+            if($rowsG.Count -gt 1 -and $k -gt 0){
+              Invoke-Retry { [void]$ws.Rows.Item($r).Delete() } | Out-Null
+              $rowsG = @($rowsG | Select-Object -First ($rowsG.Count - 1)); $lastRow--
+              if($blk[0] -gt $r){ $blk = @($blk | ForEach-Object { $_ - 1 }) }
+            } else {
+              foreach($cc in @($dayC, $supC, $vatC, $amtC)){ $cell = $ws.Cells.Item([int]$r, [int]$cc); if(-not ([string]$cell.Formula).StartsWith('=')){ Invoke-Retry { [void]$cell.ClearContents() } | Out-Null } }
+            }
+            $cleaned++
+          }
+        }
+        if($cleaned){ $done += "$($ws.Name) · 카드 ${last4}: 일반 카드 블록에 잘못 들어간 하이패스 줄 $cleaned개 정리" }
+        if($cleaned){
+          $lv = $ws.Range($ws.Cells.Item(1,$l4C), $ws.Cells.Item($lastRow,$l4C)).Value2
+          $dv = $ws.Range($ws.Cells.Item(1,$dayC), $ws.Cells.Item($lastRow,$dayC)).Value2
+        }
         $data = @($blk | Where-Object { $null -ne $dv[$_,1] -and ([string]$dv[$_,1]).Trim() -ne '' })
         $tpl = if($data.Count){ $data[0] } else { $blk[0] }
         $dayIsText = ($dv[$tpl,1] -is [string])
