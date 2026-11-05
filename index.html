@@ -16108,6 +16108,7 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
   };
   const fieldByCol = {};
   CORP_CARD_COLUMNS.forEach(([f], i)=>{ fieldByCol[xlsxColToIdx(CORP_CARD_COL_LETTERS[i])] = f; });
+  const printYear = (()=>{ const d = (dataRows||[]).map(r=>String(r.date||'')).find(x=>/^20\d{2}-/.test(x)); return d ? d.slice(0,4) : String(new Date().getFullYear()); })();
   const total = dataRows.reduce((sum,r)=>sum+(Number(r.amount)||0),0);
   const supplyTotal = dataRows.reduce((sum,r)=>sum+corpCardSupplyVat(r.amount).supply,0);
   const vatTotal = dataRows.reduce((sum,r)=>sum+corpCardSupplyVat(r.amount).vat,0);
@@ -16254,6 +16255,8 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     }
 
     if(swapMonth && !isData && r !== totalRowNum && text) text = swapMonth(text);
+    // 제목의 "[2025년]" 같은 연도는 양식을 만든 해라 그대로면 틀린다 — 인쇄하는 내역의 연도(없으면 올해)로 바꾼다.
+    if(!isData && r !== totalRowNum && text && /\d{4}\s*년/.test(text)) text = String(text).replace(/(\[?\s*)(20\d{2})(\s*년)/g, (m0, a, y, b) => a + printYear + b);
 
     let b = { ...(st.border || { l:0,r:0,t:0,b:0 }) };
     let bg = st.bg;
