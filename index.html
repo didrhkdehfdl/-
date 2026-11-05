@@ -11219,6 +11219,19 @@ function cardOwnerName(card){
   const a = card.assignedTo || CORP_CARD_ASSIGNED_NAMES[card.cardNumber] || [];
   return (Array.isArray(a) ? a : [a]).filter(Boolean).join('·');
 }
+// 통합본에는 카드사 승인내역에 있는 건(날짜·금액이 맞는 행)만 넣는다. 그 달 승인내역이 하나도 안 올라온 달
+// (예: 승인내역을 받기 시작하기 전 달)은 비교할 기준이 없으니 지금처럼 전부 넣는다.
+function corpCardApprovedRows(card, rows){
+  const dated = (rows||[]).filter(r=>r && r.date);
+  if(!dated.length) return dated;
+  const ym = String(dated[0].date).slice(0,7);
+  const all = corpCardState.approvalEntries || [];
+  if(!all.some(a=>String(a.isoDate||'').slice(0,7) === ym)) return dated;   // 이 달 승인내역 자체가 아직 없음
+  const appr = all.filter(a=>String(a.isoDate||'').slice(0,7) === ym && cardMatchesApproval(card, a.cardNoStr));
+  const res = reconcileCardEntries(dated.map(r=>({ id:r.id, isoDate:r.date, amount: Math.abs(Number(r.amount)||0) })), appr);
+  const ok = new Set(res.rows.filter(x=>x.status === 'match').map(x=>x.id));
+  return dated.filter(r=>ok.has(r.id));
+}
 function buildCardMasterWritePayload(onlyMonth){
   const byMonth = new Map();
   corpCardState.cards.forEach(card=>{
@@ -11226,8 +11239,9 @@ function buildCardMasterWritePayload(onlyMonth){
     Object.entries(corpCardState.rowsByCard[card.id]||{}).forEach(([label, rows])=>{
       const num = monthNumFromLabel(label);
       if(!num || (onlyMonth && num !== onlyMonth)) return;
-      const dated = (rows||[]).filter(r=>r.date);
-      if(!dated.length) return;
+      const allDated = (rows||[]).filter(r=>r.date);
+      if(!allDated.length) return;
+      const dated = corpCardApprovedRows(card, allDated);   // 승인내역에 있는 건만(없는 건은 빼서 블록에서도 지운다)
       // 그 달에 쓰던 카드번호의 블록에 넣는다(재발급 전 달은 예전 번호, 이후 달은 새 번호).
       const monthNumber = cardNumberForMonth(card, num);
       const parts = cardParts(monthNumber);
@@ -11397,7 +11411,7 @@ function corpCardMonthLabel(card, num){
 }
 function appCardMonthNorm(card, num){
   const label = corpCardMonthLabel(card, num);
-  return ((corpCardState.rowsByCard[card.id]||{})[label]||[]).filter(r=>r.date).map(r=>cardMasterNormBlock(corpCardRowToBlock(r)));
+  return corpCardApprovedRows(card, (corpCardState.rowsByCard[card.id]||{})[label]||[]).map(r=>cardMasterNormBlock(corpCardRowToBlock(r)));
 }
 async function applyCardMasterRowsToCard(card, num, normRows){
   let label = corpCardMonthLabel(card, num);
@@ -11408,7 +11422,10 @@ async function applyCardMasterRowsToCard(card, num, normRows){
   }
   corpCardState.rowsByCard[card.id] = corpCardState.rowsByCard[card.id] || {};
   const existing = corpCardState.rowsByCard[card.id][label] || [];
-  const dated = existing.filter(r=>r.date), undated = existing.filter(r=>!r.date);
+  // 통합본에는 승인내역에 있는 건만 들어가므로, 파일 내용은 그 행들에만 맞춰 넣고 승인내역에 없는 행은 앱에 그대로 둔다.
+  const approvedIds = new Set(corpCardApprovedRows(card, existing).map(r=>r.id));
+  const dated = existing.filter(r=>r.date && approvedIds.has(r.id)), undated = existing.filter(r=>!r.date);
+  const keepOther = existing.filter(r=>r.date && !approvedIds.has(r.id));
   const anyDate = dated[0] || Object.values(corpCardState.rowsByCard[card.id]).flat().find(r=>r && r.date);
   const year = anyDate ? String(anyDate.date).slice(0,4) : String(new Date().getFullYear());
   const F = ['dept','name','corp','bizCategory','project','plantName','place','workDetail','expenseType'];
@@ -11419,7 +11436,7 @@ async function applyCardMasterRowsToCard(card, num, normRows){
     row.amount = n[10]; row.hipass = n[11]; row.carNo = n[12]; row.note = n[13];
     return row;
   });
-  corpCardState.rowsByCard[card.id][label] = rows.concat(undated);
+  corpCardState.rowsByCard[card.id][label] = rows.concat(keepOther).sort((a,b)=>String(a.date).localeCompare(String(b.date))).concat(undated);
   normalizeCorpCardEsp(card.id);
   return { label, before: dated.length, after: rows.length };
 }
