@@ -1710,7 +1710,9 @@ async function loadCaseHistory(id){
 }
 async function saveCaseHistory(id, history){
   try{
-    await saveFileToStorage('case-history:'+id, JSON.stringify(history));
+    while(history.length > 1 && utf8ByteLength(JSON.stringify(history)) > 850*1024) history.shift();   // Firestore 한도(바이트) 안으로
+    const r = await saveFileToStorage('case-history:'+id, JSON.stringify(history));
+    if(r && r.ok === false) console.error('정산 건 이력 저장 실패', id, r.reason);
   }catch(e){ console.error(e); }
 }
 // saveCase()가 새 내용으로 덮어쓰기 전에, 저장소에 남아있던 "직전" 상태를
@@ -2336,7 +2338,7 @@ async function deleteCaseStorage(id){
 // 새 상수를 만들지 않아도 자동으로 구분된다.
 const GENERIC_HISTORY_LIMIT = 20;
 const GENERIC_HISTORY_MIN_INTERVAL_MS = 60*1000;
-const GENERIC_HISTORY_MAX_CHARS = 6*1024*1024;
+const GENERIC_HISTORY_MAX_BYTES = 850*1024;   // 이력 문서는 Firestore 한도 안(바이트 기준)으로 — 넘으면 오래된 것부터 뺀다
 function genericHistoryKey(storageKey){ return 'history:'+storageKey; }
 async function recordGenericHistoryBeforeSave(storageKey){
   try{
@@ -2352,8 +2354,7 @@ async function recordGenericHistoryBeforeSave(storageKey){
     history.push({ timestamp: now, data: prevRaw });
     while(history.length > GENERIC_HISTORY_LIMIT) history.shift();
     // 너무 커지면(내용이 큰 항목) 오래된 것부터 줄인다 — 저장할 때마다 이력 전체를 받아오기 때문.
-    let size = history.reduce((n,h)=>n+String(h.data||'').length, 0);
-    while(history.length > 1 && size > GENERIC_HISTORY_MAX_CHARS){ size -= String(history[0].data||'').length; history.shift(); }
+    while(history.length > 1 && utf8ByteLength(JSON.stringify(history)) > GENERIC_HISTORY_MAX_BYTES) history.shift();
     const r = await saveFileToStorage(hKey, JSON.stringify(history));
     if(r && r.ok === false) console.error('변경 이력 저장 실패', storageKey, r.reason);
   }catch(e){ console.error(e); }
@@ -2634,6 +2635,9 @@ async function readStorageBody(url, data){
     reader.readAsDataURL(blob);
   });
 }
+function utf8ByteLength(str){
+  try{ return new TextEncoder().encode(String(str)).length; }catch(e){ return String(str).length * 3; }
+}
 let lastStorageLoadError = ''; // "파일을 불러오지 못했습니다" 대화상자에 구체적인 원인을 함께 보여주기 위함
 // 이 코드(이 버전 이후)가 저장한 문서에는 client 표시를 남긴다 — 표시가 없는 새 저장은 아직 새로고침하지 않은
 // 예전 코드의 PC가 쓴 것이라, 법인카드처럼 여럿이 같이 쓰는 내역에서는 그 저장이 지운 행을 그대로 따르지 않는다.
@@ -2671,7 +2675,9 @@ async function saveFileToStorage(key, value, timeoutMs){
   timeoutMs = timeoutMs || 20000;
   recentOwnWriteValue[key] = value;
   try{
-    if(value.length > FIRESTORE_VALUE_LIMIT){
+    // Firestore 문서 한도(1MiB)는 글자 수가 아니라 UTF-8 바이트 기준이다 — 한글은 한 글자가 3바이트라, 글자 수로만 보면
+    // 90만 자보다 훨씬 적어도 한도를 넘어 저장이 조용히 실패했다(법인카드 변경 이력이 9월 6일에서 멈춘 원인).
+    if(utf8ByteLength(value) > FIRESTORE_VALUE_LIMIT){
       // 파일용량이 커서 Firestore 문서 한도를 넘으므로, 실제 내용은 Firebase
       // Storage에 올리고 Firestore에는 "저장 위치" 표시만 남긴다.
       // 파일(base64)이 아니라 큰 글(JSON — 변경 이력 등)이면 글 그대로 올린다. 예전엔 글도 base64로
