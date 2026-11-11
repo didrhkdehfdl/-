@@ -16062,12 +16062,14 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
     const hc = headerRowNum && rows[headerRowNum] ? rows[headerRowNum].cells : null;
     const hk = hc ? Object.keys(hc).find(c => /하이패스/.test(String(hc[c].text||''))) : undefined;
     const hpCol = hk === undefined ? -1 : Number(hk);
+    let cntInfo = null;
     if(hpCol > 0 && hpCol < maxCol){
       rowNums.filter(r => r < headerRowNum && rows[r]).forEach(r => {
         Object.keys(rows[r].cells).map(Number).forEach(c => {
           const t = String(rows[r].cells[c].text||'').replace(/\s/g,'');
           if(!/^(사용건수|합계사용금액)/.test(t)) return;
           const sp = spanAt.get(`${r},${c}`) || { cs:1, rs:1 };
+          if(/^사용건수/.test(t) && !cntInfo) cntInfo = { r, c, rs: sp.rs };
           // 값 칸 = 설명칸 오른쪽에서 처음 나오는 값(수식)이 있는 칸(사이에 빈 칸이 끼어 있는 양식도 있다)
           let vStart = -1, vRow = r;
           for(let rr = r; rr < r + sp.rs && vStart < 0; rr++){   // 설명칸이 여러 줄 병합이면 그 줄들에서 찾는다
@@ -16132,6 +16134,44 @@ function buildCorpCardSheetPrintHtml(layout, card, month, dataRows){
           try{ const st0 = styles.xf(moved.s) || {}; summaryValueFont = Math.max(summaryValueFont, Number(st0.size)||0); summaryValueBold = summaryValueBold || !!st0.bold; }catch(e){}
         });
       });
+      // 그래도 "합계사용금액" 줄을 못 맞췄으면(양식마다 병합 모양이 제각각) — 사용건수 칸 바로 아래부터 "사용내역" 띠 위까지를
+      // 사용건수 줄과 똑같은 위치로 다시 나눈다: 설명칸 = 사용건수 설명칸 왼쪽 끝 ~ 하이패스 열, 값 칸 = 그 오른쪽 ~ 끝.
+      if(cntInfo && ![...summaryValueKeys].some(k => Number(k.split(',')[0]) >= cntInfo.r + cntInfo.rs)){
+        const r1 = cntInfo.r + cntInfo.rs, c0 = cntInfo.c;
+        let r2 = headerRowNum - 1;
+        for(const r of rowNums){
+          if(r < r1 || r >= headerRowNum || !rows[r]) continue;
+          if(Object.values(rows[r].cells).some(cl => String(cl.text||'').replace(/\s/g,'') === '사용내역')){ r2 = r - 1; break; }
+        }
+        if(r2 >= r1){
+          let lab = null, val = null;
+          for(let r = r1; r <= r2; r++){
+            if(!rows[r]) continue;
+            Object.keys(rows[r].cells).map(Number).filter(c => c >= c0).forEach(c => {
+              const cl = rows[r].cells[c], tx = String(cl.text||'').replace(/\s/g,'');
+              if(!lab && /합계사용금액|사용금액/.test(tx)) lab = { r, c, cl };
+              else if(!val && c > hpCol && (cl.formula || /\d/.test(tx))) val = { r, c, cl };
+            });
+          }
+          if(lab && val){
+            const rs = r2 - r1 + 1, nv = hpCol + 1;
+            // 왼쪽에서 이 영역으로 넘어오는 병합은 영역 앞에서 자른다.
+            for(const [k, sp] of [...spanAt]){
+              const [ar, ac] = k.split(',').map(Number);
+              if(ac < c0 && ac + sp.cs - 1 >= c0 && ar <= r2 && ar + sp.rs - 1 >= r1) spanAt.set(k, { cs: c0 - ac, rs: sp.rs });
+            }
+            for(let rr = r1; rr <= r2; rr++) for(let cc = c0; cc <= maxCol; cc++){ covered.delete(`${rr},${cc}`); spanAt.delete(`${rr},${cc}`); }
+            for(let rr = r1; rr <= r2; rr++) if(rows[rr]) rows[rr] = { ...rows[rr], cells: { ...rows[rr].cells } };
+            if(!rows[r1]) rows[r1] = { cells:{} };
+            delete rows[lab.r].cells[lab.c]; delete rows[val.r].cells[val.c];
+            rows[r1].cells[c0] = lab.cl; rows[r1].cells[nv] = val.cl;
+            const put = (c1, c2) => { spanAt.set(`${r1},${c1}`, { cs: c2-c1+1, rs }); for(let rr=r1; rr<r1+rs; rr++) for(let cc=c1; cc<=c2; cc++) if(!(rr===r1 && cc===c1)) covered.add(`${rr},${cc}`); };
+            put(c0, hpCol); put(nv, maxCol);
+            summaryValueKeys.add(`${r1},${nv}`);
+            try{ const st0 = styles.xf(val.cl.s) || {}; summaryValueFont = Math.max(summaryValueFont, Number(st0.size)||0); summaryValueBold = summaryValueBold || !!st0.bold; }catch(e){}
+          }
+        }
+      }
     }
   }catch(e){ console.warn('사용건수 칸 조정 건너뜀', e); }
 
