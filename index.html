@@ -11315,6 +11315,12 @@ const flushCardMasterAutoWrite = debounce(async ()=>{
   await ensureCardMasterLoaded();
   const targets = corpCardMasterTemplates.filter(t=>getLinkedFile(cardMasterLinkKey(t.id)));
   if(!targets.length){ cardMasterAutoDirty.clear(); return; }
+  // 통합본에는 승인내역에 있는 줄만 쓰므로, 예전 승인내역으로 쓰면 새로 승인된 줄이 파일에서 빠진다 — 최신으로 받는다.
+  if(!(await refreshApprovalEntriesFromServer(true)).ok){
+    setCardMasterAutoNote('통합본 PC 파일 자동 갱신 대기 중 — 서버의 최신 승인내역을 확인하지 못했습니다(1분 뒤 다시).', true);
+    setTimeout(()=>flushCardMasterAutoWrite(), 60000);
+    return;
+  }
   // 바뀐 달이 하나도 없으면 도우미에 아무것도 묻지 않고 끝낸다(변경이 있을 때만 갱신).
   {
     const fullPre = buildCardMasterWritePayload(null);
@@ -11440,6 +11446,11 @@ function appCardMonthNorm(card, num){
   const label = corpCardMonthLabel(card, num);
   return corpCardApprovedRows(card, (corpCardState.rowsByCard[card.id]||{})[label]||[]).map(r=>cardMasterNormBlock(corpCardRowToBlock(r)));
 }
+// 통합본 파일 → 법인카드 탭. 파일의 줄을 앱의 행과 "날짜(일)+금액"으로 먼저 짝짓고(승인된 행 우선, 승인 안 된 행도
+// 후보 — 다른 PC가 더 최신 승인내역으로 쓴 줄이 이 PC에선 아직 미승인일 수 있다), 남은 줄은 남은 승인된 행과 순서대로
+// 짝지어(엑셀에서 날짜·금액을 고친 경우) 그 행의 칸만 파일 값으로 고친다. 짝이 없는 파일 줄은 새 행으로 더한다.
+// 파일에 없는 앱 행은 절대 지우지 않는다 — 예전 승인내역을 가진 PC가 쓴 파일엔 새로 승인된 줄이 빠져 있을 수 있어서,
+// 순서대로 덮어쓰던 예전 방식에선 승인내역을 올릴 때마다 그 줄이 법인카드 탭에서 지워졌다. 지우는 건 앱에서만 한다.
 async function applyCardMasterRowsToCard(card, num, normRows){
   let label = corpCardMonthLabel(card, num);
   if(!label){
@@ -11449,23 +11460,38 @@ async function applyCardMasterRowsToCard(card, num, normRows){
   }
   corpCardState.rowsByCard[card.id] = corpCardState.rowsByCard[card.id] || {};
   const existing = corpCardState.rowsByCard[card.id][label] || [];
-  // 통합본에는 승인내역에 있는 건만 들어가므로, 파일 내용은 그 행들에만 맞춰 넣고 승인내역에 없는 행은 앱에 그대로 둔다.
   const approvedIds = new Set(corpCardApprovedRows(card, existing).map(r=>r.id));
-  const dated = existing.filter(r=>r.date && approvedIds.has(r.id)), undated = existing.filter(r=>!r.date);
-  const keepOther = existing.filter(r=>r.date && !approvedIds.has(r.id));
+  const dated = existing.filter(r=>r.date), undated = existing.filter(r=>!r.date);
   const anyDate = dated[0] || Object.values(corpCardState.rowsByCard[card.id]).flat().find(r=>r && r.date);
   const year = anyDate ? String(anyDate.date).slice(0,4) : String(new Date().getFullYear());
+  const dayOf = r => Number(String(r.date||'').slice(8,10)) || 0;
+  const amtOf = v => Math.abs(Number(v)||0);
+  const pool = dated.filter(r=>approvedIds.has(r.id)).concat(dated.filter(r=>!approvedIds.has(r.id)));
+  const used = new Set(), pairs = new Array(normRows.length).fill(null);
+  normRows.forEach((n,i)=>{
+    const hit = pool.find(r=>!used.has(r.id) && dayOf(r) === Number(n[0]) && amtOf(r.amount) === amtOf(n[10]));
+    if(hit){ pairs[i] = hit; used.add(hit.id); }
+  });
+  const restApproved = dated.filter(r=>approvedIds.has(r.id) && !used.has(r.id));
+  normRows.forEach((n,i)=>{ if(pairs[i]) return; const r = restApproved.shift(); if(r){ pairs[i] = r; used.add(r.id); } });
   const F = ['dept','name','corp','bizCategory','project','plantName','place','workDetail','expenseType'];
-  const rows = normRows.map((n,i)=>{
-    const row = dated[i] ? { ...dated[i] } : { ...newCorpCardRow(), id: rid() };
+  const fill = (row, n)=>{
     if(n[0] >= 1 && n[0] <= 31) row.date = `${year}-${String(num).padStart(2,'0')}-${String(n[0]).padStart(2,'0')}`;
     F.forEach((f,k)=>{ row[f] = n[k+1]; });
     row.amount = n[10]; row.hipass = n[11]; row.carNo = n[12]; row.note = n[13];
     return row;
+  };
+  const updated = new Map(), added = [];
+  normRows.forEach((n,i)=>{
+    if(pairs[i]) updated.set(pairs[i].id, fill({ ...pairs[i] }, n));
+    else added.push(fill({ ...newCorpCardRow(), id: rid() }, n));
   });
-  corpCardState.rowsByCard[card.id][label] = rows.concat(keepOther).sort((a,b)=>String(a.date).localeCompare(String(b.date))).concat(undated);
+  const kept = dated.filter(r=>approvedIds.has(r.id) && !used.has(r.id)).length;   // 파일엔 없지만 남겨 둔 승인된 행
+  const before = approvedIds.size;
+  const merged = dated.map(r=>updated.get(r.id) || r).concat(added);
+  corpCardState.rowsByCard[card.id][label] = merged.sort((a,b)=>String(a.date).localeCompare(String(b.date))).concat(undated);
   normalizeCorpCardEsp(card.id);
-  return { label, before: dated.length, after: rows.length };
+  return { label, before, after: before + added.length, added: added.length, kept };
 }
 let cardMasterSuppressAuto = false;
 let cardMasterFileBusy = false, cardMasterFileLastCheck = 0;
@@ -11501,8 +11527,9 @@ async function checkCardMasterFileChanges(force){
       const fileMap = parseCardMasterFileSheets(res.sheets);
       const sigs = {};
       fileMap.forEach((v,k)=>{ sigs[k] = JSON.stringify(v); });
+      if(snap && snap.sigs && !(await refreshApprovalEntriesFromServer(true)).ok) continue;   // 최신 승인내역을 모르면 다음에
       if(!snap || !snap.sigs){ cardMasterFileSnapSet(t.id, { mtime: st.mtime, sigs }); continue; }   // 처음: 기준만
-      const changes = [], touchedCards = new Set(), touchedMonths = new Set(), blocked = [];
+      const changes = [], touchedCards = new Set(), touchedMonths = new Set(), keptMonths = new Set(), blocked = [];
       const keys = new Set([...Object.keys(sigs), ...Object.keys(snap.sigs)]);
       for(const key of keys){
         const fsig = sigs[key] || '[]';
@@ -11520,8 +11547,9 @@ async function checkCardMasterFileChanges(force){
           continue;
         }
         const r = await applyCardMasterRowsToCard(card, num, fileMap.get(key) || []);
-        changes.push(`${num}월 카드 ${l4}: ${r.before}건 → ${r.after}건`);
+        changes.push(`${num}월 카드 ${l4}: ${r.added ? `새 줄 ${r.added}건 추가` : '고친 칸 반영'}${r.kept ? ` · 파일에 없는 ${r.kept}건은 앱에 그대로 둠` : ''}`);
         touchedCards.add(card.id); touchedMonths.add(num);
+        if(r.kept) keptMonths.add(num);
       }
       cardMasterFileSnapSet(t.id, { mtime: st.mtime, sigs });
       if(blocked.length) showLedgerToast(`통합본 파일에서 내역이 비었거나 크게 줄어든 곳은 법인카드 탭에 자동 반영하지 않았습니다(앱 내역 보호):\n${blocked.join('\n')}\n정말 지운 것이면 법인카드 탭에서 직접 지워주세요.`, true);
@@ -11530,7 +11558,9 @@ async function checkCardMasterFileChanges(force){
       try{ for(const id of touchedCards) await saveCorpCardRows(id); }
       finally{ cardMasterSuppressAuto = false; }
       // 방금 파일에서 가져온 달은 파일과 같으니 자동 갱신이 다시 쓰지 않게 기억해 둔다.
-      rememberCardMasterWritten(t.id, buildCardMasterWritePayload(null).filter(m=>touchedMonths.has(m.num)));
+      // 단, 파일에 빠져 있던 행을 앱에 남겨 둔 달은 파일과 다르므로 다시 써서 파일에도 그 줄을 되돌린다.
+      rememberCardMasterWritten(t.id, buildCardMasterWritePayload(null).filter(m=>touchedMonths.has(m.num) && !keptMonths.has(m.num)));
+      if(keptMonths.size){ keptMonths.forEach(n=>cardMasterAutoDirty.add(n)); setTimeout(()=>flushCardMasterAutoWrite(), 0); }
       if(typeof recomputeCorpCardMismatches === 'function') recomputeCorpCardMismatches();
       setCardMasterAutoNote(`${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 통합본 파일에서 고친 내용 반영 (${changes.length}곳)`);
       showLedgerToast(`"${link.name}"에서 고친 내용을 법인카드 탭에 반영했습니다.\n${changes.join('\n')}`);
@@ -11967,7 +11997,8 @@ async function renderCardReconMain(){
     try{
       const r = await reparseStoredApprovalFile();
       if(!r.ok){
-        alert(r.reason === 'no-file'
+        alert(r.reason === 'server' ? '서버에 저장된 승인내역을 확인하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 눌러 주세요.'
+          : r.reason === 'no-file'
           ? '보관된 승인내역 파일이 없습니다.\n(이 기능이 생기기 전에 올리신 파일은 보관돼 있지 않습니다 — 한 번만 다시 올려주시면 그 뒤로는 이 버튼으로 해결됩니다.)'
           : '보관된 파일에서 승인내역 헤더를 찾지 못했습니다.');
       } else {
@@ -13800,6 +13831,7 @@ async function ensureCorpCardLoadedInner(){
     }
     const approvalText = await loadFileFromStorage(CORP_CARD_APPROVAL_KEY, 30000);
     corpCardState.approvalEntries = approvalText ? JSON.parse(approvalText) : [];
+    if(!(lastLoadMeta[CORP_CARD_APPROVAL_KEY] && lastLoadMeta[CORP_CARD_APPROVAL_KEY].error)) approvalServerSyncedAt = Date.now();
     // 예전에 "2026-09" 같은 이름의 안 보이는 칸으로 들어간 행을 제 달 탭으로 옮긴다.
     const recovered = [];
     for(const cardId of needsMonthFix){
@@ -13856,7 +13888,31 @@ function ensureCorpCardRowsSubscribed(cardId){
 async function saveCorpCardList(){
   await saveFileToStorage(CORP_CARD_LIST_KEY, JSON.stringify({ cards: corpCardState.cards, activeCardId: corpCardState.activeCardId }));
 }
+// 승인내역은 앱을 열 때 한 번만 받아 왔고, 저장할 때도 이 PC가 가진 목록으로 서버를 통째로 덮어썼다.
+// 그래서 (1) 다른 PC가 그 뒤에 올린 승인내역이 이 PC에서 덮어써져 사라지거나, (2) 예전 승인내역만 가진 PC가
+// 통합본에 "승인내역에 있는 건"만 쓰면서 새로 승인된 줄을 빼 버렸고, 그 파일을 읽은 다른 PC에서 그 줄이
+// 법인카드 탭에서까지 지워졌다. 이제 저장 전과 통합본 쓰기·읽기 전에 서버 목록을 받아 합친다(승인내역은
+// 지우는 기능이 없으므로 합집합이 맞다). 서버를 못 읽으면 저장하지 않는다.
+let approvalServerSyncedAt = 0;
+async function refreshApprovalEntriesFromServer(force){
+  if(!force && Date.now() - approvalServerSyncedAt < 60000) return { ok:true, changed:false };
+  const txt = await loadFileFromStorage(CORP_CARD_APPROVAL_KEY, 30000);
+  const meta = lastLoadMeta[CORP_CARD_APPROVAL_KEY] || {};
+  if(meta.error) return { ok:false, changed:false };
+  let server;
+  try{ server = txt ? JSON.parse(txt) : []; }catch(e){ return { ok:false, changed:false }; }
+  if(!Array.isArray(server)) server = [];
+  const local = corpCardState.approvalEntries || [];
+  const merged = mergeApprovalEntries(server, local);
+  approvalServerSyncedAt = Date.now();
+  const changed = merged.length !== local.length;
+  if(changed){ corpCardState.approvalEntries = merged; try{ recomputeCorpCardMismatches(); }catch(e){} }
+  return { ok:true, changed, localOnly: merged.length - server.length };
+}
 async function saveCorpCardApprovalEntries(){
+  const r = await refreshApprovalEntriesFromServer(true);
+  if(!r.ok) throw new Error('서버에 저장된 승인내역을 확인하지 못해 저장을 미뤘습니다(인터넷 연결 확인 후 다시 올려 주세요).');
+  if(!r.localOnly) return;   // 서버에 이미 다 있음
   await saveFileToStorage(CORP_CARD_APPROVAL_KEY, JSON.stringify(corpCardState.approvalEntries), 30000);
 }
 // 카드사 승인내역 워크북에서 "승인일자"/"승인금액" 헤더가 있는 시트를 전부
@@ -14482,6 +14538,7 @@ async function reparseStoredApprovalFile(){
   const wb = XLSX.read(base64ToArrayBuffer(b64), { type:'array', cellDates:true });
   const { rows: parsedRows, totalRaw } = parseApprovalWorkbookForCorpCard(wb);
   if(!totalRaw) return { ok:false, reason:'no-header' };
+  if(!(await refreshApprovalEntriesFromServer(true)).ok) return { ok:false, reason:'server' };
   const beforeTime = corpCardState.approvalEntries.filter(a=>a.apprTime).length;
   const before = corpCardState.approvalEntries.length;
   corpCardState.approvalEntries = mergeApprovalEntries(corpCardState.approvalEntries, parsedRows);
@@ -14562,6 +14619,8 @@ async function handleCorpCardApprovalUpload(file, opts){
   const { rows: parsedRows, totalRaw } = parseApprovalWorkbookForCorpCard(wb);
   if(!totalRaw){ say('승인내역 시트에서 "승인일자"/"승인금액" 헤더를 찾지 못했습니다.'); return false; }
   const cancelledCount = totalRaw - parsedRows.length;
+  // 다른 PC가 올린 승인내역부터 받아 둔다(이 PC의 예전 목록으로 덮어쓰지 않게).
+  if(!(await refreshApprovalEntriesFromServer(true)).ok){ say('서버에 저장된 승인내역을 확인하지 못해 이번 업로드를 반영하지 않았습니다. 인터넷 연결을 확인한 뒤 다시 올려 주세요.'); return false; }
   const before = corpCardState.approvalEntries.length;
   // 언제 올린 건인지 남겨둔다 — 화면에 "마지막 업로드" 날짜를 보여주고, 나중에
   // 어느 시점까지의 승인내역이 들어와 있는지 확인할 수 있게 하기 위함이다.
