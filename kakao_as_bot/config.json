@@ -1,0 +1,18 @@
+{
+  "room_name": "여기에_카톡방_이름",
+  "excel_path": "C:\\Users\\사용자\\Desktop\\현장대응내역.xlsx",
+  "sheet_name": "2026년도 데이터",
+  "header_row": 3,
+
+  "use_ai": true,
+  "ai_model": "claude-opus-5-5",
+
+  "defaults": {
+    "분류": "A/S",
+    "요청부서": "안성지사"
+  },
+  "sender_to_requester": {
+    "이천지사 임범동 부장": "임범동"
+  },
+  "highlight_new_rows": true
+}
