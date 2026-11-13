@@ -1,8 +1,8 @@
 {
-  "room_name": "경기지사 A/S 단톡방",
+  "room_name": "A/S 단톡방",
 
   "excel_folder": "W:\\6.O&M",
-  "excel_file": "독립채산제(AS,타부서지원)_TEST.xlsx",
+  "excel_file": "독립채산제(AS,타부서지원).xlsx",
   "excel_name_keywords": ["현장대응", "AS", "A_S"],
   "sheet_name": "2026년도 데이터",
   "header_row": 3,
