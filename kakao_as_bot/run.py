@@ -1,7 +1,7 @@
 """카카오톡 방 → 엑셀 자동 정리. 작업 스케줄러가 1시간마다 이 파일을 실행한다.
 
 사용법:
-  python run.py                      카톡 방을 읽어 새 접수 건을 엑셀에 추가
+  python run.py                      지정한 카톡방 하나만 읽어 새 접수/처리 건을 엑셀에 반영
   python run.py --file 대화.txt       '대화 내보내기' txt 파일로 처리
   python run.py --file 대화.txt --dry-run   엑셀에 쓰지 않고 결과만 출력
 """
@@ -73,16 +73,18 @@ def main():
         save_state(state)
         return
 
-    rows = extractor.extract(new, config, log=log)
-    log(f"정리된 접수 건 {len(rows)}개")
+    records = extractor.extract(new, config, log=log)
+    n_recv = sum(r["kind"] == "접수" for r in records)
+    log(f"접수 {n_recv}건, 처리 {len(records) - n_recv}건 발견")
 
     if args.dry_run:
-        for r in rows:
-            print(json.dumps({k: str(v) for k, v in r.items()}, ensure_ascii=False, indent=1))
+        for r in records:
+            fields = {k: (v if isinstance(v, list) else str(v)) for k, v in r["fields"].items()}
+            print(json.dumps({"종류": r["kind"], "보낸글": r["_source"], **fields}, ensure_ascii=False, indent=1))
         return
 
-    added = excel_writer.append_rows(rows, config, out_path=args.out, log=log)
-    log(f"엑셀에 {added}행 추가 완료")
+    changed = excel_writer.apply_records(records, config, out_path=args.out, log=log)
+    log(f"엑셀 반영 완료 ({changed}건)")
     state["seen"] += [m.key for m in new]
     save_state(state)
 

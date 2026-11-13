@@ -1,11 +1,17 @@
-"""새 메시지에서 A/S 접수 건을 뽑아 엑셀 한 줄(dict)로 만든다.
+"""새 메시지에서 접수/처리 건을 뽑는다.
 
-- AI 모드(use_ai=true, ANTHROPIC_API_KEY 필요): Claude 가 자유 형식 글도 읽고 정리한다.
-- 규칙 모드: '이름: / 휴대전화: / 집:' 처럼 정해진 형식(에이닷 연락처 공유 등)만 처리한다.
+결과는 {"kind": "접수"|"처리", "fields": {...}, "_source": "..."} 목록이다.
+
+1) [접수] / [처리] 양식 글 → templates.py 로 정확히 읽는다 (권장).
+2) 양식이 아닌 글 중 연락처가 있는 글 → 접수 건으로 본다.
+   - AI 모드(use_ai=true, ANTHROPIC_API_KEY 필요): Claude 가 자유 형식 글을 정리한다.
+   - 규칙 모드: '이름: / 휴대전화: / 집:' 형식(에이닷 연락처 공유 등)만 처리한다.
 """
 import json
 import os
 import re
+
+import templates
 
 PHONE_RE = re.compile(r"(0\d{1,2})[-. ]?(\d{3,4})[-. ]?(\d{4})")
 FIELD_RE = re.compile(r"^\s*(이름|성명|고객명|휴대전화|휴대폰|전화|연락처|집|주소|회사|직장)\s*[:：]\s*(.+)$")
@@ -33,8 +39,11 @@ def _base_row(msg, config):
         "접수일자": msg.sent_at.date(),
         "요청부서": d.get("요청부서", ""),
         "요청자": _requester(msg.sender, config),
-        "_source": f"{msg.sent_at:%Y-%m-%d %H:%M} {msg.sender}",
     }
+
+
+def _source(msg):
+    return f"{msg.sent_at:%Y-%m-%d %H:%M} {msg.sender}"
 
 
 # ---------------------------------------------------------------- 규칙 모드
@@ -54,6 +63,7 @@ def extract_rule_based(messages, config):
         name_line = fields.get("이름") or fields.get("성명") or fields.get("고객명") or ""
         name, _, memo = name_line.partition(" ")
         row = _base_row(msg, config)
+        row["_idx"] = i
         row["고객명"] = name
         row["연락처"] = format_phone(
             fields.get("휴대전화") or fields.get("휴대폰") or fields.get("연락처")
@@ -139,18 +149,41 @@ def extract_with_ai(messages, config):
         if not 0 <= idx < len(messages):
             continue
         row = _base_row(messages[idx], config)
+        row["_idx"] = idx
         row.update(rec)
         row["연락처"] = format_phone(row["연락처"])
         rows.append(row)
     return rows
 
 
-def extract(messages, config, log=print):
-    if not messages:
-        return []
+def _free_form(messages, config, log):
     if config.get("use_ai") and os.environ.get("ANTHROPIC_API_KEY"):
         try:
             return extract_with_ai(messages, config)
         except Exception as e:  # 네트워크 오류 등 → 규칙 모드로 대체
             log(f"[경고] AI 정리 실패, 규칙 모드로 처리: {e}")
     return extract_rule_based(messages, config)
+
+
+def extract(messages, config, log=print):
+    """메시지 순서대로 접수/처리 기록 목록을 만든다."""
+    records, free = [], []
+    for i, msg in enumerate(messages):
+        parsed = templates.parse_template(msg)
+        if parsed is None:
+            free.append(i)
+            continue
+        kind, fields = parsed
+        if kind == "접수":
+            row = _base_row(msg, config)
+            row.update(fields)
+            fields = row
+        records.append((i, {"kind": kind, "fields": fields, "_source": _source(msg)}))
+
+    if config.get("free_form_receipts", True) and free:
+        sub = [messages[i] for i in free]
+        for row in _free_form(sub, config, log):
+            idx = free[row.pop("_idx")]
+            records.append((idx, {"kind": "접수", "fields": row, "_source": _source(messages[idx])}))
+    records.sort(key=lambda t: t[0])
+    return [r for _, r in records]

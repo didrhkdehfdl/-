@@ -1,9 +1,13 @@
 {
-  "room_name": "여기에_카톡방_이름",
-  "excel_path": "C:\\Users\\사용자\\Desktop\\현장대응내역.xlsx",
+  "room_name": "경기지사 A/S 단톡방",
+
+  "excel_folder": "W:\\6.O&M",
+  "excel_file": "",
+  "excel_name_keywords": ["현장대응", "AS", "A_S"],
   "sheet_name": "2026년도 데이터",
   "header_row": 3,
 
+  "free_form_receipts": true,
   "use_ai": true,
   "ai_model": "claude-opus-5-5",
 
@@ -13,6 +17,5 @@
   },
   "sender_to_requester": {
     "이천지사 임범동 부장": "임범동"
-  },
-  "highlight_new_rows": true
+  }
 }
