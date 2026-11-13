@@ -11,16 +11,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import chat_parser
-import excel_writer
-import extractor
-
 HERE = Path(__file__).resolve().parent
 STATE_FILE = HERE / "state.json"
 LOG_FILE = HERE / "run.log"
 
 
 def log(msg):
+    """화면과 run.log 에 함께 기록."""
     line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}"
     print(line)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -39,6 +36,10 @@ def save_state(state):
 
 
 def main():
+    import chat_parser
+    import excel_writer
+    import extractor
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(HERE / "config.json"))
     ap.add_argument("--file", help="카톡 '대화 내보내기' txt 파일")
@@ -93,5 +94,8 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
+        import traceback
         log(f"[오류] {e}")
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(traceback.format_exc() + "\n")
         sys.exit(1)
