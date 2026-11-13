@@ -40,7 +40,14 @@ def resolve_excel_path(config):
     folder = Path(config["excel_folder"])
     name = config.get("excel_file", "").strip()
     if name:
-        return folder / name
+        path = folder / name
+        if not path.exists() and not path.suffix.lower().startswith(".xls"):
+            for ext in (".xlsx", ".xlsm", ".xls"):
+                if (folder / (name + ext)).exists():
+                    return folder / (name + ext)
+        if not path.exists():
+            raise RuntimeError(f"엑셀 파일이 없습니다: {path} (W: 드라이브 연결과 파일 이름을 확인하세요)")
+        return path
     keywords = config.get("excel_name_keywords", ["현장대응", "AS", "A_S"])
     cands = [p for p in folder.glob("*.xls*")
              if not p.name.startswith("~$") and any(k in p.name for k in keywords)]
