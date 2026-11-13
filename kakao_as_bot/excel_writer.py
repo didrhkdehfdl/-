@@ -78,18 +78,50 @@ class _Sheet:
 
     def __init__(self, path, sheet_name, header_row):
         self.path, self.header_row = str(path), header_row
+        self.app = None  # 우리가 몰래 띄운 Excel (끝나면 닫는다)
         try:
             import xlwings as xw
-            self.book = xw.Book(self.path)
-            if self.book.api.ReadOnly:
-                raise RuntimeError("엑셀 파일이 읽기 전용으로 열렸습니다(다른 사람이 사용 중). 다음 실행 때 다시 시도합니다.")
-            self.ws = self.book.sheets[sheet_name]
-            self.mode = "xlwings"
         except ImportError:
+            xw = None
+        if xw:
+            self.mode = "xlwings"
+            self.book = self._find_open_book(xw)
+            if self.book is None:
+                # 이 PC 에서 열려 있지 않으면 보이지 않는 Excel 로 열고, 저장 후 바로 닫는다
+                self.app = xw.App(visible=False, add_book=False)
+                self.app.display_alerts = False
+                self.book = self.app.books.open(self.path, update_links=False)
+            if self.book.api.ReadOnly:
+                self.close()
+                raise RuntimeError(
+                    "엑셀 파일이 읽기 전용입니다(다른 사람이 파일을 열고 있음). "
+                    "이번에는 건너뛰고 다음 실행 때 다시 시도합니다. 카톡 글은 놓치지 않습니다.")
+            self.ws = self.book.sheets[sheet_name]
+        else:
             import openpyxl
             self.book = openpyxl.load_workbook(self.path)
             self.ws = self.book[sheet_name]
             self.mode = "openpyxl"
+
+    def _find_open_book(self, xw):
+        target = str(Path(self.path)).lower()
+        for app in xw.apps:
+            for book in app.books:
+                try:
+                    if str(book.fullname).lower() == target:
+                        return book
+                except Exception:
+                    pass
+        return None
+
+    def close(self):
+        """우리가 연 Excel 이면 닫아서 파일 잠금을 풀어 준다."""
+        if self.app is not None:
+            try:
+                self.book.close()
+            finally:
+                self.app.quit()
+                self.app = None
 
     def get(self, r, c):
         if self.mode == "xlwings":
@@ -151,7 +183,12 @@ class Writer:
         self.config, self.log = config, log
         self.path = resolve_excel_path(config)
         self.sh = _Sheet(self.path, config["sheet_name"], config.get("header_row", 3))
-        self._check_headers()
+        try:
+            self._check_headers()
+        except Exception:
+            if self.sh.mode == "xlwings":
+                self.sh.close()
+            raise
         self.last = self.sh.last_used_row()
         self.template_row = self.last
         self.formulas = {}
@@ -276,6 +313,10 @@ def apply_records(records, config, out_path=None, log=print):
     if not records:
         return 0
     w = Writer(config, log)
-    n = w.apply(records)
-    w.save(out_path)
+    try:
+        n = w.apply(records)
+        w.save(out_path)
+    finally:
+        if w.sh.mode == "xlwings":
+            w.sh.close()
     return n
