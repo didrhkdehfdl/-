@@ -489,7 +489,7 @@
   @page{ margin:12mm; }
   @page portraitPage{ size:A4 portrait; margin:12mm; }
   @page landscapePage{ size:A4 landscape; margin:10mm; }
-body:not(.can-export) #profitListExportBtn, body:not(.can-export) #inquiryExportBtn, body:not(.can-export) #omListExportBtn, body:not(.can-export) #corpCardExportBtn, body:not(.can-export) #corpCardMealCsvBtn, body:not(.can-export) #vehicleExportBtn, body:not(.can-export) #exportPerfExcelBtn, body:not(.can-export) #wlWeeklyExcelBtn, body:not(.can-export) #contractExportBtn{ display:none !important; }
+body:not(.can-export) #profitListExportBtn, body:not(.can-export) #inquiryExportBtn, body:not(.can-export) #omListExportBtn, body:not(.can-export) #corpCardExportBtn, body:not(.can-export) #vehicleExportBtn, body:not(.can-export) #exportPerfExcelBtn, body:not(.can-export) #wlWeeklyExcelBtn, body:not(.can-export) #contractExportBtn{ display:none !important; }
 .om-mobile-list .om-field{ font-family:inherit; font-size:16px !important; padding:9px 10px !important; width:100% !important; box-sizing:border-box; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--text); }
 .om-mobile-list textarea.om-field{ line-height:1.5 !important; min-height:44px; }
 </style>
@@ -16826,7 +16826,7 @@ async function renderCorpCardMainInner(){
       <button id="corpCardPrintDocBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>
       <button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">${corpCardMonthPdfLabel()}</button>
       <button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
-      <button id="corpCardMealCsvBtn" title="이 달 전체 카드의 식대·접대비 비고에 적힌 이름을 모아, 식대 프로그램 월계표와 같은 모양(이름 × 날짜)의 CSV를 만듭니다. 이 카드만이 아니라 모든 카드를 합쳐서 집계합니다." style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">🍱 식대 월계표 CSV</button>
+      ${canUseMealCsv() ? `<button id="corpCardMealCsvBtn" title="이 달 전체 카드의 식대·접대비 비고에 적힌 이름을 모아, 식대 프로그램 월계표와 같은 모양(이름 × 날짜)의 CSV를 만듭니다. 이 카드만이 아니라 모든 카드를 합쳐서 집계합니다." style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">🍱 식대 월계표 CSV</button>` : ''}
     </div>
     <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">
       ${escapeHtml(s.activeMonth)} · 총 ${rows.length}건${visibleRows.length!==rows.length?` (필터로 ${visibleRows.length}건 표시 중)`:''} · → 좌우로 스크롤하면 전체 항목을 볼 수 있습니다
@@ -17664,6 +17664,14 @@ const MEAL_CSV_ROSTER = [
   '홍경태','박찬호','서준호','이진원','진재혁','안찬주','이가연','이수연','최지석',
 ];
 const MEAL_CSV_EXPENSE_TYPES = ['식대','접대비'];
+// 이 CSV에는 전 직원의 식대 사용 내역이 담겨서, 식대를 정산하는 담당자에게만
+// 보인다. 다른 탭의 "엑셀로 내보내기"와 달리 관리자라고 해서 보이지는 않는다
+// — 쓸 사람이 늘면 이 배열에 이름만 더하면 된다(승인관리에 등록된 이름 기준).
+const MEAL_CSV_ALLOWED_NAMES = ['안찬주'];
+function canUseMealCsv(){
+  const me = String(currentUserName || '').trim();
+  return !!me && MEAL_CSV_ALLOWED_NAMES.some(n=>String(n).trim() === me);
+}
 // 비고에 이름 적는 형식이 제각각이라(쉼표·슬래시·띄어쓰기) 한글 덩어리를 전부
 // 끊어낸 뒤 2~3글자인 것만 이름 후보로 본다 — 한국 이름이 2~3글자라, 붙여 쓴
 // "홍길동김철수"(6글자)처럼 누구를 가리키는지 알 수 없는 건 세지 않는다.
@@ -17715,6 +17723,8 @@ function collectMealUsageByName(yearMonth){
   return byName;
 }
 function exportMealUsageCsv(monthLabel){
+  // 버튼을 숨기는 것과 별개로, 혹시 눌리더라도 막는다.
+  if(!canUseMealCsv()){ alert('식대 월계표는 식대 정산 담당자만 내려받을 수 있습니다.'); return; }
   const ym = resolveMealCsvYearMonth(monthLabel);
   if(!ym){ alert('어느 달인지 알 수 없습니다. 월 탭을 고른 뒤 다시 눌러주세요.'); return; }
   const year = Number(ym.slice(0,4)), month = Number(ym.slice(5,7));
@@ -22417,7 +22427,7 @@ document.addEventListener('change', ()=>{ setTimeout(()=>{
 }, 0); }, true);
 // 엑셀로 내보내기는 관리자와, 승인관리에서 "엑셀 내보내기 허용"을 받은 사람만 쓸 수 있다.
 let canExportExcel = false;
-const EXPORT_BUTTON_IDS = ["profitListExportBtn", "inquiryExportBtn", "omListExportBtn", "corpCardExportBtn", "corpCardMealCsvBtn", "vehicleExportBtn", "exportPerfExcelBtn", "wlWeeklyExcelBtn", "contractExportBtn"];
+const EXPORT_BUTTON_IDS = ["profitListExportBtn", "inquiryExportBtn", "omListExportBtn", "corpCardExportBtn", "vehicleExportBtn", "exportPerfExcelBtn", "wlWeeklyExcelBtn", "contractExportBtn"];
 function setCanExportExcel(v){ canExportExcel = !!v; document.body.classList.toggle('can-export', canExportExcel); }
 // 화면에서 숨기는 것과 별개로, 혹시 눌리더라도 막는다.
 document.addEventListener('click', e=>{
