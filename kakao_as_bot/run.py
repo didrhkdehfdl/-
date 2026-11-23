@@ -25,9 +25,20 @@ def log(msg):
         f.write(line + "\n")
 
 
+def read_text_any(path):
+    """UTF-8 이 아니어도(메모장에서 ANSI 로 저장한 경우 등) 읽는다."""
+    data = Path(path).read_bytes()
+    for enc in ("utf-8-sig", "cp949", "utf-16"):
+        try:
+            return data.decode(enc)
+        except UnicodeError:
+            continue
+    raise RuntimeError(f"{path} 파일의 글자 인코딩을 읽을 수 없습니다. 메모장에서 'UTF-8' 로 다시 저장해 주세요.")
+
+
 def load_state():
     if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        return json.loads(read_text_any(STATE_FILE))
     return {"seen": []}
 
 
@@ -50,7 +61,7 @@ def main():
     ap.add_argument("--reset", action="store_true", help="처리 기록을 지우고 처음부터 다시 처리")
     args = ap.parse_args()
 
-    config = json.loads(Path(args.config).read_text(encoding="utf-8"))
+    config = json.loads(read_text_any(args.config))
     state = {"seen": []} if args.reset else load_state()
     state.setdefault("rooms", [])
     seen = set(state["seen"])
@@ -62,7 +73,7 @@ def main():
 
     new, read_keys = [], []
     if args.file:
-        sources = [("파일", lambda: Path(args.file).read_text(encoding="utf-8-sig"))]
+        sources = [("파일", lambda: read_text_any(args.file))]
     else:
         import kakao_reader
         sources = [(room, lambda room=room: kakao_reader.read_room_text(room)) for room in rooms]
