@@ -7,7 +7,7 @@
 
 - --color 로 다시 실행하면, 예전에 빨간색으로 칠했던 칸 중 이제 채워진 칸은 색을 지운다.
 - '-' 처럼 일부러 적어 둔 값은 채워진 것으로 본다.
-- 접수한 지 얼마 안 된 건(grace_days 이내)은 처리 관련 칸을 아직 진행 중으로 보고 검사하지 않는다.
+- 접수됐는데 처리일자가 없으면 당일 접수 건·취소 건까지 모두 누락으로 본다.
 """
 import argparse
 import json
@@ -29,7 +29,10 @@ DEFAULT_CHECK = {
     "after_done": ["처리일자", "조치 내역", "처리자", "유/무상", "매출액", "발행", "법인"],
     # 유/무상이 '유상' 이면 추가로 있어야 하는 칸
     "paid_required": ["매출액", "발행", "법인"],
-    "grace_days": 7,
+    # 최근 며칠 접수 건은 처리 칸 검사 제외 (0 = 당일 접수 건까지 모두 검사)
+    "grace_days": 0,
+    # 이 칸은 예외 없이 항상 검사 (접수됐는데 처리일자가 없으면 무조건 누락)
+    "always_required": ["처리일자"],
     # 유/무상 칸이 이 값이면 처리자(현장 방문자)를 검사하지 않음 (전화로 끝난 건 등)
     "no_worker_when": ["유선대응", "취소"],
     # 유/무상 칸이 이 값이면 처리 후 칸을 검사하지 않음
@@ -130,7 +133,7 @@ def main():
     ap.add_argument("--config", default=str(HERE / "config.json"))
     ap.add_argument("--file", help="검사할 엑셀 파일 (기본: config.json 의 엑셀)")
     ap.add_argument("--color", action="store_true", help="독립채산제 파일의 누락 칸을 빨간색으로 칠한다")
-    ap.add_argument("--grace-days", type=int, help="최근 며칠 접수 건은 처리 칸 검사 제외 (기본 7)")
+    ap.add_argument("--grace-days", type=int, help="최근 며칠 접수 건은 처리 칸 검사 제외 (기본 0 = 당일 포함 모두 검사)")
     args = ap.parse_args()
 
     config = json.loads(read_text_any(args.config))
@@ -177,6 +180,9 @@ def main():
                 need = [f for f in need if f not in check["after_done"]]
             missing = [f for f in need
                        if _empty(cell(row, f)) and not (in_progress and f in check["after_done"])]
+            for f in check["always_required"]:
+                if _empty(cell(row, f)) and f not in missing:
+                    missing.insert(0, f)
             if missing:
                 name = cell(row, "고객명") or cell(row, "발전소명") or ""
                 problems.append({
