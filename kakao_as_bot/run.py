@@ -11,6 +11,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+VERSION = "2026-11-23"
 HERE = Path(__file__).resolve().parent
 STATE_FILE = HERE / "state.json"
 LOG_FILE = HERE / "run.log"
@@ -36,6 +37,7 @@ def save_state(state):
 
 
 def main():
+    log(f"프로그램 시작 (버전 {VERSION}, 폴더 {HERE})")
     import chat_parser
     import excel_writer
     import extractor
