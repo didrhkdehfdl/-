@@ -130,7 +130,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(HERE / "config.json"))
     ap.add_argument("--file", help="검사할 엑셀 파일 (기본: config.json 의 엑셀)")
-    ap.add_argument("--no-color", action="store_true", help="칠하지 않고 목록만 만든다")
+    ap.add_argument("--color", action="store_true", help="독립채산제 파일의 누락 칸을 빨간색으로 칠한다")
     ap.add_argument("--grace-days", type=int, help="최근 며칠 접수 건은 처리 칸 검사 제외 (기본 7)")
     args = ap.parse_args()
 
@@ -143,7 +143,10 @@ def main():
     path = excel_writer.resolve_excel_path(config)
     log(f"누락 확인 시작: {path} 「{config['sheet_name']}」")
 
-    sh = excel_writer._Sheet(path, config["sheet_name"], config.get("header_row", 3), log)
+    sh = excel_writer._Sheet(path, config["sheet_name"], config.get("header_row", 3), log,
+                             read_only=not args.color)
+    if not args.color:
+        log("독립채산제 파일은 읽기만 하고 바꾸지 않습니다.")
     try:
         last = sh.last_used_row()
         first = sh.header_row + 1
@@ -188,7 +191,7 @@ def main():
                 for f in missing:
                     red_cells.add((r, col_idx(COLUMNS[f])))
 
-        if not args.no_color:
+        if args.color:
             # 1) 예전에 칠한 빨간 칸 중 이제 채워진 칸은 색 지우기
             check_cols = {col_idx(COLUMNS[f]) for f in
                           set(check["required"]) | set(check["paid_required"])}
@@ -221,7 +224,7 @@ def main():
         log(f"  {p['행']}행 {p['접수일자']} {p['고객/발전소']} → {p['누락 항목']}")
     if len(problems) > 30:
         log(f"  ... 외 {len(problems) - 30}건 (전체 목록: {out.name})")
-    if not args.no_color:
+    if args.color:
         log(f"빨간색으로 칠한 칸 {len(red_cells)}개, 채워져서 색을 지운 칸 {len(recolor)}개")
     log(f"누락 목록 파일: {out}")
 
