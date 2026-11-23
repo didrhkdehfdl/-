@@ -75,29 +75,64 @@ def _get_clipboard_text():
     raise RuntimeError("클립보드를 읽지 못했습니다.")
 
 
-def read_room_text(room_name):
+def _empty_clipboard():
+    for _ in range(5):
+        try:
+            win32clipboard.OpenClipboard()
+            try:
+                win32clipboard.EmptyClipboard()
+            finally:
+                win32clipboard.CloseClipboard()
+            return
+        except Exception:
+            time.sleep(0.3)
+
+
+def _copy_once(list_ctrl, wait):
+    _empty_clipboard()
+    _post_key(list_ctrl, ord("A"))
+    time.sleep(0.7)
+    _post_key(list_ctrl, ord("C"))
+    deadline = time.time() + wait  # 대화가 길면 복사에 시간이 걸린다
+    while time.time() < deadline:
+        time.sleep(0.5)
+        text = _get_clipboard_text()
+        if text.strip():
+            return text
+    return ""
+
+
+def read_room_text(room_name, attempts=3):
     _require_windows()
     hwnd = win32gui.FindWindow(None, room_name)
+    just_opened = False
     if not hwnd:
         _open_room_from_main(room_name)
         hwnd = win32gui.FindWindow(None, room_name)
+        just_opened = True
     if not hwnd:
         raise RuntimeError(f"채팅방 창 '{room_name}' 을(를) 찾지 못했습니다. 방 이름을 확인하세요.")
+    if just_opened:
+        time.sleep(3)  # 방금 연 창은 대화가 다 뜰 때까지 기다림
 
     list_ctrl = win32gui.FindWindowEx(hwnd, None, LIST_CONTROL_CLASS, None)
     if not list_ctrl:
         raise RuntimeError("채팅 목록 영역을 찾지 못했습니다 (카카오톡 버전 변경 가능성).")
 
-    # 기존 클립보드 비우기 → 복사 실패를 감지하기 위해
-    win32clipboard.OpenClipboard()
-    win32clipboard.EmptyClipboard()
-    win32clipboard.CloseClipboard()
-
-    _post_key(list_ctrl, ord("A"))
-    time.sleep(0.5)
-    _post_key(list_ctrl, ord("C"))
-    time.sleep(1)
-    text = _get_clipboard_text()
-    if not text.strip():
-        raise RuntimeError("대화 내용을 복사하지 못했습니다. 채팅방 창을 열어 둔 상태인지 확인하세요.")
-    return text
+    # 최소화된 창은 복사가 안 될 때가 있어, 잠깐 (앞으로 가져오지 않고) 펼쳤다가 다시 최소화
+    was_minimized = bool(win32gui.IsIconic(hwnd))
+    if was_minimized:
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOWNOACTIVATE)
+        time.sleep(1)
+    try:
+        for i in range(attempts):
+            text = _copy_once(list_ctrl, wait=3 + 2 * i)
+            if text:
+                return text
+            time.sleep(1)
+    finally:
+        if was_minimized:
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOWMINNOACTIVE)
+    raise RuntimeError(
+        f"'{room_name}' 대화 내용을 {attempts}번 시도했지만 복사하지 못했습니다. "
+        "채팅방 창을 최소화하지 말고 열어 둔 채(다른 창 뒤에 있어도 됨) 다시 시도해 보세요.")
