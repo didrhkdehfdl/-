@@ -242,8 +242,11 @@ class Writer:
             c = col_idx(FIELD_COLUMNS[field])
             if append_text and field == "조치 내역":
                 old = str(self.sh.get(r, c) or "").strip()
-                if old and str(value) not in old:
-                    value = f"{old}\n\n{value}"
+                new = str(value).strip()
+                if old and new in old:
+                    continue  # 이미 같은 내용이 있으면 그대로 둔다 (다시 실행해도 중복 없음)
+                if old:
+                    value = f"{old}\n{new}"  # 기존 내용 아래 줄에 이어서
             self.sh.set(r, c, value, color)
             if field in ("연락처", "고객명", "조치 내역") or r not in self.written:
                 self.written[r] = (c, value)
@@ -297,21 +300,16 @@ class Writer:
     def apply_done(self, fields, source):
         open_row, done_row = self._find_receipt(fields)
         label = fields.get("고객명") or fields.get("발전소명") or fields.get("연락처") or "?"
-        if open_row:
-            self._write(open_row, fields, GREEN, append_text=True)
-            self.log(f"  * [처리] {open_row}행에 처리 내용 반영: {label}  ({source})")
+        target = open_row or done_row  # 처리 전 접수 건 우선, 없으면 가장 최근 건
+        if target:
+            # 같은 줄에 반영. 조치 내역은 기존 내용 아래 줄에 이어 쓰고, 같은 내용이면 다시 쓰지 않음
+            self._write(target, fields, GREEN, append_text=True)
+            self.log(f"  * [처리] {target}행에 처리 내용 반영: {label}  ({source})")
             return
         r = self._new_row()
-        if done_row:  # 같은 고객의 다음 방문 → 접수 정보 복사
-            for f in RECEIPT_COPY:
-                v = self.sh.get(done_row, col_idx(FIELD_COLUMNS[f]))
-                if v not in (None, ""):
-                    self.sh.set(r, col_idx(FIELD_COLUMNS[f]), v)
-            self.log(f"  + [처리] 이미 처리된 건({done_row}행)의 추가 방문 → {r}행 새로 추가: {label}  ({source})")
-        else:
-            self.log(f"  + [처리] 접수 기록을 못 찾아 {r}행에 새로 추가(접수 칸 확인 필요): {label}  ({source})")
-            fields = dict(fields)
-            fields.setdefault("분류", self.config.get("defaults", {}).get("분류", "A/S"))
+        self.log(f"  + [처리] 접수 기록을 못 찾아 {r}행에 새로 추가(접수 칸 확인 필요): {label}  ({source})")
+        fields = dict(fields)
+        fields.setdefault("분류", self.config.get("defaults", {}).get("분류", "A/S"))
         self._write(r, fields, GREEN)
 
     def apply(self, records):
@@ -326,9 +324,22 @@ class Writer:
         if self.changed:
             self.sh.save(out_path)
 
-    def verify(self, out_path=None):
-        """저장된 파일을 다시 읽어서 쓴 값이 실제로 들어갔는지 확인."""
+    def verify(self, out_path=None, started=None):
+        """저장이 실제로 됐는지 확인. 확인이 안 돼도 오류로 멈추지 않는다
+        (멈추면 같은 글을 다음 실행에서 또 처리하게 되므로)."""
         if not self.written:
+            return
+        rows = ", ".join(str(r) for r in sorted(self.written))
+        if self.sh.mode == "xlwings":
+            # 회사 문서보안(DRM) 파일은 프로그램이 직접 열 수 없으므로 저장 시각으로 확인
+            try:
+                saved = Path(self.path).stat().st_mtime
+            except OSError:
+                saved = None
+            if started and saved and saved >= started - 2:
+                self.log(f"저장 확인 완료: {rows}행 (파일 저장 시각 {datetime.fromtimestamp(saved):%H:%M:%S})")
+            else:
+                self.log(f"[경고] 파일 저장 시각이 바뀌지 않았습니다. 엑셀에서 {rows}행을 직접 확인해 주세요.")
             return
         import openpyxl
         wb = openpyxl.load_workbook(out_path or self.path, read_only=True, data_only=True)
@@ -340,14 +351,16 @@ class Writer:
                 bad.append(f"{r}행(파일 값: {str(got)[:20]!r})")
         wb.close()
         if bad:
-            raise RuntimeError(f"저장 확인 실패: 파일을 다시 열어 보니 {', '.join(bad)} 에 내용이 없습니다. "
-                               f"파일 경로({self.path})와 W: 드라이브 동기화 상태를 확인하세요.")
-        self.log(f"저장 확인 완료: {', '.join(str(r) for r in sorted(self.written))}행이 파일에 들어간 것을 확인했습니다.")
+            self.log(f"[경고] 저장 확인 실패: {', '.join(bad)}. 엑셀에서 직접 확인해 주세요.")
+        else:
+            self.log(f"저장 확인 완료: {rows}행이 파일에 들어간 것을 확인했습니다.")
 
 
 def apply_records(records, config, out_path=None, log=print):
     if not records:
         return 0
+    import time
+    started = time.time()
     w = Writer(config, log)
     try:
         n = w.apply(records)
@@ -356,5 +369,8 @@ def apply_records(records, config, out_path=None, log=print):
         if w.sh.mode == "xlwings":
             w.sh.close()
     if n:
-        w.verify(out_path)
+        try:
+            w.verify(out_path, started)
+        except Exception as e:
+            log(f"[경고] 저장 확인을 하지 못했습니다({e}). 엑셀에서 직접 확인해 주세요.")
     return n
