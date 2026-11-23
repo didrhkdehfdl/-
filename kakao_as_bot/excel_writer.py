@@ -109,6 +109,10 @@ class _Sheet:
             for book in app.books:
                 try:
                     if str(book.fullname).lower() == target:
+                        if not app.visible:
+                            # 예전 실행이 남긴 보이지 않는 Excel → 저장 후 닫아서 잠금을 푼다
+                            self.app = app
+                            app.display_alerts = False
                         return book
                 except Exception:
                     pass
@@ -182,6 +186,7 @@ class Writer:
     def __init__(self, config, log=print):
         self.config, self.log = config, log
         self.path = resolve_excel_path(config)
+        log(f"엑셀 파일: {self.path}")
         self.sh = _Sheet(self.path, config["sheet_name"], config.get("header_row", 3))
         try:
             self._check_headers()
@@ -244,7 +249,8 @@ class Writer:
             L, D = col_idx("L") - 1, col_idx("D") - 1
             for r, row in self._recent_rows(300):
                 if _digits(row[L]) == phone and str(row[D])[:10] == day:
-                    self.log(f"  - 이미 접수된 건이라 건너뜀({r}행): {fields.get('고객명')} {fields.get('연락처')}")
+                    self.log(f"  - 이미 접수된 건이라 건너뜀(「{self.sh.ws.name if self.sh.mode == 'xlwings' else self.sh.ws.title}」 시트 {r}행): "
+                             f"{fields.get('고객명')} {fields.get('연락처')}")
                     return
         r = self._new_row()
         self._write(r, fields, YELLOW)
