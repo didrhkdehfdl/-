@@ -76,8 +76,7 @@ def _to_cell(v):
 class _Sheet:
     """xlwings / openpyxl 공통 인터페이스 (1부터 시작하는 행·열 번호)."""
 
-    def __init__(self, path, sheet_name, header_row, log=print, read_only=False):
-        """read_only=True 이면 읽기만 한다 (파일을 바꾸거나 저장하지 않음)."""
+    def __init__(self, path, sheet_name, header_row, log=print):
         self.path, self.header_row, self.log = str(path), header_row, log
         self.app = None  # 우리가 몰래 띄운 Excel (끝나면 닫는다)
         try:
@@ -91,8 +90,8 @@ class _Sheet:
                 # 이 PC 에서 열려 있지 않으면 보이지 않는 Excel 로 열고, 저장 후 바로 닫는다
                 self.app = xw.App(visible=False, add_book=False)
                 self.app.display_alerts = False
-                self.book = self.app.books.open(self.path, update_links=False, read_only=read_only)
-            if self.book.api.ReadOnly and not read_only:
+                self.book = self.app.books.open(self.path, update_links=False)
+            if self.book.api.ReadOnly:
                 self.close()
                 raise RuntimeError(
                     "엑셀 파일이 읽기 전용입니다(다른 사람이 파일을 열고 있음). "
@@ -100,7 +99,7 @@ class _Sheet:
             self.ws = self.book.sheets[sheet_name]
         else:
             import openpyxl
-            self.book = openpyxl.load_workbook(self.path, data_only=read_only)
+            self.book = openpyxl.load_workbook(self.path)
             self.ws = self.book[sheet_name]
             self.mode = "openpyxl"
 
