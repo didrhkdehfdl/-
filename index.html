@@ -10255,7 +10255,13 @@ function corpCardHistoryOnRestore(cardId){
     try{ server = txt ? JSON.parse(txt) : {}; }catch(e){ server = {}; }
     corpCardBase[cardId] = corpCardBaseOf(server);
     corpCardLoadFailed.delete(cardId);
-    corpCardState.rowsByCard[cardId] = JSON.parse(raw);
+    const snap = JSON.parse(raw);
+    // 되돌리면서 빠지는 행(그 시점 뒤에 넣은 행)은 지운 기록에 남기고, 되살아나는 행의 지운 기록은 지운다.
+    const snapIds = new Set(corpCardRowsWithMonth(snap).map(x=>x.row.id));
+    const dropped = corpCardRowsWithMonth(server).filter(x=>!snapIds.has(x.row.id));
+    await recordCorpCardDeletions(cardId, dropped, '이력 되돌리기');
+    await forgetCorpCardDeletions(cardId, [...snapIds]);
+    corpCardState.rowsByCard[cardId] = snap;
     const r = await saveCorpCardRows(cardId);
     if(r && r.ok === false) throw new Error(r.reason || '저장 실패');
     recomputeCorpCardMismatches();
@@ -13976,7 +13982,9 @@ async function ensureCorpCardLoadedInner(){
     const recovered = [];
     for(const cardId of needsMonthFix){
       const n = normalizeCorpCardMonthBuckets(cardId);
-      if(n > 0){
+      if(n > 0 || (corpCardBucketDrops[cardId]||[]).length){
+        try{ await recordCorpCardDeletions(cardId, corpCardBucketDrops[cardId]||[], '숨은 달 칸 정리(같은 행 중복)'); }catch(e){ console.warn(e); }
+        delete corpCardBucketDrops[cardId];
         await saveCorpCardRows(cardId);
         const card = corpCardState.cards.find(c=>c.id===cardId);
         const parts = card ? cardParts(card.cardNumber) : null;
@@ -14000,6 +14008,7 @@ async function ensureCorpCardLoadedInner(){
 // 따로 있어서(월별로 나뉜 한 카드 전체가 문서 하나) 모든 카드를 한꺼번에
 // 구독하는 대신, 카드를 바꿀 때마다 이전 카드 구독을 끊고 새 카드를 구독한다.
 let corpCardRowsSub = null; // { unsub, cardId }
+const corpCardMissingCheck = new Set();
 function ensureCorpCardRowsSubscribed(cardId){
   if(!cardId || (corpCardRowsSub && corpCardRowsSub.cardId === cardId)) return;
   if(corpCardRowsSub) corpCardRowsSub.unsub();
@@ -14018,6 +14027,22 @@ function ensureCorpCardRowsSubscribed(cardId){
         setTimeout(()=>saveCorpCardRows(cardId), 0);
       }
       if(normalizeCorpCardEsp(cardId)) setTimeout(()=>saveCorpCardRows(cardId), 0);   // 예전 법인 값이 다시 들어왔으면 고쳐 저장
+      // 서버에서 빠졌는데 이 PC에 남겨 둔 행이 있으면: 최신 지운 기록을 받아 정말 지운 행이면 화면에서도 빼고,
+      // 지운 기록이 없는 행(사고로 빠진 행)이면 다시 저장해 서버에도 되돌린다.
+      {
+        const inIds = new Set(corpCardRowsWithMonth(incoming).map(x=>x.row.id));
+        const extra = corpCardRowsWithMonth(corpCardState.rowsByCard[cardId]).some(x=>!inIds.has(x.row.id));
+        if(extra && !corpCardMissingCheck.has(cardId)){
+          corpCardMissingCheck.add(cardId);
+          setTimeout(async ()=>{
+            try{
+              await saveCorpCardRows(cardId);
+              const typing = document.querySelector('#main input:focus, #main textarea:focus, #main select:focus');
+              if(!typing && state.activeTab === 'corpCard' && corpCardState.activeCardId === cardId) renderCorpCardMain();
+            }catch(e){} finally{ corpCardMissingCheck.delete(cardId); }
+          }, 1500);
+        }
+      }
       recomputeCorpCardMismatches();
     },
     isActive: () => state.activeTab==='corpCard' && corpCardState.activeCardId===cardId,
@@ -14273,6 +14298,7 @@ function cardMonthForIsoMonth(cardId, isoMonth){
 // 예전 버전이 "2026-09" 같은 이름으로 만들어 둔 칸에 행을 넣어버린 적이 있다
 // (화면의 월 탭은 "9 월"이라 그 행들이 아예 안 보였다). 그런 칸을 찾아 제
 // 자리(그 달 탭)로 옮긴다. 같은 날짜·금액·사용처가 이미 있으면 중복이므로 버린다.
+const corpCardBucketDrops = {};   // cardId -> [{row, month}] 숨은 달 칸을 옮기며 중복으로 뺀 행
 function normalizeCorpCardMonthBuckets(cardId){
   const byMonth = corpCardState.rowsByCard[cardId];
   if(!byMonth) return 0;
@@ -14289,7 +14315,7 @@ function normalizeCorpCardMonthBuckets(cardId){
     const seen = new Set(byMonth[target].map(r=>`${r.date}|${Math.abs(Number(r.amount)||0)}|${r.place||''}`));
     rows.forEach(r=>{
       const k = `${r.date}|${Math.abs(Number(r.amount)||0)}|${r.place||''}`;
-      if(seen.has(k)) return;
+      if(seen.has(k)){ if(r && r.id) (corpCardBucketDrops[cardId] = corpCardBucketDrops[cardId] || []).push({ row: r, month: key }); return; }   // 같은 행이 이미 있음 — 지운 기록에 남김
       seen.add(k);
       byMonth[target].push(r);
       moved++;
@@ -14425,7 +14451,8 @@ async function refreshCorpCardRowsFromServer(cardId){
   try{
     const server = JSON.parse(txt) || {};
     const meta = lastLoadMeta['corp-card-rows:'+cardId] || {};
-    applyCorpCardRowsInPlace(cardId, mergeCorpCardRows(cardId, server, { keepMissing: !meta.client }));
+    const tombs = await loadCorpCardTombs(cardId);
+    applyCorpCardRowsInPlace(cardId, mergeCorpCardRows(cardId, server, { keepMissing: !meta.client, tombs }));
     corpCardLoadFailed.delete(cardId);
     corpCardBase[cardId] = corpCardBaseOf(server);
     return true;
@@ -14881,7 +14908,7 @@ async function readCorpCardBackup(b){
 async function restoreMissingCorpCardRows(cardId, backupObj){
   const cur = corpCardState.rowsByCard[cardId] || (corpCardState.rowsByCard[cardId] = {});
   const have = new Set(); Object.values(cur).forEach(rows=>(rows||[]).forEach(r=>{ if(r && r.id) have.add(r.id); }));
-  const added = {};
+  const added = {}, addedIds = [];
   Object.entries(backupObj||{}).forEach(([m, rows])=>{
     (rows||[]).forEach(r=>{
       if(!r || !r.id || have.has(r.id)) return;
@@ -14889,10 +14916,11 @@ async function restoreMissingCorpCardRows(cardId, backupObj){
       const d = String(r.date||'');
       let at = list.length;
       if(d){ at = 0; list.forEach((x,i)=>{ if(x && x.date && String(x.date) <= d) at = i+1; }); }
-      list.splice(at, 0, { ...r }); have.add(r.id);
+      list.splice(at, 0, { ...r }); have.add(r.id); addedIds.push(r.id);
       added[m] = (added[m]||0) + 1;
     });
   });
+  if(addedIds.length) await forgetCorpCardDeletions(cardId, addedIds);   // 되살린 행은 지운 기록에서 뺀다
   return added;
 }
 async function openCorpCardBackupOverlay(cardId){
@@ -14948,6 +14976,162 @@ async function openCorpCardBackupOverlay(cardId){
     }));
   }catch(e){ listEl.innerHTML = `<div class="empty-side">백업 목록을 불러오지 못했습니다: ${escapeHtml(e && e.message || String(e))}</div>`; }
 }
+// ---- 법인카드 지운 행 기록(휴지통) ----
+// 행이 사라지는 사고가 여러 경로(저장 합치기, 다른 PC 동기화, 통합본·승인내역 연동, 양식 다시 올리기 등)에서
+// 되풀이돼서, 경로마다 막는 대신 원칙을 바꿨다: 행은 "지운 기록"이 있을 때만 빠진다. 사람이 🗑 삭제를 누르거나
+// 이력으로 되돌릴 때만 지운 기록(행 내용·지운 사람·시각·이유)을 먼저 서버에 남기고, 저장·동기화 중에 지운 기록이
+// 없는 행이 빠져 있으면 그 행을 그대로 다시 넣는다. 지운 행은 "🗑 지운 행"에서 언제든 되살릴 수 있다.
+const CORP_CARD_DELETED_PREFIX = 'corp-card-deleted:';
+const CORP_CARD_DELETED_MAX_BYTES = 800*1024;
+const corpCardTombs = {};   // cardId -> Map(rowId -> { id, row, month, at, by, reason })
+async function loadCorpCardTombs(cardId){
+  const key = CORP_CARD_DELETED_PREFIX + cardId;
+  const txt = await loadFileFromStorage(key, 30000);
+  if(lastLoadMeta[key] && lastLoadMeta[key].error) return null;   // 모르면 null — 이때는 아무 행도 지우지 않는다
+  let list = [];
+  try{ list = txt ? JSON.parse(txt) : []; }catch(e){ return null; }
+  const m = new Map(); (Array.isArray(list) ? list : []).forEach(e=>{ if(e && e.id) m.set(e.id, e); });
+  corpCardTombs[cardId] = m;
+  return m;
+}
+async function saveCorpCardTombs(cardId, map){
+  let list = [...map.values()].sort((a,b)=>(a.at||0)-(b.at||0));
+  const cut = Date.now() - 365*86400000;
+  list = list.filter(e=>(e.at||0) >= cut);
+  while(list.length > 1 && utf8ByteLength(JSON.stringify(list)) > CORP_CARD_DELETED_MAX_BYTES) list.shift();
+  const r = await saveFileToStorage(CORP_CARD_DELETED_PREFIX + cardId, JSON.stringify(list), 30000);
+  if(r && r.ok === false) throw new Error(r.reason || '지운 기록을 저장하지 못했습니다');
+  corpCardTombs[cardId] = new Map(list.map(e=>[e.id, e]));
+}
+// 행을 지우기 전에 반드시 부른다. 기록을 못 남기면 예외 — 그러면 지우지 않는다.
+async function recordCorpCardDeletions(cardId, entries, reason){
+  if(!entries.length) return;
+  const map = await loadCorpCardTombs(cardId);
+  if(map === null) throw new Error('서버에 연결되지 않아 지운 기록을 남길 수 없습니다(인터넷 연결 확인 후 다시 해주세요).');
+  const by = (typeof currentUserName !== 'undefined' && currentUserName) || (fbAuth.currentUser && fbAuth.currentUser.email) || '';
+  const at = Date.now();
+  entries.forEach(e=>{ if(e && e.row && e.row.id) map.set(e.row.id, { id: e.row.id, row: { ...e.row }, month: e.month || '', at, by, reason: reason || '삭제' }); });
+  await saveCorpCardTombs(cardId, map);
+}
+async function forgetCorpCardDeletions(cardId, ids){
+  const map = await loadCorpCardTombs(cardId);
+  if(map === null) throw new Error('서버에 연결되지 않았습니다.');
+  let n = 0; ids.forEach(id=>{ if(map.delete(id)) n++; });
+  if(n) await saveCorpCardTombs(cardId, map);
+}
+function corpCardRowsWithMonth(obj){
+  const out = []; Object.entries(obj||{}).forEach(([m, rows])=>(rows||[]).forEach(r=>{ if(r && r.id) out.push({ month:m, row:r }); }));
+  return out;
+}
+// 행 하나를 그 달(없으면 날짜로 찾은 달 탭)에 날짜 순서 자리로 넣는다.
+function insertCorpCardRowByDate(cardId, month, row){
+  const cur = corpCardState.rowsByCard[cardId] || (corpCardState.rowsByCard[cardId] = {});
+  let m = month;
+  if(/^\d{4}-\d{2}$/.test(m || '')) m = cardMonthForIsoMonth(cardId, m) || m;
+  if(!m && row.date) m = cardMonthForIsoMonth(cardId, String(row.date).slice(0,7)) || '';
+  if(!m) m = Object.keys(cur)[0] || '';
+  const list = cur[m] || (cur[m] = []);
+  const d = String(row.date||'');
+  let at = list.length;
+  if(d){ at = 0; list.forEach((x,i)=>{ if(x && x.date && String(x.date) <= d) at = i+1; }); }
+  list.splice(at, 0, row);
+  return m;
+}
+async function openCorpCardTrashOverlay(cardId){
+  await ensureCorpCardLoaded();
+  const card = corpCardState.cards.find(c=>c.id===cardId);
+  if(!card) return;
+  let ov = document.getElementById('corpCardTrashOverlay');
+  if(!ov){
+    ov = document.createElement('div'); ov.id = 'corpCardTrashOverlay';
+    ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:9999; display:flex; align-items:center; justify-content:center; padding:16px;';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', e=>{ if(e.target === ov) ov.remove(); });
+  }
+  ov.innerHTML = `<div style="background:var(--panel); border:1px solid var(--line); border-radius:12px; width:min(720px,100%); max-height:85vh; overflow:auto; padding:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;"><b>🗑 ${escapeHtml(card.label||card.cardNumber)} — 지운 행</b><button class="cc-tr-close" style="background:transparent; border:none; color:var(--muted); font-size:18px; cursor:pointer;">✕</button></div>
+    <div style="font-size:12px; color:var(--muted); line-height:1.6; margin-bottom:10px;">삭제 버튼이나 이력 되돌리기로 빠진 행이 지운 사람·시각과 함께 1년 동안 남습니다. "되살리기"를 누르면 그 행이 제 달의 날짜 자리에 다시 들어갑니다. 이 목록에 없는 행은 저장 중에 빠지지 않고 자동으로 다시 들어갑니다.</div>
+    <div class="cc-tr-list">불러오는 중…</div>
+    <div style="margin-top:14px; font-weight:700; font-size:13px;">🔎 지운 기록 없이 빠진 행 (최근 백업·변경 이력에서 찾음)</div>
+    <div style="font-size:12px; color:var(--muted); line-height:1.6; margin:4px 0 8px;">최근 날짜별 백업과 변경 이력에는 있었는데 지금은 없고, 누가 지웠다는 기록도 없는 행입니다. 이 기능이 생기기 전에 사라진 행도 여기서 되살릴 수 있습니다(가장 나중 상태로 되살립니다).</div>
+    <div class="cc-tr-lost">찾는 중…</div></div>`;
+  ov.querySelector('.cc-tr-close').onclick = ()=>ov.remove();
+  const listEl = ov.querySelector('.cc-tr-list');
+  const lostEl = ov.querySelector('.cc-tr-lost');
+  const fmtT = t => { const d = new Date(t); const p = n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+  const renderLost = async ()=>{
+    try{
+      const tombs = corpCardTombs[cardId] || new Map();
+      const have = new Set(corpCardRowsWithMonth(corpCardState.rowsByCard[cardId]).map(x=>x.row.id));
+      const found = new Map();   // id -> { row, month, when, src }  (가장 나중 상태)
+      const take = (obj, when, src)=>{ corpCardRowsWithMonth(obj).forEach(({month, row})=>{
+        if(have.has(row.id) || tombs.has(row.id)) return;
+        const prev = found.get(row.id);
+        if(!prev || when > prev.when) found.set(row.id, { row, month, when, src });
+      }); };
+      const hist = await loadGenericHistory('corp-card-rows:'+cardId);
+      hist.forEach(h=>{ try{ take(JSON.parse(h.data), h.timestamp||0, '변경 이력'); }catch(e){} });
+      const backups = (await listCorpCardBackups(cardId)).slice(0, 14);
+      for(const b of backups){
+        let obj = null; try{ obj = await readCorpCardBackup(b); }catch(e){}
+        const m = b.label.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d\d)(\d\d)(\d\d))?/);
+        const when = m ? new Date(+m[1], +m[2]-1, +m[3], +(m[4]||0), +(m[5]||0)).getTime() : 0;
+        if(obj) take(obj, when, '날짜별 백업');
+      }
+      const items = [...found.values()].filter(x=>x.row && (x.row.date || Number(x.row.amount))).sort((a,b)=>String(b.row.date||'').localeCompare(String(a.row.date||'')));
+      if(!items.length){ lostEl.innerHTML = '<div class="empty-side">없습니다 — 최근 백업·이력에 있던 행은 지금 모두 있거나, 지운 기록이 남아 있습니다.</div>'; return; }
+      lostEl.innerHTML = items.map(x=>{ const r = x.row; return `<div style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:7px; display:flex; justify-content:space-between; gap:10px; align-items:center;">
+        <div style="font-size:12.5px; line-height:1.55;"><b>${escapeHtml(r.date||'(날짜 없음)')}</b> ${escapeHtml(r.place||'')} · <b>${(Number(r.amount)||0).toLocaleString('ko-KR')}원</b> ${r.name ? '· '+escapeHtml(r.name) : ''} ${r.workDetail ? '· '+escapeHtml(r.workDetail) : ''}
+          <div style="font-size:11.5px; color:var(--muted);">${escapeHtml(x.month||'')} · ${escapeHtml(x.src)} ${escapeHtml(fmtT(x.when))} 상태</div></div>
+        <button class="cc-tr-lost-restore" data-id="${escapeHtml(r.id)}" style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid var(--gold); background:transparent; color:var(--gold); cursor:pointer; white-space:nowrap;">되살리기</button></div>`; }).join('');
+      lostEl.querySelectorAll('.cc-tr-lost-restore').forEach(btn=>btn.addEventListener('click', async ()=>{
+        const x = found.get(btn.dataset.id); if(!x) return;
+        btn.disabled = true; btn.textContent = '되살리는 중…';
+        try{
+          await refreshCorpCardRowsFromServer(cardId);
+          if(!corpCardRowsWithMonth(corpCardState.rowsByCard[cardId]).some(y=>y.row.id === x.row.id)) insertCorpCardRowByDate(cardId, x.month, { ...x.row });
+          const r = await saveCorpCardRows(cardId);
+          if(r && r.ok === false) throw new Error(r.reason || '저장 실패');
+          btn.textContent = '되살림 ✓';
+          recomputeCorpCardMismatches();
+          if(state.activeTab === 'corpCard') renderCorpCardMain();
+        }catch(err){ btn.disabled = false; btn.textContent = '되살리기'; alert('되살리지 못했습니다: ' + (err && err.message || err)); }
+      }));
+    }catch(e){ lostEl.innerHTML = `<div class="empty-side">찾지 못했습니다: ${escapeHtml(e && e.message || String(e))}</div>`; }
+  };
+  try{
+    await refreshCorpCardRowsFromServer(cardId);
+    const map = await loadCorpCardTombs(cardId);
+    if(map === null){ listEl.innerHTML = '<div class="empty-side">서버에 연결되지 않아 목록을 불러오지 못했습니다.</div>'; lostEl.innerHTML = ''; return; }
+    renderLost();
+    const have = new Set(corpCardRowsWithMonth(corpCardState.rowsByCard[cardId]).map(x=>x.row.id));
+    const items = [...map.values()].sort((a,b)=>(b.at||0)-(a.at||0));
+    if(!items.length){ listEl.innerHTML = '<div class="empty-side">지운 행이 없습니다.</div>'; return; }
+    const fmt = t => { const d = new Date(t); const p = n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+    listEl.innerHTML = items.map(e=>{
+      const r = e.row || {}; const back = have.has(e.id);
+      return `<div style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; margin-bottom:7px; display:flex; justify-content:space-between; gap:10px; align-items:center;">
+        <div style="font-size:12.5px; line-height:1.55;"><b>${escapeHtml(r.date||'(날짜 없음)')}</b> ${escapeHtml(r.place||'')} · <b>${(Number(r.amount)||0).toLocaleString('ko-KR')}원</b> ${r.name ? '· '+escapeHtml(r.name) : ''} ${r.workDetail ? '· '+escapeHtml(r.workDetail) : ''}
+          <div style="font-size:11.5px; color:var(--muted);">${escapeHtml(e.month||'')} · ${escapeHtml(e.reason||'삭제')} · ${escapeHtml(fmt(e.at||0))}${e.by ? ' · '+escapeHtml(e.by) : ''}</div></div>
+        <button class="cc-tr-restore" data-id="${escapeHtml(e.id)}" ${back?'disabled':''} style="font-size:11.5px; padding:6px 10px; border-radius:6px; border:1px solid ${back?'var(--line)':'var(--gold)'}; background:transparent; color:${back?'var(--muted)':'var(--gold)'}; cursor:${back?'default':'pointer'}; white-space:nowrap;">${back ? '이미 있음' : '되살리기'}</button>
+      </div>`;
+    }).join('');
+    listEl.querySelectorAll('.cc-tr-restore').forEach(btn=>btn.addEventListener('click', async ()=>{
+      const e = map.get(btn.dataset.id); if(!e) return;
+      btn.disabled = true; btn.textContent = '되살리는 중…';
+      try{
+        await refreshCorpCardRowsFromServer(cardId);
+        if(!corpCardRowsWithMonth(corpCardState.rowsByCard[cardId]).some(x=>x.row.id === e.id)) insertCorpCardRowByDate(cardId, e.month, { ...e.row });
+        await forgetCorpCardDeletions(cardId, [e.id]);
+        const r = await saveCorpCardRows(cardId);
+        if(r && r.ok === false) throw new Error(r.reason || '저장 실패');
+        btn.textContent = '되살림 ✓';
+        recomputeCorpCardMismatches();
+        if(state.activeTab === 'corpCard') renderCorpCardMain();
+      }catch(err){ btn.disabled = false; btn.textContent = '되살리기'; alert('되살리지 못했습니다: ' + (err && err.message || err)); }
+    }));
+  }catch(e){ listEl.innerHTML = `<div class="empty-side">불러오지 못했습니다: ${escapeHtml(e && e.message || String(e))}</div>`; }
+}
 function corpCardBaseOf(obj){
   const m = new Map();
   Object.values(obj||{}).forEach(rows=>(rows||[]).forEach(r=>{ if(r && r.id) m.set(r.id, JSON.stringify(r)); }));
@@ -14971,9 +15155,18 @@ function applyCorpCardRowsInPlace(cardId, merged){
 function corpCardRowCount(obj){ let n = 0; Object.values(obj||{}).forEach(rows=>{ n += (rows||[]).filter(r=>r && r.id).length; }); return n; }
 function mergeCorpCardRows(cardId, server, opts){
   const keepMissing = !!(opts && opts.keepMissing);
+  // 지운 기록이 있는 행만 "지운 행"으로 본다. 기록을 모르면(null) 아무것도 지우지 않는다.
+  const tombs = opts && opts.tombs !== undefined ? opts.tombs : (corpCardTombs[cardId] || null);
+  const isTomb = id => !!(tombs && tombs.has(id));
   const local = corpCardState.rowsByCard[cardId] || {};
   const base = corpCardBase[cardId];
-  if(!base) return server || {};
+  if(!base){
+    // 기준이 없으면 서버 내용에 이 PC에만 있는 행(지운 기록 없는)을 더한다.
+    const out = JSON.parse(JSON.stringify(server || {}));
+    const ids = new Set(corpCardRowsWithMonth(out).map(x=>x.row.id));
+    Object.entries(local).forEach(([m, rows])=>(rows||[]).forEach(r=>{ if(r && r.id && !ids.has(r.id) && !isTomb(r.id)){ (out[m] = out[m] || []).push(r); ids.add(r.id); } }));
+    return out;
+  }
   server = server || {};
   const changed = r => base.get(r.id) !== JSON.stringify(r);
   const localById = new Map(); Object.values(local).forEach(rows=>(rows||[]).forEach(r=>{ if(r && r.id) localById.set(r.id, r); }));
@@ -14990,13 +15183,15 @@ function mergeCorpCardRows(cardId, server, opts){
         if(changed(lr)){ return; }   // 내가 고친 행은 아래에서 내 달(month) 자리에 넣는다
         res.push(r); placed.add(r.id);
       } else if(!base.has(r.id)){ res.push(r); placed.add(r.id); }   // 다른 사람이 새로 넣은 행
-      // (base에 있었는데 내 쪽에 없으면 내가 지운 행 → 뺀다)
+      else if(!isTomb(r.id)){ res.push(r); placed.add(r.id); }       // 내 쪽에서 빠졌지만 지운 기록이 없음 → 사고로 보고 남긴다
+      // (지운 기록이 있으면 지운 행 → 뺀다)
     });
     // 내 쪽 행: 내가 고친 행, 내가 새로 넣은 행. 서버 순서 안에서 원래 자리에 가깝게 끼운다.
     (local[m]||[]).forEach((lr, idx)=>{
       if(!lr || !lr.id || placed.has(lr.id)) return;
       const isNew = !base.has(lr.id);
-      if(!isNew && !changed(lr) && !keepMissing) return;   // 안 고쳤고 서버에서 지워진 행 → 다른 사람이 지움(예전 코드 PC의 저장이면 남김)
+      if(!isNew && !changed(lr) && !keepMissing && isTomb(lr.id)) return;   // 안 고쳤고 서버에서 지워진 행 — 지운 기록이 있을 때만 뺀다
+      if(isNew && isTomb(lr.id) && !serverIds.has(lr.id)) return;            // 다른 PC에서 지운 행이 이 PC에 남아 있던 것
       const prev = idx > 0 ? (local[m][idx-1] && local[m][idx-1].id) : null;
       const at = prev ? res.findIndex(x=>x && x.id===prev) : -1;
       if(at >= 0) res.splice(at+1, 0, lr); else if(idx === 0) res.unshift(lr); else res.push(lr);
@@ -15023,7 +15218,8 @@ function saveCorpCardRows(cardId){
       corpCardBase[cardId] = new Map();
       corpCardLoadFailed.delete(cardId);
     }
-    if(server) applyCorpCardRowsInPlace(cardId, mergeCorpCardRows(cardId, server, { keepMissing: !meta.client }));
+    const tombs = await loadCorpCardTombs(cardId);   // 못 읽으면 null → 이번 저장에서는 어떤 행도 빼지 않는다
+    if(server) applyCorpCardRowsInPlace(cardId, mergeCorpCardRows(cardId, server, { keepMissing: !meta.client, tombs }));
     const value = JSON.stringify(corpCardState.rowsByCard[cardId]||{});
     if(txt && value === txt){ corpCardBase[cardId] = corpCardBaseOf(server); return { ok:true, unchanged:true }; }
     await backupCorpCardBeforeSave(cardId, txt, server, corpCardState.rowsByCard[cardId]);
@@ -15382,13 +15578,15 @@ async function importCorpCardFile(file, expectCardId){
         alert('서버의 이 카드 내역을 확인하지 못해 파일을 반영하지 않았습니다. 인터넷 연결을 확인한 뒤 다시 올려주세요.'); return false;
       }
       const cur = corpCardState.rowsByCard[id] || (corpCardState.rowsByCard[id] = {});
-      const kept = [];
+      const kept = [], replacedRows = [];
       meta.months.forEach(monthName => {
         const num = monthNumFromLabel(monthName);
         const appLabel = Object.keys(cur).find(l => l === monthName || (num && monthNumFromLabel(l) === num));
         if(appLabel && (cur[appLabel]||[]).some(r=>r && (r.date || Number(r.amount)))){ kept.push(appLabel); return; }
+        (cur[monthName]||[]).forEach(r=>{ if(r && r.id) replacedRows.push({ row: r, month: monthName }); });
         cur[monthName] = parseCorpCardMonthRows(wb.Sheets[monthName]);
       });
+      try{ await recordCorpCardDeletions(id, replacedRows, '양식 다시 올림(빈 달 교체)'); }catch(e){ console.warn(e); }
       if(kept.length) showLedgerToast(`앱에 이미 내역이 있는 달(${kept.join(', ')})은 그대로 두고, 빈 달만 파일 내용으로 채웠습니다.`);
       corpCardState.activeCardId = id;
       corpCardState.activeMonth = pickDefaultCorpCardMonth(meta.months);
@@ -16961,6 +17159,7 @@ async function renderCorpCardMainInner(){
         return `<span id="corpCardTotalsBadge" style="margin-left:auto; font-size:13px; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); white-space:nowrap;">총 <b>${used.length}</b>건 · 총사용액 <b style="color:var(--gold);">${sum.toLocaleString('ko-KR')}</b>원</span>`; })()}
  <button id="corpCardHistoryBtn" title="이 카드 내역의 변경 이력(최근 20개, 1분 간격)을 보고 원하는 시점으로 되돌립니다" style="font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:600;">🕒 변경 이력</button>
  <button id="corpCardBackupBtn" title="이 카드의 날짜별 자동 백업(하루 한 번·내역이 크게 줄어들 때)에서 빠진 행을 되살립니다" style="font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:600;">🛟 백업</button>
+      <button id="corpCardTrashBtn" title="삭제 버튼이나 이력 되돌리기로 지운 행을 지운 사람·시각과 함께 보고 되살립니다" style="font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:600;">🗑 지운 행</button>
       <button id="corpCardSaveBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:700;">✅ 저장됨</button>
       ${s.approvalEntries.length ? `<button id="corpCardApprovalViewBtn" style=" font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--sky); background:rgba(90,155,213,.1); color:var(--sky); cursor:pointer; font-weight:600;">💳 이 카드 승인내역 보기</button>` : ''}
       <button id="corpCardPrintDocBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>
@@ -17181,7 +17380,9 @@ async function renderCorpCardMainInner(){
     const monthToDelete = s.activeMonth;
     const rowCount = (s.rowsByCard[activeCard.id] && s.rowsByCard[activeCard.id][monthToDelete] || []).length;
     const warn = rowCount>0 ? `이 탭에는 ${rowCount}건이 입력되어 있습니다. ` : '';
-    if(!confirm(`"${monthToDelete}" 탭을 삭제할까요? ${warn}입력된 내용도 함께 사라집니다.`)) return;
+    if(!confirm(`"${monthToDelete}" 탭을 삭제할까요? ${warn}입력된 내용도 함께 사라집니다.${rowCount ? '\n(지운 행은 "🗑 지운 행"에서 되살릴 수 있습니다)' : ''}`)) return;
+    try{ await recordCorpCardDeletions(activeCard.id, (s.rowsByCard[activeCard.id] && s.rowsByCard[activeCard.id][monthToDelete] || []).map(r=>({ row: r, month: monthToDelete })), '월 탭 삭제'); }
+    catch(e){ alert('삭제하지 못했습니다: ' + e.message); return; }
     tmpl.months = tmpl.months.filter(m=>m!==monthToDelete);
     delete s.rowsByCard[activeCard.id][monthToDelete];
     s.activeMonth = pickDefaultCorpCardMonth(tmpl.months);
@@ -17553,6 +17754,8 @@ async function renderCorpCardMainInner(){
   });
   const backupBtn = document.getElementById('corpCardBackupBtn');
   if(backupBtn) backupBtn.addEventListener('click', ()=>openCorpCardBackupOverlay(activeCard.id));
+  const trashBtn = document.getElementById('corpCardTrashBtn');
+  if(trashBtn) trashBtn.addEventListener('click', ()=>openCorpCardTrashOverlay(activeCard.id));
   const historyBtn = document.getElementById('corpCardHistoryBtn');
   if(historyBtn) historyBtn.addEventListener('click', async ()=>{
     await flushCorpCardSave({ silent:true });   // 지금 고친 내용까지 이력 비교에 들어가게
@@ -17573,8 +17776,13 @@ async function renderCorpCardMainInner(){
   updateCorpCardSaveBtn();
   main.querySelectorAll('.corpcard-del-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      if(!confirm('이 행을 삭제할까요?')) return;
-      s.rowsByCard[activeCard.id][s.activeMonth] = (s.rowsByCard[activeCard.id][s.activeMonth] || rows).filter(r=>r.id!==btn.dataset.id);   // 화면을 그린 뒤 들어온 다른 사람의 행도 남게 지금 목록에서 뺀다
+      if(!confirm('이 행을 삭제할까요?\n(지운 행은 "🗑 지운 행"에서 다시 되살릴 수 있습니다)')) return;
+      const list = s.rowsByCard[activeCard.id][s.activeMonth] || rows;
+      const target = list.find(r=>r.id===btn.dataset.id);
+      // 지운 기록(행 내용 포함)을 먼저 남긴다 — 못 남기면 지우지 않는다.
+      try{ if(target) await recordCorpCardDeletions(activeCard.id, [{ row: target, month: s.activeMonth }], '삭제'); }
+      catch(e){ alert('삭제하지 못했습니다: ' + e.message); return; }
+      s.rowsByCard[activeCard.id][s.activeMonth] = list.filter(r=>r.id!==btn.dataset.id);   // 화면을 그린 뒤 들어온 다른 사람의 행도 남게 지금 목록에서 뺀다
       await saveCorpCardRows(activeCard.id);
       recomputeCorpCardMismatches();
       renderCorpCardMain();
