@@ -1,5 +1,6 @@
 {
   "room_name": "A/S 단톡방",
+  "room_names": ["A/S 단톡방", "최지석"],
 
   "excel_folder": "W:\\6.O&M",
   "excel_file": "독립채산제(AS,타부서지원)_TEST.xlsx",

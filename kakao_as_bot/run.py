@@ -50,30 +50,47 @@ def main():
 
     config = json.loads(Path(args.config).read_text(encoding="utf-8"))
     state = {"seen": []} if args.reset else load_state()
-    first_run = not state["seen"]
+    state.setdefault("rooms", [])
+    seen = set(state["seen"])
 
+    # 읽을 방 목록: room_names(여러 개) 또는 예전 설정 room_name(한 개)
+    rooms = config.get("room_names") or [config["room_name"]]
+    since = config.get("process_since")
+    cutoff = datetime.fromisoformat(since) if since else None
+
+    new, read_keys = [], []
     if args.file:
-        text = Path(args.file).read_text(encoding="utf-8-sig")
+        sources = [("파일", lambda: Path(args.file).read_text(encoding="utf-8-sig"))]
     else:
         import kakao_reader
-        text = kakao_reader.read_room_text(config["room_name"])
+        sources = [(room, lambda room=room: kakao_reader.read_room_text(room)) for room in rooms]
 
-    messages = chat_parser.parse(text)
-    seen = set(state["seen"])
-    new = [m for m in messages if m.key not in seen]
-    log(f"메시지 {len(messages)}개 중 새 메시지 {len(new)}개")
+    for room, read in sources:
+        try:
+            messages = chat_parser.parse(read())
+        except Exception as e:  # 한 방이 안 열려도 다른 방은 계속 처리
+            log(f"[오류] '{room}' 방 읽기 실패: {e}")
+            continue
+        room_new = [m for m in messages if m.key not in seen]
+        log(f"'{room}': 메시지 {len(messages)}개 중 새 메시지 {len(room_new)}개")
 
-    # 처음 실행할 때 방에 쌓여 있던 예전 글을 전부 넣지 않도록, 기준 시각을 둘 수 있다
-    since = config.get("process_since")
-    if since:
-        cutoff = datetime.fromisoformat(since)
-        new = [m for m in new if m.sent_at >= cutoff]
-    elif first_run and not args.file:
-        log("첫 실행: 지금까지의 글은 '처리됨'으로 기록만 하고, 다음 실행부터 새 글을 정리합니다.")
-        state["seen"] += [m.key for m in messages]
-        save_state(state)
-        return
+        # 처음 읽는 방은 쌓여 있던 예전 글을 넣지 않고 '처리됨'으로만 기록
+        known = (room in state["rooms"] or len(room_new) < len(messages)
+                 or (state["seen"] and not state["rooms"] and room == config.get("room_name")))
+        if not args.file and room not in state["rooms"]:
+            state["rooms"].append(room)
+        if cutoff:
+            room_new = [m for m in room_new if m.sent_at >= cutoff]
+        elif not known and not args.file:
+            log(f"'{room}' 첫 실행: 지금까지의 글은 '처리됨'으로 기록만 하고, 다음 실행부터 새 글을 정리합니다.")
+            state["seen"] += [m.key for m in messages]
+            seen.update(m.key for m in messages)
+            continue
+        new += room_new
+        read_keys += [m.key for m in room_new]
+        seen.update(m.key for m in room_new)  # 두 방에 같은 글이 있으면 한 번만
 
+    new.sort(key=lambda m: m.sent_at)
     records = extractor.extract(new, config, log=log)
     n_recv = sum(r["kind"] == "접수" for r in records)
     log(f"접수 {n_recv}건, 처리 {len(records) - n_recv}건 발견")
@@ -86,7 +103,7 @@ def main():
 
     changed = excel_writer.apply_records(records, config, out_path=args.out, log=log)
     log(f"엑셀 반영 완료 ({changed}건)")
-    state["seen"] += [m.key for m in new]
+    state["seen"] += read_keys
     save_state(state)
 
 
