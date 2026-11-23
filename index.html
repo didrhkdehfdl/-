@@ -5687,6 +5687,7 @@ async function writeProfitCasesToLinkedLedger(cases, opts){
     const changed = c.ledgerCustomer !== (c.customer || '') || Number(c.ledgerRow) !== Number(r.rowNum) || JSON.stringify(c.ledgerIdent||null) !== JSON.stringify(ident);
     c.ledgerCustomer = c.customer || ''; c.ledgerIdent = ident; c.ledgerRow = Number(r.rowNum) || 0;
     if(changed){ profitLedgerSkipAutoOnce.add(c.id); persistCase(c); }   // 기억만 저장(파일에 다시 쓰지 않음)
+    if(typeof profitLedgerWrittenAt !== 'undefined') profitLedgerWrittenAt[c.id] = Date.now() + 1000;
   });
   // 방금 앱이 쓴 저장 때문에 "파일이 바뀌었다"며 다시 읽지 않게 저장 시각을 기억한다.
   if((res.results||[]).some(r=>!r.error && !r.skipped)) await rememberProfitLedgerMtime();
@@ -5736,6 +5737,8 @@ const flushProfitLedgerAuto = debounce(async ()=>{
   try{
     // 파일에 없는 고객은 마지막 고객 행 아래에 새 행으로 추가한다.
     const res = await writeProfitCasesToLinkedLedger(cases, { onlyExisting:false });
+    profitLedgerPendingRemove(cases.map(c=>c.id));   // 결과가 나온 건(성공·건너뜀 모두)은 대기 목록에서 뺀다
+    profitLedgerRetryErr = '';
     const rs = res.results||[];
     const ok = rs.filter(r=>!r.error && !r.skipped), skipped = rs.filter(r=>r.skipped), failed = rs.filter(r=>r.error);
     const t = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
@@ -5748,8 +5751,12 @@ const flushProfitLedgerAuto = debounce(async ()=>{
     profitLedgerAutoNote = `${t} ` + parts.join(' / ');
     showLedgerToast(parts.join('\n'), !ok.length);
   }catch(e){
-    profitLedgerAutoNote = '⚠ 사급 건별 정산 파일 자동 갱신 실패: ' + linkedFileErrorMessage(e).split('\n')[0];
-    showLedgerToast(profitLedgerAutoNote, true);
+    // 도우미가 꺼져 있거나 예전 버전, 엑셀이 바쁜 경우 등 — 그 건들을 버리지 않고 1분 뒤 다시 쓴다(새로고침해도 이어서).
+    cases.forEach(c=>{ if(!profitLedgerAutoQueue.has(c.id)) profitLedgerAutoQueue.set(c.id, c); });
+    const why = linkedFileErrorMessage(e).split('\n')[0];
+    profitLedgerAutoNote = `⚠ 사급 건별 정산 파일 자동 갱신 대기 ${profitLedgerPendingGet().length}건 — ${why} (1분마다 다시 시도)`;
+    if(why !== profitLedgerRetryErr){ profitLedgerRetryErr = why; showLedgerToast(profitLedgerAutoNote, true); }
+    clearTimeout(profitLedgerRetryTimer); profitLedgerRetryTimer = setTimeout(()=>flushProfitLedgerAuto(), 60000);
   }finally{ profitLedgerAutoBusy = false; }
   const el = document.getElementById('profitLedgerAutoNote');
   if(el){ el.textContent = profitLedgerAutoNote; el.style.color = /^⚠/.test(profitLedgerAutoNote) ? 'var(--neg)' : 'var(--muted)'; }
@@ -5758,13 +5765,74 @@ function queueProfitLedgerAutoWrite(p){
   if(!p || !p.id) return;
   if(!getLinkedFile(PROFIT_LEDGER_LINK_KEY)){
     // 이 PC(브라우저)에는 파일이 연결돼 있지 않다 — 연결은 PC마다 따로라서 한 번 알려준다.
-    if(!profitLedgerUnlinkedWarned){ profitLedgerUnlinkedWarned = true; showLedgerToast('이 PC에는 사급 건별 정산 파일이 연결돼 있지 않아 엑셀에 자동으로 쓰지 않았습니다.\n사업 이윤정산 탭 위쪽 "🔗 PC 엑셀 파일 연결"로 파일을 연결해 주세요.', true); }
+    if(!profitLedgerUnlinkedWarned){ profitLedgerUnlinkedWarned = true; showLedgerToast('이 PC에는 사급 건별 정산 파일이 연결돼 있지 않습니다.\n파일이 연결된 PC에서 앱이 켜져 있으면 2분 안에 그 PC가 대신 파일에 씁니다.', false); }
     return;
   }
   if(profitLedgerSkipAutoOnce.has(p.id)){ profitLedgerSkipAutoOnce.delete(p.id); return; }
   profitLedgerAutoQueue.set(p.id, p);
+  profitLedgerPendingAdd(p.id);
   flushProfitLedgerAuto();
 }
+// ---- 파일에 아직 못 쓴 건(대기 목록) · 다른 PC에서 고친 건 ----
+// 사급 건별 정산 파일은 보통 한 PC에만 연결돼 있는데, 자동 기록은 "고친 PC"에서만 일어나서 다른 PC에서 고친
+// 이윤정산은 파일에 영영 안 들어갔다. 이제 파일이 연결된 PC가 2분마다 건 목록을 확인해, 다른 PC에서 고치거나
+// 새로 만든 이윤정산 건을 받아 파일에 쓴다. 쓰지 못한 건은 대기 목록(이 PC에 저장)에 남겨 다시 시도한다.
+const PROFIT_LEDGER_PENDING_KEY = 'profit-ledger-pending-v1';
+const PROFIT_LEDGER_SEEN_KEY = 'profit-ledger-seen-v1';
+let profitLedgerRetryErr = '', profitLedgerRetryTimer = null;
+const profitLedgerWrittenAt = {};   // 건 id → 이 PC가 파일에 쓴 시각
+function profitLedgerPendingGet(){ try{ return JSON.parse(localStorage.getItem(PROFIT_LEDGER_PENDING_KEY)||'[]')||[]; }catch(e){ return []; } }
+function profitLedgerPendingSet(ids){ try{ localStorage.setItem(PROFIT_LEDGER_PENDING_KEY, JSON.stringify([...new Set(ids)])); }catch(e){} }
+function profitLedgerPendingAdd(id){ const l = profitLedgerPendingGet(); if(!l.includes(id)){ l.push(id); profitLedgerPendingSet(l); } }
+function profitLedgerPendingRemove(ids){ const rm = new Set(ids); profitLedgerPendingSet(profitLedgerPendingGet().filter(x=>!rm.has(x))); }
+let profitLedgerRemoteBusy = false;
+async function pollProfitLedgerRemoteEdits(){
+  if(profitLedgerRemoteBusy || !getLinkedFile(PROFIT_LEDGER_LINK_KEY) || typeof fbAuth === 'undefined' || !fbAuth.currentUser) return;
+  profitLedgerRemoteBusy = true;
+  try{
+    const list = await loadIndex();
+    if(!list) return;
+    let seen = null;
+    try{ seen = JSON.parse(localStorage.getItem(PROFIT_LEDGER_SEEN_KEY)||'null'); }catch(e){}
+    const link = getLinkedFile(PROFIT_LEDGER_LINK_KEY);
+    const profits = list.filter(e=>e && e.id && e.caseType === 'profit');
+    if(!seen || seen.path !== link.path){
+      // 처음: 지금 상태를 기준으로만 잡는다(전체를 다시 쓰지 않음)
+      const m = {}; profits.forEach(e=>{ m[e.id] = Number(e.updated)||0; });
+      try{ localStorage.setItem(PROFIT_LEDGER_SEEN_KEY, JSON.stringify({ path: link.path, m })); }catch(e){}
+    } else {
+      const now = Date.now();
+      for(const e of profits){
+        const upd = Number(e.updated)||0;
+        if(seen.m[e.id] === upd) continue;
+        if(upd > now - 30000) continue;                          // 방금 저장 중인 건은 다음에(건 내용 저장이 끝난 뒤)
+        if(upd <= (profitLedgerWrittenAt[e.id]||0) || profitLedgerAutoQueue.has(e.id)){ seen.m[e.id] = upd; continue; }   // 이 PC가 쓴 것
+        seen.m[e.id] = upd;
+        profitLedgerPendingAdd(e.id);
+      }
+      try{ localStorage.setItem(PROFIT_LEDGER_SEEN_KEY, JSON.stringify(seen)); }catch(e){}
+    }
+    // 대기 목록(다른 PC에서 고친 건 + 지난번에 못 쓴 건)을 서버의 최신 내용으로 받아 쓴다.
+    const pending = profitLedgerPendingGet().filter(id=>!profitLedgerAutoQueue.has(id));
+    if(!pending.length) return;
+    let queued = 0;
+    for(const id of pending){
+      const c = await loadCase(id);
+      if(!c || c.caseType !== 'profit' || !String(c.customer||'').trim()){ profitLedgerPendingRemove([id]); continue; }
+      // 이 PC에서 지금 열어 고치고 있는 건이 아니면, 화면용 캐시도 서버의 최신 내용으로 바꿔 둔다.
+      const cached = caseCache[id];
+      let obj = c;
+      if(cached && JSON.stringify(cached) === JSON.stringify(c)) obj = cached;
+      else if(cached && typeof activeCase !== 'undefined' && activeCase && activeCase.id === id) obj = c;
+      else caseCache[id] = c;
+      profitLedgerAutoQueue.set(id, obj); queued++;
+    }
+    if(queued) flushProfitLedgerAuto();
+  }catch(e){ console.warn('이윤정산 다른 PC 변경 확인 실패', e); }
+  finally{ profitLedgerRemoteBusy = false; }
+}
+setInterval(()=>{ pollProfitLedgerRemoteEdits(); }, 120000);
+setTimeout(()=>{ pollProfitLedgerRemoteEdits(); }, 20000);
 // 연결 줄(가로 목록·상세 화면 공용). getCases(): 버튼을 눌렀을 때 기록할 건들.
 function profitLedgerLinkHtml(writeLabel){
   const link = getLinkedFile(PROFIT_LEDGER_LINK_KEY);
