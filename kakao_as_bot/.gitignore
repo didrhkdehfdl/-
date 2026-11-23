@@ -2,3 +2,4 @@ state.json
 run.log
 run_console.log
 __pycache__/
+누락목록_*.csv

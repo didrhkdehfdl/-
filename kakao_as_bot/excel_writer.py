@@ -151,6 +151,27 @@ class _Sheet:
                 from openpyxl.styles import PatternFill
                 cell.fill = PatternFill("solid", fgColor="%02X%02X%02X" % color)
 
+    def get_color(self, r, c):
+        """칸 배경색 (R, G, B) 또는 None."""
+        if self.mode == "xlwings":
+            return self.ws.range((r, c)).color
+        fill = self.ws.cell(r, c).fill
+        if fill is None or fill.fill_type != "solid":
+            return None
+        rgb = fill.fgColor.rgb
+        if not isinstance(rgb, str) or len(rgb) < 6:
+            return None
+        return tuple(int(rgb[-6:][i:i + 2], 16) for i in (0, 2, 4))
+
+    def set_color(self, r, c, color):
+        """배경색 칠하기. color=None 이면 색 지우기."""
+        if self.mode == "xlwings":
+            self.ws.range((r, c)).color = color
+            return
+        from openpyxl.styles import PatternFill
+        self.ws.cell(r, c).fill = (PatternFill("solid", fgColor="%02X%02X%02X" % color)
+                                   if color else PatternFill(fill_type=None))
+
     def get_formula(self, r, c):
         if self.mode == "xlwings":
             return self.ws.range((r, c)).formula
