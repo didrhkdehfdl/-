@@ -1,11 +1,11 @@
-"""독립채산제 엑셀에서 접수된 건 중 빠진 칸을 찾아 빨간색으로 칠한다.
+"""독립채산제 엑셀에서 접수된 건 중 빠진 칸을 찾아 누락목록 엑셀로 정리한다.
 
 사용법:
-  python check_missing.py              누락 칸을 빨간색으로 칠하고 목록 파일(누락목록_날짜.xlsx) 저장
-  python check_missing.py --no-color   칠하지 않고 목록만 확인
+  python check_missing.py              독립채산제 파일은 읽기만 하고, 누락목록_날짜_시각.xlsx 를 새로 만든다
+  python check_missing.py --color      (선택) 독립채산제 파일의 누락 칸도 빨간색으로 칠한다
   python check_missing.py --file 경로.xlsx   다른 엑셀 파일 검사
 
-- 다시 실행하면, 예전에 빨간색으로 칠했던 칸 중 이제 채워진 칸은 색을 지운다.
+- --color 로 다시 실행하면, 예전에 빨간색으로 칠했던 칸 중 이제 채워진 칸은 색을 지운다.
 - '-' 처럼 일부러 적어 둔 값은 채워진 것으로 본다.
 - 접수한 지 얼마 안 된 건(grace_days 이내)은 처리 관련 칸을 아직 진행 중으로 보고 검사하지 않는다.
 """
@@ -55,7 +55,7 @@ FIELDS = ["행", "분류", "접수일자", "요청자", "고객/발전소", "누
 
 
 def write_report(problems, counts, check, path, first, last):
-    """누락목록_날짜.xlsx : 「요약」 시트(항목별 건수) + 「누락목록」 시트(첫 행 틀 고정)."""
+    """누락목록_날짜_시각.xlsx : 「요약」 시트(항목별 건수) + 「누락목록」 시트(첫 행 틀 고정)."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
@@ -117,12 +117,11 @@ def write_report(problems, counts, check, path, first, last):
     ws.freeze_panes = "A2"  # 첫 행 틀 고정
     ws.auto_filter.ref = f"A1:F{max(1, len(problems) + 1)}"
 
-    out = HERE / f"누락목록_{date.today():%Y%m%d}.xlsx"
-    try:
-        wb.save(out)
-    except PermissionError:  # 같은 이름 파일이 열려 있으면 다른 이름으로
+    # 실행할 때마다 새 파일 (예: 누락목록_20261123_1430.xlsx)
+    out = HERE / f"누락목록_{datetime.now():%Y%m%d_%H%M}.xlsx"
+    if out.exists():
         out = HERE / f"누락목록_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
-        wb.save(out)
+    wb.save(out)
     return out
 
 
@@ -130,7 +129,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(HERE / "config.json"))
     ap.add_argument("--file", help="검사할 엑셀 파일 (기본: config.json 의 엑셀)")
-    ap.add_argument("--no-color", action="store_true", help="칠하지 않고 목록만 만든다")
+    ap.add_argument("--color", action="store_true", help="독립채산제 파일의 누락 칸을 빨간색으로 칠한다")
     ap.add_argument("--grace-days", type=int, help="최근 며칠 접수 건은 처리 칸 검사 제외 (기본 7)")
     args = ap.parse_args()
 
@@ -143,7 +142,10 @@ def main():
     path = excel_writer.resolve_excel_path(config)
     log(f"누락 확인 시작: {path} 「{config['sheet_name']}」")
 
-    sh = excel_writer._Sheet(path, config["sheet_name"], config.get("header_row", 3), log)
+    sh = excel_writer._Sheet(path, config["sheet_name"], config.get("header_row", 3), log,
+                             read_only=not args.color)
+    if not args.color:
+        log("독립채산제 파일은 읽기만 하고 바꾸지 않습니다.")
     try:
         last = sh.last_used_row()
         first = sh.header_row + 1
@@ -188,7 +190,7 @@ def main():
                 for f in missing:
                     red_cells.add((r, col_idx(COLUMNS[f])))
 
-        if not args.no_color:
+        if args.color:
             # 1) 예전에 칠한 빨간 칸 중 이제 채워진 칸은 색 지우기
             check_cols = {col_idx(COLUMNS[f]) for f in
                           set(check["required"]) | set(check["paid_required"])}
@@ -221,7 +223,7 @@ def main():
         log(f"  {p['행']}행 {p['접수일자']} {p['고객/발전소']} → {p['누락 항목']}")
     if len(problems) > 30:
         log(f"  ... 외 {len(problems) - 30}건 (전체 목록: {out.name})")
-    if not args.no_color:
+    if args.color:
         log(f"빨간색으로 칠한 칸 {len(red_cells)}개, 채워져서 색을 지운 칸 {len(recolor)}개")
     log(f"누락 목록 파일: {out}")
 
