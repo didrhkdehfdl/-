@@ -5668,25 +5668,40 @@ async function writeProfitCasesToLinkedLedger(cases, opts){
   if(!link) throw new Error('사급 건별 정산 PC 엑셀 파일이 연결돼 있지 않습니다.');
   await checkExcelHelper();
   if(!excelHelperRunning) throw new Error('엑셀 도우미가 실행되어 있지 않습니다. 카드관리 탭에서 받은 excel-helper.cmd를 실행한 뒤 다시 해주세요.');
-  if(excelHelperVersion < 18) throw new Error('실행 중인 엑셀 도우미가 예전 버전입니다. 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).');
+  // v59부터: 이름이 같아도 시공일·용량이 다르면 다른 건으로 보고 새 행을 만든다(예전 도우미는 이름만 보고 덮어씀).
+  if(excelHelperVersion < 59) throw new Error('실행 중인 엑셀 도우미가 예전 버전입니다(v59 필요). 카드관리 탭의 "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).');
   await ensureSalesCasesLoaded();
   const templates = {};
   Object.keys(LEDGER_FORMULA_TEMPLATES).forEach(col => { templates[col] = LEDGER_FORMULA_TEMPLATES[col]('{n}'); });
   const items = cases.map(p => ({ id: p.id, customer: p.customer || '', prevCustomer: p.ledgerCustomer || '', onlyExisting: !!(opts && opts.onlyExisting),
+    ident: profitLedgerIdentOf(p), prevIdent: p.ledgerIdent || null, prevRow: Number(p.ledgerRow) || 0,
     cells: profitLedgerCellsFor(p, findMatchingSalesRecord(p.customer)) }));
   const res = await excelHelperCall('/profitledger/write', { path: link.path, sheet: PROFIT_LEDGER_SHEET, headerRow: 4, dataStart: 6,
     headerChecks: { C:'고객명', L:'총사업비', AP:'회사입금가' }, formulaTemplates: templates, items }, 5*60*1000);
   // 파일에 쓴 고객명을 기억해 둔다 — 나중에 고객명을 고치면 그 행을 새 이름으로 고쳐 쓰게(새 행을 또 만들지 않게).
-  (res.results||[]).forEach(r=>{ if(!r.error && !r.skipped){ const c = cases.find(x=>x.id===r.id); if(c) c.ledgerCustomer = c.customer || ''; } });
+  // 같은 이름의 다른 건과 헷갈리지 않게, 그때의 시공일·용량과 쓴 행 번호도 같이 기억해 건에 저장해 둔다.
+  (res.results||[]).forEach(r=>{
+    if(r.error || r.skipped) return;
+    const c = cases.find(x=>x.id===r.id); if(!c) return;
+    const ident = profitLedgerIdentOf(c);
+    const changed = c.ledgerCustomer !== (c.customer || '') || Number(c.ledgerRow) !== Number(r.rowNum) || JSON.stringify(c.ledgerIdent||null) !== JSON.stringify(ident);
+    c.ledgerCustomer = c.customer || ''; c.ledgerIdent = ident; c.ledgerRow = Number(r.rowNum) || 0;
+    if(changed){ profitLedgerSkipAutoOnce.add(c.id); persistCase(c); }   // 기억만 저장(파일에 다시 쓰지 않음)
+  });
   // 방금 앱이 쓴 저장 때문에 "파일이 바뀌었다"며 다시 읽지 않게 저장 시각을 기억한다.
   if((res.results||[]).some(r=>!r.error && !r.skipped)) await rememberProfitLedgerMtime();
   return res;
+}
+function profitLedgerIdentOf(p){
+  return { e: p.constructionDate ? isoDate(new Date(p.constructionDate)) : '', k: Number(p.capacityKw) || 0 };
 }
 function profitLedgerResultText(res){
   const rs = res.results || [];
   const ok = rs.filter(r=>!r.error && !r.skipped), fail = rs.filter(r=>r.error);
   const newCount = ok.filter(r=>r.wasNewRow).length;
   let msg = `PC 파일에 ${ok.length}건 기록 (새 행 ${newCount}건, 기존 행 갱신 ${ok.length-newCount}건)` + (ok.length ? ': ' + ok.map(r=>`${r.customer}(${r.rowNum}행)`).join(', ') : '');
+  const dupNew = ok.filter(r=>r.wasNewRow && (r.sameNameRows||[]).length);
+  if(dupNew.length) msg += `\n같은 이름이 있지만 시공일·용량이 달라 새 행으로 만든 건: ` + dupNew.map(r=>`${r.customer}(${r.rowNum}행, 기존 ${(r.sameNameRows||[]).join('·')}행)`).join(', ');
   if(fail.length) msg += `\n건너뜀 ${fail.length}건:\n` + fail.map(r=>`· ${r.customer}: ${r.error}`).join('\n');
   return msg;
 }
@@ -5727,7 +5742,7 @@ const flushProfitLedgerAuto = debounce(async ()=>{
     const parts = [];
     const added = ok.filter(r=>r.wasNewRow), updated = ok.filter(r=>!r.wasNewRow);
     if(updated.length) parts.push(`사급 건별 정산 파일 자동 갱신: ${updated.map(r=>`${r.customer}(${r.rowNum}행)`).join(', ')}`);
-    if(added.length) parts.push(`사급 건별 정산 파일에 새 고객 추가: ${added.map(r=>`${r.customer}(${r.rowNum}행)`).join(', ')}`);
+    if(added.length) parts.push(`사급 건별 정산 파일에 새 고객 추가: ${added.map(r=>`${r.customer}(${r.rowNum}행${(r.sameNameRows||[]).length ? ` · 같은 이름 ${(r.sameNameRows||[]).join('·')}행과 내용이 달라 새 행` : ''})`).join(', ')}`);
     if(skipped.length) parts.push(`파일에 고객 행이 없어 자동 갱신 안 함: ${skipped.map(r=>r.customer).join(', ')} — 이윤정산 그 건의 "💾 이 건 PC 파일에 기록"으로 행을 추가해 주세요.`);
     if(failed.length) parts.push(`⚠ 건너뜀: ${failed.map(r=>`${r.customer}(${r.error})`).join(', ')}`);
     profitLedgerAutoNote = `${t} ` + parts.join(' / ');
@@ -5757,7 +5772,7 @@ function profitLedgerLinkHtml(writeLabel){
   return `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 10px; border-radius:8px; border:1px dashed var(--sky); margin-bottom:10px;">
     <span style="font-size:12px; font-weight:600;">사급 건별 정산 PC 파일</span>
     ${link ? `<span style="font-size:11.5px; color:var(--sky); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:380px;" title="${escapeHtml(link.path)}">🔗 ${escapeHtml(link.path)}</span>
-      ${writeLabel ? b('profitLedgerLinkWriteBtn', writeLabel, '#2e9e5b', '같은 고객명의 행을 갱신하고, 없으면 마지막 고객 행 아래에 새 행을 만들어 기록합니다(엑셀에 열어 둔 채로도 됩니다). 기록 전 원본은 건드리지 않은 다른 칸·시트·수식 그대로 둡니다.') : ''}
+      ${writeLabel ? b('profitLedgerLinkWriteBtn', writeLabel, '#2e9e5b', '같은 고객명이면서 시공일·용량이 같은 행을 갱신하고, 없으면(이름만 같고 내용이 다르면 포함) 마지막 고객 행 아래에 새 행을 만들어 기록합니다(엑셀에 열어 둔 채로도 됩니다). 기록 전 원본은 건드리지 않은 다른 칸·시트·수식 그대로 둡니다.') : ''}
       ${b('profitLedgerLinkPickBtn', '다른 파일로 바꾸기', 'var(--muted)', '연결할 파일을 다시 고릅니다.')}
       ${b('profitLedgerUnlinkBtn', '✕ 해제', 'var(--muted)', '연결만 해제합니다(파일은 그대로).')}
       <span id="profitLedgerAutoNote" style="font-size:11px; color:${/^⚠/.test(profitLedgerAutoNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(profitLedgerAutoNote || '양방향 자동 연동: 이윤정산을 고치거나 새로 만들면 파일의 고객 행이 갱신·추가되고, 파일에서 고치고 저장하면 이윤정산이 자동으로 바뀝니다(1분마다 확인).')}</span>`
@@ -5851,13 +5866,15 @@ async function syncProfitCasesFromLedgerFile(force){
     const rows = r.rows || [];
     const idx = col => xlsxColToIdx(col);
     const fresh = {};
+    const freshByRow = {};   // "고객명#행" → 값 (같은 이름이 여러 행이면 앱이 기억한 행 번호로 짝짓는다)
     for(let i=5; i<rows.length; i++){               // 6행부터
       const cust = String((rows[i]||[])[idx('C')] ?? '').trim();
       if(!cust) continue;
-      if(fresh[cust]){ fresh[cust].__dup = true; continue; }
       const vals = {};
       PROFIT_LEDGER_READ_MAP.forEach(([col,,type]) => { vals[col] = normLedgerVal((rows[i]||[])[idx(col)], type); });
-      fresh[cust] = vals;
+      freshByRow[`${cust}#${i+1}`] = vals;
+      if(fresh[cust]){ fresh[cust].__dup = true; continue; }
+      fresh[cust] = { ...vals };
     }
     // 구조물 수량(AA열)이 소수로 적힌 행(예전에 용량÷3 그대로 기록된 행)은 반올림한 정수로 고쳐 쓴다.
     const qtyFix = [];
@@ -5871,6 +5888,7 @@ async function syncProfitCasesFromLedgerFile(force){
         const fixed = roundStructureQty(aa);
         values.AA = { col: idx('AA')+1, type:'number', value: fixed };
         if(fresh[cust] && !fresh[cust].__dup) fresh[cust].AA = normLedgerVal(fixed, 'number');
+        if(freshByRow[`${cust}#${i+1}`]) freshByRow[`${cust}#${i+1}`].AA = normLedgerVal(fixed, 'number');
       }
       // 부착형이 아닌 구조물의 판매단가(AC)×수량이 50만원 단위 상한을 넘으면 판매단가를 상한에 맞춘다.
       {
@@ -5893,6 +5911,7 @@ async function syncProfitCasesFromLedgerFile(force){
         if(nf !== as.trim()){
           values.AS = { col: idx('AS')+1, type:'text', value: nf };
           if(fresh[cust] && !fresh[cust].__dup) fresh[cust].AS = normLedgerVal(nf, 'text');
+          if(freshByRow[`${cust}#${i+1}`]) freshByRow[`${cust}#${i+1}`].AS = normLedgerVal(nf, 'text');
         }
       }
       if(Object.keys(values).length) qtyFix.push({ id: 'fix'+(i+1), row: i+1, customerKey: cust.replace(/\s+/g,''), date: '', values });
@@ -5909,14 +5928,23 @@ async function syncProfitCasesFromLedgerFile(force){
     if(snap && snap.path === link.path){
       await ensureSalesCasesLoaded();
       const profits = await loadAllProfitCases();
+      const targets = [];
       Object.keys(fresh).forEach(cust => {
-        const now = fresh[cust], before = snap.rows[cust];
-        if(now.__dup || !before) return;
+        if(fresh[cust].__dup) return;
+        const matches = profits.filter(p => String(p.customer||'').trim() === cust);
+        if(matches.length === 1) targets.push({ cust, now: fresh[cust], before: snap.rows[cust], p: matches[0] });
+      });
+      // 같은 이름이 여러 행인 고객: 앱이 그 건을 쓴 행 번호(ledgerRow)로 짝짓는다.
+      Object.keys(freshByRow).forEach(key => {
+        const at = key.lastIndexOf('#'), cust = key.slice(0, at), row = Number(key.slice(at+1));
+        if(!fresh[cust] || !fresh[cust].__dup) return;
+        const matches = profits.filter(p => String(p.customer||'').trim() === cust && Number(p.ledgerRow) === row);
+        if(matches.length === 1) targets.push({ cust: `${cust}(${row}행)`, now: freshByRow[key], before: (snap.byRow||{})[key], p: matches[0] });
+      });
+      targets.forEach(({ cust, now, before, p }) => {
+        if(!before) return;
         const changedCols = PROFIT_LEDGER_READ_MAP.filter(([col]) => now[col] !== before[col]);
         if(!changedCols.length) return;
-        const matches = profits.filter(p => String(p.customer||'').trim() === cust);
-        if(matches.length !== 1) return;
-        const p = matches[0];
         const caseCells = {}; profitLedgerCellsFor(p, findMatchingSalesRecord(p.customer)).forEach(c => { caseCells[c.col] = c; });
         const fields = [];
         changedCols.forEach(([col, field, type]) => {
@@ -5939,7 +5967,7 @@ async function syncProfitCasesFromLedgerFile(force){
         applied.push(`${cust}(${fields.length}항목)`);
       });
     }
-    try{ localStorage.setItem(PROFIT_LEDGER_SNAPSHOT_KEY, JSON.stringify({ path: link.path, rows: fresh })); }catch(e){}
+    try{ localStorage.setItem(PROFIT_LEDGER_SNAPSHOT_KEY, JSON.stringify({ path: link.path, rows: fresh, byRow: freshByRow })); }catch(e){}
     setLinkedFile(PROFIT_LEDGER_LINK_KEY, { ...getLinkedFile(PROFIT_LEDGER_LINK_KEY), lastMtime: mtime });
     if(qtyFixed){
       await rememberProfitLedgerMtime();   // 방금 고쳐 쓴 저장 때문에 다시 읽지 않게
@@ -14940,7 +14968,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 58;
+const EXCEL_HELPER_VERSION = 59;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -22533,7 +22561,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '58'
+$Version = '59'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -23320,6 +23348,30 @@ function Backup-FileThrottled([string]$path, [string]$sub, [int]$minutes){
     Log "백업: $dest"
   } catch { Log "백업 실패: $($_.Exception.Message)" }
 }
+# 사급 건별 정산 — 같은 고객명 행이 같은 건인지 보기 위한 시공일·용량 비교 값
+function Ledger-DateKey($v){
+  if($null -eq $v){ return '' }
+  if($v -is [double] -or $v -is [int]){ if([double]$v -lt 1){ return '' }; return ([datetime]::FromOADate([math]::Floor([double]$v))).ToString('yyyy-MM-dd') }
+  $t = ([string]$v).Trim()
+  if(-not $t){ return '' }
+  $m = [regex]::Match($t, '(\d{4})\D+(\d{1,2})\D+(\d{1,2})')
+  if($m.Success){ return ('{0}-{1:00}-{2:00}' -f [int]$m.Groups[1].Value, [int]$m.Groups[2].Value, [int]$m.Groups[3].Value) }
+  return ''
+}
+function Ledger-KwKey($v){
+  if($null -eq $v){ return '' }
+  $n = 0.0
+  if(-not [double]::TryParse((([string]$v) -replace ',',''), [ref]$n)){ return '' }
+  if($n -le 0){ return '' }
+  return ([math]::Round($n, 2)).ToString([Globalization.CultureInfo]::InvariantCulture)
+}
+# m: 양쪽에 다 있고 같은 값 수, c: 양쪽에 다 있는데 다른 값 수
+function Ledger-IdentScore($fe, $fk, $ie, $ik){
+  $m = 0; $c = 0
+  if($fe -and $ie){ if($fe -eq $ie){ $m++ } else { $c++ } }
+  if($fk -and $ik){ if($fk -eq $ik){ $m++ } else { $c++ } }
+  return @{ m=$m; c=$c }
+}
 function Handle-ProfitLedgerWrite($body){
   $path = [string]$body.path
   $xl = Get-Excel $true
@@ -23354,22 +23406,53 @@ function Handle-ProfitLedgerWrite($body){
       $t = if($null -eq $v){ '' } else { ([string]$v) -replace '\s','' }
       if($t){ $names[$r] = $t }
     }
+    # 같은 이름이라도 다른 사람(다른 건)일 수 있어 시공일(E)·용량(K)도 같이 읽어 둔다.
+    $eMap = @{}; $kMap = @{}
+    $ebox = @{}; $kbox = @{}
+    Invoke-Retry { $ebox.v = $ws.Range("E${start}:E${last}").Value2 } | Out-Null
+    Invoke-Retry { $kbox.v = $ws.Range("K${start}:K${last}").Value2 } | Out-Null
+    for($r=$start; $r -le $last; $r++){
+      if(-not $names.ContainsKey($r)){ continue }
+      $ev = if($start -eq $last){ $ebox.v } else { $ebox.v[($r - $start + 1), 1] }
+      $kv = if($start -eq $last){ $kbox.v } else { $kbox.v[($r - $start + 1), 1] }
+      $eMap[$r] = Ledger-DateKey $ev
+      $kMap[$r] = Ledger-KwKey $kv
+    }
     $templates = $body.formulaTemplates
     $results = @(); $maxNew = 0; $changed = $false
     foreach($it in @($body.items)){
       $cust = ([string]$it.customer).Trim()
       $custKey = $cust -replace '\s',''
       if(-not $cust){ $results += @{ id=[string]$it.id; customer=$cust; error='고객명이 비어 있습니다.' }; continue }
-      $hits = @($names.Keys | Where-Object { $names[$_] -eq $custKey } | Sort-Object)
-      # 고객명을 고친 건이면(앱이 지난번에 쓴 이름 prevCustomer) 그 이름의 행을 새 이름으로 고쳐 쓴다 — 새 행을 또 만들지 않게.
+      # 같은 고객명 행을 찾되, 이름만 같고 내용(시공일·용량)이 다른 행은 다른 건으로 보고 새 행을 만든다.
+      #  - 앱이 이 건을 전에 파일에 쓴 적이 있으면(prevCustomer/prevIdent): 지난번에 쓴 행(prevRow)이 그대로 있거나,
+      #    시공일·용량 중 하나라도 같거나 비교할 값이 없으면 그 건의 행으로 본다(파일에서 한 칸만 고친 경우도 같은 건).
+      #  - 처음 쓰는 건이면: 시공일이나 용량이 같고 다른 값이 어긋나지 않을 때만 같은 건으로 보고, 아니면 새 행.
       $prevKey = ([string]$it.prevCustomer) -replace '\s',''
-      if($hits.Count -eq 0 -and $prevKey -and $prevKey -ne $custKey){
-        $ph = @($names.Keys | Where-Object { $names[$_] -eq $prevKey } | Sort-Object)
-        if($ph.Count -eq 1){ $hits = $ph; $names[[int]$ph[0]] = $custKey }
+      $written = [bool]$prevKey
+      $idE = Ledger-DateKey ([string]$it.ident.e); $idK = Ledger-KwKey $it.ident.k
+      $pvE = ''; $pvK = ''
+      if($it.prevIdent){ $pvE = Ledger-DateKey ([string]$it.prevIdent.e); $pvK = Ledger-KwKey $it.prevIdent.k }
+      $nameKeys = @($custKey); if($prevKey -and $prevKey -ne $custKey){ $nameKeys += $prevKey }
+      $same = @($names.Keys | Where-Object { $nameKeys -contains $names[$_] } | Sort-Object)
+      $cands = @(); $best = -1
+      foreach($r0 in $same){
+        $r1 = [int]$r0
+        $sc = Ledger-IdentScore $eMap[$r1] $kMap[$r1] $idE $idK
+        if($written -and ($pvE -or $pvK)){ $sc2 = Ledger-IdentScore $eMap[$r1] $kMap[$r1] $pvE $pvK; if($sc2.m -gt $sc.m -or ($sc2.m -eq $sc.m -and $sc2.c -lt $sc.c)){ $sc = $sc2 } }
+        $ok = if($written){ ($sc.m -ge 1) -or ($sc.c -eq 0) } else { ($sc.m -ge 1) -and ($sc.c -eq 0) }
+        if(-not $ok){ continue }
+        if($sc.m -gt $best){ $best = $sc.m; $cands = @($r1) } elseif($sc.m -eq $best){ $cands += $r1 }
       }
-      if($hits.Count -gt 1){ $results += @{ id=[string]$it.id; customer=$cust; error="같은 이름이 $($hits.Count)개 행($($hits -join ', ')행)에 있어 어느 행인지 정할 수 없습니다." }; continue }
+      $hits = $cands
+      $pr = 0; try { $pr = [int]$it.prevRow } catch {}
+      if($written -and $pr -gt 0 -and ($cands -contains $pr)){ $hits = @($pr) }
+      if(-not $written -and $same.Count -gt 0 -and $hits.Count -eq 0 -and -not $idE -and -not $idK){
+        $results += @{ id=[string]$it.id; customer=$cust; error="같은 이름의 행($($same -join ', ')행)이 이미 있는데 이 건에 시공일·용량이 없어 같은 건인지 알 수 없습니다. 시공일이나 용량을 넣으면 기록합니다." }; continue
+      }
+      if($hits.Count -gt 1){ $results += @{ id=[string]$it.id; customer=$cust; error="같은 이름·같은 내용의 행이 $($hits.Count)개($($hits -join ', ')행) 있어 어느 행인지 정할 수 없습니다." }; continue }
       $row = 0; $isNew = $false
-      if($hits.Count -eq 1){ $row = [int]$hits[0] }
+      if($hits.Count -eq 1){ $row = [int]$hits[0]; $names[$row] = $custKey }
       elseif($it.onlyExisting){ $results += @{ id=[string]$it.id; customer=$cust; skipped=$true }; continue }
       else {
         $lastFilled = @($names.Keys | Sort-Object -Descending)[0]
@@ -23385,6 +23468,7 @@ function Handle-ProfitLedgerWrite($body){
         $isNew = $true; $names[$row] = $custKey
         if($row -gt $maxNew){ $maxNew = $row }
       }
+      $eMap[$row] = $idE; $kMap[$row] = $idK
       foreach($cellSpec in @($it.cells)){
         $cell = $ws.Range(([string]$cellSpec.col) + $row)
         $v = $cellSpec.value
@@ -23409,7 +23493,7 @@ function Handle-ProfitLedgerWrite($body){
         }
       }
       $changed = $true
-      $results += @{ id=[string]$it.id; customer=$cust; rowNum=$row; wasNewRow=$isNew }
+      $results += @{ id=[string]$it.id; customer=$cust; rowNum=$row; wasNewRow=$isNew; sameNameRows=@($same | Where-Object { [int]$_ -ne $row }) }
     }
     if($maxNew -gt 0){
       foreach($n in $wb.Names){
