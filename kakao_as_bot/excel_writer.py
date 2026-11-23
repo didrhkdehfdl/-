@@ -76,8 +76,8 @@ def _to_cell(v):
 class _Sheet:
     """xlwings / openpyxl 공통 인터페이스 (1부터 시작하는 행·열 번호)."""
 
-    def __init__(self, path, sheet_name, header_row):
-        self.path, self.header_row = str(path), header_row
+    def __init__(self, path, sheet_name, header_row, log=print):
+        self.path, self.header_row, self.log = str(path), header_row, log
         self.app = None  # 우리가 몰래 띄운 Excel (끝나면 닫는다)
         try:
             import xlwings as xw
@@ -110,9 +110,14 @@ class _Sheet:
                 try:
                     if str(book.fullname).lower() == target:
                         if not app.visible:
-                            # 예전 실행이 남긴 보이지 않는 Excel → 저장 후 닫아서 잠금을 푼다
-                            self.app = app
+                            # 예전 실행이 남긴 보이지 않는 Excel: 내용이 오래됐을 수 있으므로
+                            # 저장하지 않고 닫은 뒤, 디스크의 최신 파일을 새로 연다
+                            self.log("  (화면에 안 보이는 엑셀이 파일을 잡고 있어 저장하지 않고 닫았습니다)")
                             app.display_alerts = False
+                            book.api.Close(False)
+                            if not app.books:
+                                app.quit()
+                            continue
                         return book
                 except Exception:
                     pass
@@ -187,7 +192,7 @@ class Writer:
         self.config, self.log = config, log
         self.path = resolve_excel_path(config)
         log(f"엑셀 파일: {self.path}")
-        self.sh = _Sheet(self.path, config["sheet_name"], config.get("header_row", 3))
+        self.sh = _Sheet(self.path, config["sheet_name"], config.get("header_row", 3), log)
         try:
             self._check_headers()
         except Exception:
@@ -196,6 +201,11 @@ class Writer:
             raise
         self.last = self.sh.last_used_row()
         self.template_row = self.last
+        self.written = {}  # 행 → (열, 값): 저장 후 실제 파일에 들어갔는지 확인용
+        sheet_name = self.sh.ws.name if self.sh.mode == "xlwings" else self.sh.ws.title
+        peek = [self.sh.get(self.last, col_idx(x)) for x in ("C", "D", "J", "K", "M")]
+        log(f"「{sheet_name}」 시트 마지막 데이터 행: {self.last}행 → "
+            + " / ".join(str(v)[:20] for v in peek if v not in (None, "")))
         self.formulas = {}
         for c in range(1, col_idx("AK")):
             f = self.sh.get_formula(self.template_row, c)
@@ -235,6 +245,8 @@ class Writer:
                 if old and str(value) not in old:
                     value = f"{old}\n\n{value}"
             self.sh.set(r, c, value, color)
+            if field in ("연락처", "고객명", "조치 내역") or r not in self.written:
+                self.written[r] = (c, value)
         self.changed += 1
 
     def _recent_rows(self, n=1500):
@@ -314,6 +326,24 @@ class Writer:
         if self.changed:
             self.sh.save(out_path)
 
+    def verify(self, out_path=None):
+        """저장된 파일을 다시 읽어서 쓴 값이 실제로 들어갔는지 확인."""
+        if not self.written:
+            return
+        import openpyxl
+        wb = openpyxl.load_workbook(out_path or self.path, read_only=True, data_only=True)
+        ws = wb[self.config["sheet_name"]]
+        bad = []
+        for r, (c, value) in sorted(self.written.items()):
+            got = ws.cell(r, c).value
+            if str(_to_cell(got) or "").strip() != str(_to_cell(value) or "").strip():
+                bad.append(f"{r}행(파일 값: {str(got)[:20]!r})")
+        wb.close()
+        if bad:
+            raise RuntimeError(f"저장 확인 실패: 파일을 다시 열어 보니 {', '.join(bad)} 에 내용이 없습니다. "
+                               f"파일 경로({self.path})와 W: 드라이브 동기화 상태를 확인하세요.")
+        self.log(f"저장 확인 완료: {', '.join(str(r) for r in sorted(self.written))}행이 파일에 들어간 것을 확인했습니다.")
+
 
 def apply_records(records, config, out_path=None, log=print):
     if not records:
@@ -325,4 +355,6 @@ def apply_records(records, config, out_path=None, log=print):
     finally:
         if w.sh.mode == "xlwings":
             w.sh.close()
+    if n:
+        w.verify(out_path)
     return n
