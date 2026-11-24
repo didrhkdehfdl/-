@@ -5741,11 +5741,68 @@ function showLedgerToast(msg, isErr){
   el.style.display = 'block';
   clearTimeout(el._t); el._t = setTimeout(()=>{ el.style.display = 'none'; }, isErr ? 15000 : 8000);
 }
+// ---- PC 파일이 열려 있어(잠겨) 못 쓴 경우: 닫힐 때까지 기다렸다가 자동으로 다시 쓴다 ----
+// 다른 사람이 그 파일을 열고 있으면 엑셀이 읽기 전용으로만 열려 쓸 수 없다. 예전엔 오류 창만 띄우고 다음에 또
+// 고칠 때까지 기다렸다. 이제 쓰지 못한 내용은 그대로 남겨 두고(각 기능의 대기 목록), 1분마다 파일이 닫혔는지만
+// 가볍게 확인해(도우미 v60: 파일을 열지 않고 잠김만 봄) 닫히면 그때 자동으로 쓴다. 오류 창은 처음 한 번만 띄운다.
+function isFileLockedError(e){
+  const m = String((e && e.message) || e || '');
+  return /읽기 전용으로만 열립니다|잠겨 있|다른 사용자가 사용 중|being used by another|is locked|편집 중이라|파일이 사용 중/i.test(m);
+}
+const fileLockWaits = new Map();     // key -> { label, path, retry, since }
+const fileLockNotified = new Set();  // 이번에 이미 알린 key(같은 안내를 되풀이하지 않게)
+function fileLockWaiting(key){ return fileLockWaits.has(key); }
+function waitForFileUnlock(key, label, path, retry){
+  const prev = fileLockWaits.get(key);
+  fileLockWaits.set(key, { label, path, retry, since: prev ? prev.since : Date.now(), lastTry: Date.now() });
+  if(!fileLockNotified.has(key)){
+    fileLockNotified.add(key);
+    showLedgerToast(`"${label}" 파일이 다른 사람(또는 다른 프로그램)에서 열려 있어 지금은 쓰지 못했습니다.\n고친 내용은 그대로 남겨 두었다가, 파일이 닫히면 자동으로 씁니다.`, false);
+  }
+  renderFileLockBadge();
+}
+function fileLockResolved(key){
+  const had = fileLockNotified.delete(key);
+  fileLockWaits.delete(key);
+  if(had) showLedgerToast('파일이 닫혀서 기다리던 내용을 썼습니다.');
+  renderFileLockBadge();
+}
+function renderFileLockBadge(){
+  let el = document.getElementById('fileLockBadge');
+  if(!fileLockWaits.size){ if(el) el.remove(); return; }
+  if(!el){
+    el = document.createElement('div'); el.id = 'fileLockBadge';
+    el.style.cssText = 'position:fixed; left:16px; bottom:56px; z-index:199; max-width:min(420px, calc(100vw - 32px)); padding:8px 12px; border-radius:8px; font-size:12px; line-height:1.5; background:#3d3218; color:#ffe6a8; box-shadow:0 4px 14px rgba(0,0,0,.25); white-space:pre-line;';
+    document.body.appendChild(el);
+  }
+  const t = ms => new Date(ms).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+  el.textContent = '⏳ 파일이 열려 있어 닫히면 쓰기 대기 중\n' + [...fileLockWaits.values()].map(w=>`· ${w.label} (${t(w.since)}부터)`).join('\n');
+}
+let fileLockCheckBusy = false;
+setInterval(async ()=>{
+  if(!fileLockWaits.size || fileLockCheckBusy) return;
+  fileLockCheckBusy = true;
+  try{
+    await checkExcelHelper();
+    if(!excelHelperRunning) return;
+    for(const [key, w] of [...fileLockWaits]){
+      let locked = true;
+      try{
+        if(excelHelperVersion >= 60){ locked = !!(await excelHelperCall('/filelocked', { path: w.path }, 20000)).locked; }
+        else locked = Date.now() - (w.lastTry||0) < 3*60*1000;   // 예전 도우미: 3분마다 그냥 다시 써 본다
+      }catch(e){ continue; }
+      if(locked) continue;
+      fileLockWaits.delete(key);   // 다시 써 보고, 또 잠겨 있으면 그 기능이 다시 대기에 넣는다
+      try{ await w.retry(); }catch(e){}
+    }
+  }finally{ fileLockCheckBusy = false; renderFileLockBadge(); }
+}, 60000);
 let profitLedgerUnlinkedWarned = false;
 let profitLedgerAutoBusy = false;
 const flushProfitLedgerAuto = debounce(async ()=>{
   // 앞 기록이 아직 끝나지 않았으면(새 행을 두 번 만들지 않게) 끝난 뒤 다시 한다.
   if(profitLedgerAutoBusy){ flushProfitLedgerAuto(); return; }
+  if(fileLockWaiting('profitledger')) return;   // 파일이 닫히길 기다리는 중 — 대기열은 그대로 두고, 닫히면 같이 쓴다
   const cases = [...profitLedgerAutoQueue.values()].filter(p=>String(p.customer||'').trim());
   profitLedgerAutoQueue.clear();
   if(!cases.length || !getLinkedFile(PROFIT_LEDGER_LINK_KEY)) return;
@@ -5755,6 +5812,7 @@ const flushProfitLedgerAuto = debounce(async ()=>{
     const res = await writeProfitCasesToLinkedLedger(cases, { onlyExisting:false });
     profitLedgerPendingRemove(cases.map(c=>c.id));   // 결과가 나온 건(성공·건너뜀 모두)은 대기 목록에서 뺀다
     profitLedgerRetryErr = '';
+    fileLockResolved('profitledger');
     const rs = res.results||[];
     const ok = rs.filter(r=>!r.error && !r.skipped), skipped = rs.filter(r=>r.skipped), failed = rs.filter(r=>r.error);
     const t = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
@@ -5769,6 +5827,12 @@ const flushProfitLedgerAuto = debounce(async ()=>{
   }catch(e){
     // 도우미가 꺼져 있거나 예전 버전, 엑셀이 바쁜 경우 등 — 그 건들을 버리지 않고 1분 뒤 다시 쓴다(새로고침해도 이어서).
     cases.forEach(c=>{ if(!profitLedgerAutoQueue.has(c.id)) profitLedgerAutoQueue.set(c.id, c); });
+    if(isFileLockedError(e)){
+      const lk = getLinkedFile(PROFIT_LEDGER_LINK_KEY);
+      profitLedgerAutoNote = `⏳ 파일이 열려 있어 ${profitLedgerPendingGet().length}건 대기 중 — 파일이 닫히면 자동으로 씁니다.`;
+      if(lk) waitForFileUnlock('profitledger', '사급 건별 정산', lk.path, ()=>flushProfitLedgerAuto());
+      return;
+    }
     const why = linkedFileErrorMessage(e).split('\n')[0];
     profitLedgerAutoNote = `⚠ 사급 건별 정산 파일 자동 갱신 대기 ${profitLedgerPendingGet().length}건 — ${why} (1분마다 다시 시도)`;
     if(why !== profitLedgerRetryErr){ profitLedgerRetryErr = why; showLedgerToast(profitLedgerAutoNote, true); }
@@ -11461,6 +11525,7 @@ const flushCardMasterAutoWrite = debounce(async ()=>{
   await ensureCardMasterLoaded();
   const targets = corpCardMasterTemplates.filter(t=>getLinkedFile(cardMasterLinkKey(t.id)));
   if(!targets.length){ cardMasterAutoDirty.clear(); return; }
+  if(fileLockWaiting('cardmaster')){ setCardMasterAutoNote('⏳ 통합본 파일이 열려 있어 쓰기 대기 중 — 파일이 닫히면 자동으로 씁니다.'); return; }
   // 통합본에는 승인내역에 있는 줄만 쓰므로, 예전 승인내역으로 쓰면 새로 승인된 줄이 파일에서 빠진다 — 최신으로 받는다.
   if(!(await refreshApprovalEntriesFromServer(true)).ok){
     setCardMasterAutoNote('통합본 PC 파일 자동 갱신 대기 중 — 서버의 최신 승인내역을 확인하지 못했습니다(1분 뒤 다시).', true);
@@ -11527,8 +11592,15 @@ const flushCardMasterAutoWrite = debounce(async ()=>{
       setCardMasterAutoNote(`${time} 통합본 PC 파일 ${label} 자동 갱신${problems ? ` · 넣지 못한 곳 ${problems}건` : ''}`, !!problems);
       showLedgerToast(`"${link.name}" ${label} 자동 갱신 완료${problems ? `\n\n${cardMasterWriteResultLines(r).join('\n\n')}` : ''}`, !!problems);
     }
+    fileLockResolved('cardmaster');
   }catch(e){
     dirtyNow.forEach(n=>cardMasterAutoDirty.add(n));
+    if(isFileLockedError(e)){
+      const t0 = targets[0], lk = t0 && getLinkedFile(cardMasterLinkKey(t0.id));
+      setCardMasterAutoNote('⏳ 통합본 파일이 열려 있어 쓰기 대기 중 — 파일이 닫히면 자동으로 씁니다.');
+      if(lk) waitForFileUnlock('cardmaster', '사무실관리카드 통합본', lk.path, ()=>flushCardMasterAutoWrite());
+      return;
+    }
     // 도우미가 다른 작업(O&M 파일 읽기 등) 중이라 답이 늦은 것뿐이면 오류 창을 띄우지 않고 1분 뒤 다시 한다.
     if(e && e.helperBusy){
       setCardMasterAutoNote('통합본 PC 파일 자동 갱신 대기 중 — 엑셀 도우미가 다른 작업 중이라 잠시 뒤 다시 씁니다.');
@@ -11757,7 +11829,7 @@ async function writeCardMasterCarMap(tmplId){
   return r;
 }
 async function flushHipassToCardMaster(){
-  if(hipassWriteBusy) return;
+  if(hipassWriteBusy || fileLockWaiting('hipass')) return;
   await ensureCardMasterLoaded();
   const targets = corpCardMasterTemplates.filter(t=>getLinkedFile(cardMasterLinkKey(t.id)));
   if(!targets.length) return;
@@ -11780,8 +11852,13 @@ async function flushHipassToCardMaster(){
       const sk = (r.skipped||[]);
       showLedgerToast(`통합본 하이패스 카드 ${label} 승인내역 반영${sk.length ? `\n넣지 못한 곳:\n${sk.join('\n')}` : ''}`, !!sk.length);
     }
+    fileLockResolved('hipass');
   }catch(e){
-    if(!(e && e.helperBusy)) showLedgerToast('통합본 하이패스 카드 반영 실패:\n' + linkedFileErrorMessage(e), true);
+    if(isFileLockedError(e)){
+      const t0 = targets[0], lk = t0 && getLinkedFile(cardMasterLinkKey(t0.id));
+      if(lk) waitForFileUnlock('hipass', '통합본 하이패스 카드', lk.path, ()=>flushHipassToCardMaster());
+    }
+    else if(!(e && e.helperBusy)) showLedgerToast('통합본 하이패스 카드 반영 실패:\n' + linkedFileErrorMessage(e), true);
   }finally{ hipassWriteBusy = false; }
 }
 // 연결한 PC 파일(O&M 리스트·사무실관리카드 통합본)은 어느 탭을 보고 있든(브라우저가 뒤에 있어도) 1분마다
@@ -13480,6 +13557,7 @@ const flushOMWrites = debounce(()=>{ writeOMPendingToFile().catch(()=>{}); }, 20
 async function writeOMPendingToFile(){
   const link = getLinkedFile(OM_LINK_KEY);
   if(!link || !omHasPending()) return;
+  if(fileLockWaiting('om')){ setOMSyncNote('⏳ 파일이 열려 있어 쓰기 대기 중 — 파일이 닫히면 자동으로 씁니다(고친 내용은 그대로 남아 있습니다).'); return; }
   if(omSyncBusy){ setTimeout(flushOMWrites, 1500); return; }
   omSyncBusy = true;
   try{
@@ -13526,8 +13604,14 @@ async function writeOMPendingToFile(){
     const n = (res.written||[]).length + addedIds.length + (res.deleted||[]).length;
     setOMSyncNote(`${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} 파일에 ${n}건 반영${(res.notFound||[]).length ? ` · 파일에서 못 찾은 행: ${res.notFound.join(', ')}` : ''}`, !!(res.notFound||[]).length);
     if(state.activeTab === 'omList' && !document.querySelector('#main input:focus, #main textarea:focus, #main select:focus')) renderOMListMain();
+    fileLockResolved('om');
   }catch(e){
     if(e && e.helperBusy){ setOMSyncNote('파일에 쓰기 대기 중 — 엑셀 도우미가 다른 작업 중이라 잠시 뒤 다시 씁니다.'); setTimeout(flushOMWrites, 45000); return; }
+    if(isFileLockedError(e)){
+      setOMSyncNote('⏳ 파일이 열려 있어 쓰기 대기 중 — 파일이 닫히면 자동으로 씁니다(고친 내용은 그대로 남아 있습니다).');
+      waitForFileUnlock('om', 'O&M 리스트', link.path, ()=>writeOMPendingToFile());
+      return;
+    }
     setOMSyncNote('⚠ 파일에 못 씀: ' + linkedFileErrorMessage(e).split('\n')[0], true);
     showLedgerToast('O&M 리스트를 PC 파일에 쓰지 못했습니다:\n' + linkedFileErrorMessage(e), true);
   }finally{ omSyncBusy = false; }
@@ -15312,7 +15396,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
-const EXCEL_HELPER_VERSION = 59;
+const EXCEL_HELPER_VERSION = 60;
 let excelHelperVersion = 0;
 function getExcelLinks(){
   try{ return JSON.parse(localStorage.getItem(EXCEL_LINKS_KEY) || '{}') || {}; }catch(e){ return {}; }
@@ -20495,6 +20579,7 @@ async function writeImportOverridesToExcel(opts){
   const cols = importState.xlCols;
   if(!cols || !cols.customer || !importState.sheetName){ if(!silent) alert('엑셀의 열 위치를 몰라 쓸 수 없습니다. "🔄 PC 엑셀에서 불러오기"로 한 번 불러온 뒤 다시 해주세요.'); return; }
   if(importOverrideWriting) return;
+  if(silent && fileLockWaiting('sagup')){ importState.excelWriteNote = '⏳ 파일이 열려 있어 쓰기 대기 중 — 파일이 닫히면 자동으로 씁니다.'; return; }
   importOverrideWriting = true;
   try{
     await checkExcelHelper();
@@ -20535,7 +20620,14 @@ async function writeImportOverridesToExcel(opts){
     debouncedSaveImportRows();
     refreshImportAfterWrite(items.filter(i=>done.has(i.id)));
     if(!silent) alert(`"${link.name}" 파일에 반영했습니다 (${done.size}건).${(res.notFound||[]).length ? `\n\n파일에서 찾지 못한 고객: ${res.notFound.join(', ')}` : ''}`);
+    fileLockResolved('sagup');
   }catch(e){
+    if(isFileLockedError(e)){
+      importState.excelWriteNote = '⏳ 파일이 열려 있어 쓰기 대기 중 — 파일이 닫히면 자동으로 씁니다(고친 칸은 노란색으로 남아 있습니다).';
+      refreshImportAfterWrite([]);
+      waitForFileUnlock('sagup', '사급 실적리스트', link.path, ()=>writeImportOverridesToExcel({ silent:true }));
+      return;
+    }
     importState.excelWriteNote = '⚠ PC 엑셀에 못 씀: ' + linkedFileErrorMessage(e).split('\n')[0];
     refreshImportAfterWrite([]);
     if(!silent) throw e;
@@ -23021,7 +23113,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '59'
+$Version = '60'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -24829,6 +24921,21 @@ function Handle-Context($ctx){
           $best = $files | Sort-Object @{ Expression = { ([regex]::Matches($_.BaseName, '\d+') | ForEach-Object { $_.Value.PadLeft(20,'0') }) -join '_' } ; Descending = $true }, @{ Expression = { $_.LastWriteTimeUtc }; Descending = $true } | Select-Object -First 1
           @{ ok=$true; found=$true; path=$best.FullName; name=$best.Name; mtime=[string]$best.LastWriteTimeUtc.Ticks; count=$files.Count }
         }
+      }
+      '/filelocked'       {
+        # 파일이 다른 곳에서 열려 잠겨 있는지만 본다(엑셀로 열지 않음). 이 PC 엑셀 화면에 쓰기 가능하게 열려 있으면
+        # 도우미가 그 창으로 쓸 수 있으니 잠김이 아니다. 도우미의 숨은 엑셀에 남은 파일은 먼저 닫는다.
+        $p = [string]$body.path
+        if(-not (Test-Path -LiteralPath $p)){ throw "파일을 찾을 수 없습니다: $p" }
+        $res = $null
+        try { $ux = Get-Excel $false; if($ux -and $ux.Visible){ $ow = Find-OpenWorkbook $ux $p; if($ow -and -not $ow.ReadOnly){ $res = @{ ok=$true; locked=$false; openHere=$true } } } } catch {}
+        if(-not $res){
+          try { Close-HiddenExcelLeftovers } catch {}
+          $lk = $false
+          try { $fs = [IO.File]::Open($p, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None); $fs.Close() } catch { $lk = $true }
+          $res = @{ ok=$true; locked=$lk }
+        }
+        $res
       }
       '/filestat'         {
         # 파일의 마지막 저장 시각(바뀌었는지 보는 용도) — 파일을 열지 않고 정보만 본다.
