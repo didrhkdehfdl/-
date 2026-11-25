@@ -13946,9 +13946,13 @@ function corpCardRowIssues(row, mm){
       issues.date = issues.date || `날짜가 잘못된 것 같습니다 (승인내역: ${mm.approvalDate})`;
     } else if(mm.reason==='amount'){
       issues.amount = issues.amount || `금액이 잘못된 것 같습니다 (승인내역: ${fmtNum(mm.approvalAmount)}원)`;
+    } else if(mm.reason==='other_card'){
+      const msg = `이 카드 승인내역엔 없고 ${mm.otherCard} 카드 승인내역에 같은 날짜·금액이 있습니다${mm.otherPlace ? ` (${mm.otherPlace})` : ''}`;
+      issues.date = issues.date || msg;
+      issues.amount = issues.amount || msg;
     } else if(mm.reason==='no_match'){
-      issues.date = issues.date || '승인내역 없음(날짜·금액 확인)';
-      issues.amount = issues.amount || '승인내역 없음(날짜·금액 확인)';
+      issues.date = issues.date || '이 날짜·금액의 승인내역이 없음(금액 오타·결제 취소·다른 카드 결제인지 확인)';
+      issues.amount = issues.amount || '이 날짜·금액의 승인내역이 없음(금액 오타·결제 취소·다른 카드 결제인지 확인)';
     } else if(mm.reason==='place' && !row.placeOverride){
       issues.place = issues.place || `승인내역: ${mm.approvalPlace}`;
     }
@@ -14274,9 +14278,12 @@ function placesSimilar(a, b){
 // (reason:'amount') 보고 맞는 값을 같이 알려준다. 그마저도 없으면 reason:
 // 'no_match'. 짝은 찾았는데 사용처가 서로 다르면(비슷하지 않으면) reason:
 // 'place'로 표시한다. 반환값은 Map(rowId -> 사유 정보).
-function reconcileCorpCardWithApproval(ledgerRows, approvalEntries){
+function reconcileCorpCardWithApproval(ledgerRows, approvalEntries, otherCardApprovals){
   const result = reconcileCardEntries(ledgerRows, approvalEntries);
   const mismatchMap = new Map();
+  // 날짜·금액이 틀렸다고 짚어 줄 후보는 "아직 어느 장부 행과도 짝지어지지 않은" 승인내역만 본다 — 이미 다른 행의
+  // 짝인 승인내역을 후보로 쓰면, 날짜가 맞는 행에 "날짜가 잘못된 것 같습니다(승인내역: 다른 행의 날짜)"가 떴다.
+  const freeApprovals = result.extra;
   result.rows.forEach(r=>{
     if(r.status !== 'match'){
       // 날짜나 금액만 같은 후보가 하루에 여러 건 있을 수 있다(카드 하나로
@@ -14292,14 +14299,18 @@ function reconcileCorpCardWithApproval(ledgerRows, approvalEntries){
       // 보통 같은 달 안에서 일어나므로, 다른 달 건은 후보로 보지 않는다.
       const rowMonth = String(r.isoDate||'').slice(0,7);
       const sameMonth = a => String(a.isoDate||'').slice(0,7) === rowMonth;
-      const amountCandidates = approvalEntries.filter(a=>a.amount===r.amount && a.isoDate!==r.isoDate && sameMonth(a));
-      const dateCandidates = approvalEntries.filter(a=>a.isoDate===r.isoDate && a.amount!==r.amount);
+      const amountCandidates = freeApprovals.filter(a=>a.amount===r.amount && a.isoDate!==r.isoDate && sameMonth(a));
+      const dateCandidates = freeApprovals.filter(a=>a.isoDate===r.isoDate && a.amount!==r.amount);
       const pickCandidate = list => list.length===1 ? list[0] : list.find(a=>placesSimilar(r.place, a.place));
       const sameAmount = pickCandidate(amountCandidates);
       const sameDate = pickCandidate(dateCandidates);
       if(sameAmount){ mismatchMap.set(r.id, { reason:'date', approvalDate: sameAmount.isoDate }); }
       else if(sameDate){ mismatchMap.set(r.id, { reason:'amount', approvalAmount: sameDate.amount }); }
-      else { mismatchMap.set(r.id, { reason:'no_match' }); }
+      else {
+        // 이 카드엔 없는데 다른 카드 승인내역에 같은 날짜·금액이 있으면 그 카드로 결제한 것일 수 있다.
+        const other = (otherCardApprovals||[]).find(a=>a.isoDate===r.isoDate && a.amount===r.amount);
+        mismatchMap.set(r.id, other ? { reason:'other_card', otherCard: String(other.cardNoStr||'').replace(/\D/g,'').slice(-4), otherPlace: other.place||'' } : { reason:'no_match' });
+      }
       return;
     }
     const ae = approvalEntries.find(a=>a.isoDate===r.isoDate && a.amount===r.amount);
@@ -14794,7 +14805,8 @@ function recomputeCorpCardMismatches(){
         ledgerRows.push({ id:r.id, isoDate:r.date, amount: Math.abs(Number(r.amount)||0), place:r.place });
       });
     });
-    s.mismatchByCard[card.id] = reconcileCorpCardWithApproval(ledgerRows, approvalForCard);
+    const otherApprovals = s.approvalEntries.filter(a=>!cardMatchesApproval(card, a.cardNoStr));
+    s.mismatchByCard[card.id] = reconcileCorpCardWithApproval(ledgerRows, approvalForCard, otherApprovals);
   });
 }
 const CORP_CARD_APPROVAL_FILE_KEY = 'corp-card-approval-file-b64';
@@ -17201,7 +17213,7 @@ async function renderCorpCardMainInner(){
   // 없음"이라고는 이미 표시되지만, 몇 건인지 세어주고 그 건만 모아볼 수 있게 한다.
   // (승인내역을 아직 안 올린 달의 행은 애초에 대사 대상이 아니라 여기 안 잡힌다.)
   const noApprovalIds = new Set(
-    rows.filter(r=>{ const mm = mismatchMap.get(r.id); return mm && mm.reason === 'no_match'; }).map(r=>r.id)
+    rows.filter(r=>{ const mm = mismatchMap.get(r.id); return mm && (mm.reason === 'no_match' || mm.reason === 'other_card'); }).map(r=>r.id)
   );
   const noApprovalOnly = noApprovalIds.size > 0 && corpCardNoApprovalOnlyKey === colFilterTabKey;
   const visibleRows = (activeCard ? rows.filter(r=>rowPassesColumnFilters(colFilterTabKey, r)) : rows)
@@ -17653,7 +17665,7 @@ async function renderCorpCardMainInner(){
     // "일치로 처리"로 정리할 수 있어 막지 않는다).
     const mismatched = selectedRows.filter(r=>{
       const mm = mmMap.get(r.id);
-      return !!(mm && (mm.reason === 'no_match' || mm.reason === 'date' || mm.reason === 'amount'));
+      return !!(mm && (mm.reason === 'no_match' || mm.reason === 'other_card' || mm.reason === 'date' || mm.reason === 'amount'));
     });
     if(mismatched.length){
       const why = r => {
