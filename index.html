@@ -18236,10 +18236,7 @@ function bindLunchDupPanel(ym, hits){
     // v63 전 도우미는 파일 형식을 엑셀로만 고정해 CSV가 안 보인다 — 미리 알려준다.
     await checkExcelHelper();
     const oldHelper = excelHelperRunning && excelHelperVersion < 63;
-    if(oldHelper && !confirm('지금 실행 중인 엑셀 도우미(v' + excelHelperVersion + ')는 파일 선택 창에 엑셀 파일만 보여줍니다.
-
-창이 뜨면 오른쪽 아래 파일 형식을 "모든 파일 (*.*)"로 바꾼 뒤 CSV 파일을 고르세요.
-(카드관리 탭에서 엑셀 도우미를 새로 받아 실행하면 처음부터 CSV만 보입니다)')) return;
+    if(oldHelper && !confirm('지금 실행 중인 엑셀 도우미(v' + excelHelperVersion + ')는 파일 선택 창에 엑셀 파일만 보여줍니다.\n\n창이 뜨면 오른쪽 아래 파일 형식을 "모든 파일 (*.*)"로 바꾼 뒤 CSV 파일을 고르세요.\n(카드관리 탭에서 엑셀 도우미를 새로 받아 실행하면 처음부터 CSV만 보입니다)')) return;
     pick.disabled = true; pick.textContent = '파일 선택 창을 띄웠습니다…';
     try{
       const r = await excelHelperCall('/pick', { title: oldHelper ? '점심체크_월계표 CSV 선택 — 오른쪽 아래 파일 형식을 "모든 파일"로 바꾸세요' : '점심체크_월계표 CSV 파일 하나를 고르세요 (그 폴더에서 달마다 해당 월 파일을 읽습니다)', filter: 'CSV 파일 (*.csv)|*.csv|모든 파일 (*.*)|*.*' }, 10*60*1000);
