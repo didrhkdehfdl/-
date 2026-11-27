@@ -18234,14 +18234,14 @@ function lunchDupPanelHtml(ym, hits){
   const list = (c.data && hits.length && lunchDupOpen) ? `
     <div style="font-size:11.5px; color:var(--muted); margin:6px 0 4px;">같은 날 점심체크가 1(내근식사)인 사람이 이 식대 내역의 비고에도 적혀 있는 건입니다. 내근식사를 법인카드로 산 날이면 중복이 아닐 수 있습니다.</div>
     <table style="border-collapse:collapse; font-size:12px; width:100%;">
-      <thead><tr>${['날짜·결제시각','카드','사용처','금액','업무내용','겹친 사람',''].map(t=>`<th style="text-align:left; padding:4px 6px; color:var(--muted); border-bottom:1px solid var(--line); white-space:nowrap;">${t}</th>`).join('')}</tr></thead>
+      <thead><tr>${['날짜·결제시각','카드','사용처','금액','업무내용','겹친 사람 / 안 겹친 사람',''].map(t=>`<th style="text-align:left; padding:4px 6px; color:var(--muted); border-bottom:1px solid var(--line); white-space:nowrap;">${t}</th>`).join('')}</tr></thead>
       <tbody>${hits.map((h,i)=>`<tr style="${h.lunch?'':'opacity:.6;'}">
         <td style="padding:4px 6px; white-space:nowrap;">${escapeHtml(h.row.date.slice(5))} ${h.time ? escapeHtml(h.time.slice(0,5)) : '<span style="color:var(--muted);">시각?</span>'}${h.lunch?'':' (점심 아님)'}</td>
         <td style="padding:4px 6px; white-space:nowrap;">${escapeHtml(h.card.label||'')}</td>
         <td style="padding:4px 6px;">${escapeHtml(h.row.place||'')}</td>
         <td style="padding:4px 6px; text-align:right; white-space:nowrap;">${fmtNum(Number(h.row.amount)||0)}</td>
         <td style="padding:4px 6px;">${escapeHtml(h.row.workDetail||'')}</td>
-        <td style="padding:4px 6px;"><b style="color:#d9822b;">${h.hits.map(escapeHtml).join(', ')}</b> <span style="color:var(--muted);">(${h.hits.length}/${h.people.length}명${h.fromName?' · 비고에 이름이 없어 성명으로 봄':''})</span></td>
+        <td style="padding:4px 6px;"><b style="color:#d9822b;">${h.hits.map(escapeHtml).join(', ')}</b> <span style="color:var(--muted);">(${h.hits.length}/${h.people.length}명${h.fromName?' · 비고에 이름이 없어 성명으로 봄':''})</span>${(()=>{ const rest = h.people.filter(p=>!h.hits.includes(p)); return rest.length ? `<div style="margin-top:2px;"><span style="font-size:11px; color:var(--muted);">안 겹침:</span> <span style="color:var(--text);">${rest.map(escapeHtml).join(', ')}</span></div>` : ''; })()}</td>
         <td style="padding:4px 6px;"><button class="lunchdup-go-btn" data-i="${i}" style="font-size:11px; padding:2px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--sky); cursor:pointer; white-space:nowrap;">이동</button></td>
       </tr>`).join('')}</tbody>
     </table>` : '';
