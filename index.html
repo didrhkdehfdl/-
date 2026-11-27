@@ -11428,7 +11428,7 @@ async function downloadCardMasterViaHelper(tmplId, onlyMonth, onStatus){
 // 내역이 없는 카드는 넣지 않는다(그 카드 블록은 건드리지 않음 — 다운로드용 갱신과 같은 규칙).
 // 새 블록을 만들 때 본뜬 카드의 번호를 새 카드 번호로 바꾸려고 카드 전체 목록도 함께 보낸다.
 function cardMasterAllCards(){
-  return corpCardState.cards.flatMap(c=>cardNumbersOf(c).map(n=>{ const p = cardParts(n); return p ? { last4: p.p4, cardNumber: n } : null; })).filter(Boolean);
+  return corpCardState.cards.filter(c=>!isPrestigeCard(c)).flatMap(c=>cardNumbersOf(c).map(n=>{ const p = cardParts(n); return p ? { last4: p.p4, cardNumber: n } : null; })).filter(Boolean);
 }
 // 카드 소유자(담당자) 이름 — 통합본에 새 카드 행을 만들 때 U열에 적는다.
 function cardOwnerName(card){
@@ -11451,7 +11451,7 @@ function corpCardApprovedRows(card, rows){
 function buildCardMasterWritePayload(onlyMonth){
   const byMonth = new Map();
   corpCardState.cards.forEach(card=>{
-    if(!cardParts(card.cardNumber)) return;
+    if(!cardParts(card.cardNumber) || isPrestigeCard(card)) return;   // 품위유지비 카드는 통합본에 넣지 않는다
     Object.entries(corpCardState.rowsByCard[card.id]||{}).forEach(([label, rows])=>{
       const num = monthNumFromLabel(label);
       if(!num || (onlyMonth && num !== onlyMonth)) return;
@@ -11476,6 +11476,7 @@ function buildCardMasterWritePayload(onlyMonth){
       if(!num || (onlyMonth && num !== onlyMonth)) return;
       const ym = `${year}-${String(num).padStart(2,'0')}`;
       corpCardState.cards.forEach(card=>{
+        if(isPrestigeCard(card)) return;
         const monthNumber = cardNumberForMonth(card, num);
         const parts = cardParts(monthNumber);
         if(!parts || (typeof HIPASS_CARD_LAST4 !== 'undefined' && HIPASS_CARD_LAST4.includes(parts.p4))) return;
@@ -11655,7 +11656,7 @@ function parseCardMasterFileSheets(sheets){
   return map;
 }
 function cardForMasterKey(num, l4){
-  return corpCardState.cards.find(c=>{ const p = cardParts(cardNumberForMonth(c, num)); return p && p.p4 === l4; });
+  return corpCardState.cards.find(c=>{ if(isPrestigeCard(c)) return false; const p = cardParts(cardNumberForMonth(c, num)); return p && p.p4 === l4; });
 }
 function corpCardMonthLabel(card, num){
   return Object.keys(corpCardState.rowsByCard[card.id]||{}).find(l=>monthNumFromLabel(l)===num) || '';
@@ -11938,6 +11939,7 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
   const sheetMonthNums = new Set(monthSheets.map(monthNumFromLabel).filter(Boolean));
   const monthsWithData = new Set();
   corpCardState.cards.forEach(card=>{
+    if(isPrestigeCard(card)) return;
     Object.entries(corpCardState.rowsByCard[card.id]||{}).forEach(([label, rows])=>{
       const n = monthNumFromLabel(label);
       if(n && (rows||[]).some(r=>r.date)) monthsWithData.add(n);
@@ -11974,7 +11976,7 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
   const targetSheets = onlyMonth ? monthSheets.filter(l=>monthNumFromLabel(l)===onlyMonth) : monthSheets;
   if(onlyMonth && !targetSheets.length){
     // 왜 채울 곳이 없는지 정확히 알려준다 — 앱에 그 달 내역이 없는 건지, 시트를 못 만든 건지.
-    const cardsWithMonth = corpCardState.cards.filter(card => Object.entries(corpCardState.rowsByCard[card.id]||{})
+    const cardsWithMonth = corpCardState.cards.filter(card => !isPrestigeCard(card) && Object.entries(corpCardState.rowsByCard[card.id]||{})
       .some(([label, rows]) => monthNumFromLabel(label) === onlyMonth && (rows||[]).some(r=>r.date)));
     if(!cardsWithMonth.length){
       const labels = [...new Set(corpCardState.cards.flatMap(card => Object.entries(corpCardState.rowsByCard[card.id]||{})
@@ -11992,6 +11994,7 @@ async function regenerateCardMasterAndDownload(tmplId, onProgress, opts){
     for(const card of corpCardState.cards){
       doneSteps++;
       if(onProgress) onProgress(doneSteps, totalSteps);
+      if(isPrestigeCard(card)) continue;
       const parts = cardParts(cardNumberForMonth(card, mnum));
       if(!parts) continue;
       const matchMonth = await ensureCorpCardMonthExists(card, mnum);
@@ -13912,6 +13915,7 @@ function refreshCorpCardRowIssues(row){
 }
 function corpCardRowIssues(row, mm){
   const issues = {};
+  if(isPrestigeCardId(corpCardState.activeCardId)){ Object.assign(issues, prestigeRowIssues(row)); addCorpCardMismatchIssues(issues, row, mm); return issues; }
   const requiredFields = ['date','dept','name','corp','bizCategory','project','plantName','place','workDetail','expenseType','amount','hipass','carNo'];
   requiredFields.forEach(f=>{
     const empty = f==='amount' ? (!row.amount || Number(row.amount)===0) : !String(row[f]||'').trim();
@@ -13941,6 +13945,11 @@ function corpCardRowIssues(row, mm){
     issues.note = '업무내용에 적어주세요';
   }
   if(!issues.expenseType && ['점심','중식'].includes(String(row.expenseType||'').trim())) issues.expenseType = '"식대"로 수정해주세요';
+  addCorpCardMismatchIssues(issues, row, mm);
+  return issues;
+}
+// 승인내역과 안 맞는 점을 안내에 더한다.
+function addCorpCardMismatchIssues(issues, row, mm){
   if(mm){
     if(mm.reason==='date'){
       issues.date = issues.date || `날짜가 잘못된 것 같습니다 (승인내역: ${mm.approvalDate})`;
@@ -14040,6 +14049,8 @@ async function ensureCorpCardLoadedInner(){
         categoryChanged = true;
       }
     });
+    // 품위유지비 카드(7973)가 없으면 1956 카드 오른쪽에 넣는다(목록을 못 읽었을 때는 하지 않음).
+    if(saved && !(lastLoadMeta[CORP_CARD_LIST_KEY] && lastLoadMeta[CORP_CARD_LIST_KEY].error) && ensurePrestigeCard()) categoryChanged = true;
     if(categoryChanged) await saveCorpCardList();
     const needsMonthFix = [];
     for(const card of corpCardState.cards){
@@ -14049,6 +14060,7 @@ async function ensureCorpCardLoadedInner(){
       // 못 읽은 카드(네트워크 등)는 빈 내역으로 보고 저장하면 서버 내역이 지워지므로, 다시 읽을 때까지 저장하지 않는다.
       if(lastLoadMeta['corp-card-rows:'+card.id] && lastLoadMeta['corp-card-rows:'+card.id].error) corpCardLoadFailed.add(card.id); else corpCardLoadFailed.delete(card.id);
       needsMonthFix.push(card.id);
+      if(isPrestigeCard(card)){ corpCardTemplates[card.id] = prestigeTemplate(); continue; }
       try{
         const metaText = await loadFileFromStorage('corp-card-template-meta:'+card.id);
         const meta = metaText ? JSON.parse(metaText) : null;
@@ -14646,6 +14658,7 @@ async function fillMissingApprovalRows(cardId, month, opts){
       if((card.fixedDept||'').trim()) row.dept = card.fixedDept.trim();
       if((card.fixedCorp||'').trim()) row.corp = card.fixedCorp.trim();
     }
+    if(isPrestigeCard(card)) applyPrestigeDefaults(row);
     row.date = a.isoDate || '';
     row.place = a.place || '';
     row.amount = Math.abs(Number(a.amount)||0);
@@ -15360,7 +15373,8 @@ function saveCorpCardRows(cardId){
     return r;
   });
   // 연결된 통합본 PC 파일에도 자동으로 쓴다(15초 모아서, 바뀐 달만).
-  if(typeof queueCardMasterAutoWrite === 'function' && !cardMasterSuppressAuto) queueCardMasterAutoWrite();
+  if(isPrestigeCardId(cardId)) queuePrestigeSync();
+  else if(typeof queueCardMasterAutoWrite === 'function' && !cardMasterSuppressAuto) queueCardMasterAutoWrite();
   return corpCardSaveQueue;
 }
 // ---- 새 버전이 올라오면 자동 새로고침 ----
@@ -15408,6 +15422,7 @@ const EXCEL_LINKS_KEY = 'excel-com-links-v1';
 let excelHelperRunning = null; // null=아직 모름, true/false
 // 앱이 기대하는 도우미 버전 — 도우미(excelHelperScript의 $Version)를 고칠 때마다 같이 올린다.
 // 실행 중인 도우미가 이보다 낮으면 새로 받으라고 안내한다.
+// (v61은 품위유지비 카드만 쓰는 기능이라 올리지 않는다 — 올리면 다른 PC의 통합본 자동 갱신이 새로 받을 때까지 멈춘다. PRESTIGE_HELPER_MIN 참고)
 const EXCEL_HELPER_VERSION = 60;
 let excelHelperVersion = 0;
 function getExcelLinks(){
@@ -15459,7 +15474,7 @@ const EXCEL_HELPER_ROUTE_LABELS = {
   '/cardmaster/carmap':'통합본 차량매핑', '/cardmaster/alignlayout':'통합본 양식 맞추기', '/omlist/write':'O&M 리스트 엑셀 반영',
   '/sagup/write':'사급 실적리스트 엑셀 반영', '/profitledger/write':'사급 건별 정산 엑셀 반영', '/corpcard/write':'법인카드 PC 파일 저장',
   '/corpcard/reportpdf':'사용내역서 PDF 만들기', '/readvalues':'엑셀 파일 읽기', '/read':'엑셀 파일 읽기', '/write':'엑셀 파일 저장',
-  '/pick':'파일 선택 창', '/latestfile':'최신 파일 찾기',
+  '/prestige/write':'품위유지비 엑셀 반영', '/pick':'파일 선택 창', '/latestfile':'최신 파일 찾기',
 };
 (function(){
   let el = null, busy = false, expanded = false, lastPing = 0;
@@ -17192,6 +17207,8 @@ async function renderCorpCardMainInner(){
     s.activeMonth = pickDefaultCorpCardMonth((corpCardTemplates[activeCard.id]||{}).months);
   }
   if(activeCard) ensureCorpCardRowsSubscribed(activeCard.id);
+  const prestige = isPrestigeCard(activeCard);
+  if(prestige && !corpCardTemplates[activeCard.id]) corpCardTemplates[activeCard.id] = prestigeTemplate();
   const tmpl = activeCard ? corpCardTemplates[activeCard.id] : null;
   const months = tmpl ? tmpl.months : [];
   const rows = (activeCard && s.rowsByCard[activeCard.id] && s.rowsByCard[activeCard.id][s.activeMonth]) || [];
@@ -17249,7 +17266,7 @@ async function renderCorpCardMainInner(){
       })()}
       <div style="display:flex; align-items:center; gap:8px; margin-top:12px;">
         ${isAdminUser ? `<button id="corpCardAddBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12.5px;">+ 카드 추가</button>` : ''}
-        ${activeCard && isAdminUser ? `
+        ${activeCard && isAdminUser && !prestige ? `
           <select id="corpCardCategorySelect" style="padding:8px 10px; border-radius:7px; border:1px solid var(--line); background:var(--panel-2); color:var(--sky); cursor:pointer; font-size:12px;">
             ${CORP_CARD_CATEGORY_ORDER.map(key => `<option value="${key}" ${activeCard.category===key?'selected':''}>${CORP_CARD_CATEGORY_LABELS[key]}로 이동</option>`).join('')}
           </select>
@@ -17274,19 +17291,20 @@ async function renderCorpCardMainInner(){
     })()}
     <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
       ${months.map(m => `<button class="corpcard-month-btn" data-month="${escapeHtml(m)}" style="padding:7px 12px; border-radius:6px; border:1px solid ${m===s.activeMonth?'var(--gold)':'var(--line)'}; background:${m===s.activeMonth?'rgba(224,163,57,.12)':'transparent'}; color:${m===s.activeMonth?'var(--gold)':'var(--text)'}; cursor:pointer; font-size:12px;">${escapeHtml(m)}</button>`).join('')}
-      <button id="corpCardAddMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12px;">+ 월 추가</button>
-      ${months.length>1 ? `<button id="corpCardDeleteMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">"${escapeHtml(s.activeMonth)}" 탭 삭제</button>` : ''}
+      ${prestige ? '' : `<button id="corpCardAddMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12px;">+ 월 추가</button>`}
+      ${months.length>1 && !prestige ? `<button id="corpCardDeleteMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">"${escapeHtml(s.activeMonth)}" 탭 삭제</button>` : ''}
     </div>
+    ${prestige ? prestigePanelHtml(activeCard) : ''}
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
       <button id="corpCardAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
-      <div style="display:flex; align-items:center; gap:4px; padding:3px; border-radius:7px; border:1px solid var(--line);">
+      ${prestige ? '' : `<div style="display:flex; align-items:center; gap:4px; padding:3px; border-radius:7px; border:1px solid var(--line);">
         <button class="corpcard-namemode-btn" data-mode="fixed" style="padding:5px 10px; border-radius:5px; border:none; background:${(activeCard.nameMode||'variable')==='fixed'?'var(--gold)':'transparent'}; color:${(activeCard.nameMode||'variable')==='fixed'?'#1a1a1a':'var(--muted)'}; font-size:12px; cursor:pointer;">고정</button>
         <button class="corpcard-namemode-btn" data-mode="variable" style="padding:5px 10px; border-radius:5px; border:none; background:${(activeCard.nameMode||'variable')==='variable'?'var(--gold)':'transparent'}; color:${(activeCard.nameMode||'variable')==='variable'?'#1a1a1a':'var(--muted)'}; font-size:12px; cursor:pointer;">변동</button>
       </div>
       ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedNameInput" placeholder="성명 고정값" value="${escapeHtml(activeCard.fixedName||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
       ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedPositionInput" placeholder="직급 고정값" value="${escapeHtml(activeCard.fixedPosition||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
       ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedDeptInput" placeholder="부서 고정값" value="${escapeHtml(activeCard.fixedDept||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
-      ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedCorpInput" placeholder="법인 고정값" value="${escapeHtml(activeCard.fixedCorp||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}
+      ${activeCard.nameMode==='fixed' ? `<input type="text" id="corpCardFixedCorpInput" placeholder="법인 고정값" value="${escapeHtml(activeCard.fixedCorp||'')}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:12.5px; width:110px;">` : ''}`}
       ${(()=>{ const used = rows.filter(r=>r.date || Number(r.amount)); const sum = used.reduce((t,r)=>t+(Number(r.amount)||0),0);
         return `<span id="corpCardTotalsBadge" style="margin-left:auto; font-size:13px; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); white-space:nowrap;">총 <b>${used.length}</b>건 · 총사용액 <b style="color:var(--gold);">${sum.toLocaleString('ko-KR')}</b>원</span>`; })()}
  <button id="corpCardHistoryBtn" title="이 카드 내역의 변경 이력(최근 20개, 1분 간격)을 보고 원하는 시점으로 되돌립니다" style="font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:600;">🕒 변경 이력</button>
@@ -17294,9 +17312,9 @@ async function renderCorpCardMainInner(){
       <button id="corpCardTrashBtn" title="삭제 버튼이나 이력 되돌리기로 지운 행을 지운 사람·시각과 함께 보고 되살립니다" style="font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:600;">🗑 지운 행</button>
       <button id="corpCardSaveBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:700;">✅ 저장됨</button>
       ${s.approvalEntries.length ? `<button id="corpCardApprovalViewBtn" style=" font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--sky); background:rgba(90,155,213,.1); color:var(--sky); cursor:pointer; font-weight:600;">💳 이 카드 승인내역 보기</button>` : ''}
-      <button id="corpCardPrintDocBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>
-      <button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">${corpCardMonthPdfLabel()}</button>
-      <button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>
+      ${prestige ? '' : `<button id="corpCardPrintDocBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>`}
+      ${prestige ? '' : `<button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">${corpCardMonthPdfLabel()}</button>`}
+      ${prestige ? '' : `<button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>`}
       ${canUseMealCsv() ? `<button id="corpCardMealCsvBtn" title="이 달 전체 카드의 식대·접대비 비고에 적힌 이름을 모아, 식대 프로그램 월계표와 같은 모양(이름 × 날짜)의 CSV를 만듭니다. 이 카드만이 아니라 모든 카드를 합쳐서 집계합니다." style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">🍱 식대 월계표 CSV</button>` : ''}
     </div>
     <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">
@@ -17317,7 +17335,7 @@ async function renderCorpCardMainInner(){
           <th style="padding:6px 2px; color:var(--muted); position:sticky; left:0; background:var(--panel-2); width:26px;"><input type="checkbox" id="corpCardSelectAllBox" title="이 달 전체 선택/해제"></th>
           <th style="padding:6px 4px; color:var(--muted); position:sticky; left:26px; background:var(--panel-2); width:44px; min-width:44px; max-width:44px; box-sizing:border-box;">순번</th>
           <th style="padding:6px 4px; color:var(--muted); width:118px; position:sticky; left:70px; z-index:2; background:var(--panel-2); box-shadow:2px 0 0 var(--line);">날짜${colFilterIconHtml(colFilterTabKey,'date')}</th>
-          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">부서${colFilterIconHtml(colFilterTabKey,'dept')}</th>
+          ${prestige ? prestigeHeadHtml(colFilterTabKey) : `<th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">부서${colFilterIconHtml(colFilterTabKey,'dept')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">성명${colFilterIconHtml(colFilterTabKey,'name')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">직급${colFilterIconHtml(colFilterTabKey,'position')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">사용장소${colFilterIconHtml(colFilterTabKey,'venue')}</th>
@@ -17333,7 +17351,7 @@ async function renderCorpCardMainInner(){
           <th style="padding:6px 4px; color:var(--muted); width:100px;">금액${colFilterIconHtml(colFilterTabKey,'amount')}<label title="보이는 줄의 금액 노란색 표시를 한 번에 켜고 끕니다" style="display:flex; align-items:center; justify-content:flex-end; gap:3px; font-size:10px; font-weight:400; cursor:pointer; margin-top:2px;"><input type="checkbox" id="corpCardHlAllBox" style="margin:0;">🟨 전체</label></th>
           <th style="padding:6px 4px; color:var(--muted); width:70px;">하이패스<br>사용여부${colFilterIconHtml(colFilterTabKey,'hipass')}</th>
           <th style="padding:6px 4px; color:var(--muted); width:90px;">차량번호<br>(끝4자리)${colFilterIconHtml(colFilterTabKey,'carNo')}</th>
-          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>
+          <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">비고${colFilterIconHtml(colFilterTabKey,'note')}</th>`}
           <th style="padding:6px 4px; color:var(--muted); width:64px;">삭제</th>
         </tr></thead>
         <tbody>
@@ -17360,7 +17378,7 @@ async function renderCorpCardMainInner(){
                 <input type="date" class="corpcard-f" data-id="${row.id}" data-field="date" value="${escapeHtml(row.date)}" style="width:100%; ${issues.date?errBorder:''}">
                 ${note('date')}
               </td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="${issues.dept?errBorder:''}">${note('dept')}</td>
+              ${prestige ? prestigeRowCellsHtml(row, issues, mm, note, errBorder, lockedStyle) : `<td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="${issues.dept?errBorder:''}">${note('dept')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="name" value="${escapeHtml(row.name)}" style="${issues.name?errBorder:''}">${note('name')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="position" value="${escapeHtml(row.position)}"></td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="venue" value="${escapeHtml(row.venue)}"></td>
@@ -17404,7 +17422,7 @@ async function renderCorpCardMainInner(){
                 ${note('hipass')}
               </td>
               <td style="padding:3px 4px;"><input type="text" list="corpCardCarNoOptions" class="corpcard-f" data-id="${row.id}" data-field="carNo" value="${escapeHtml(row.carNo)}" style="width:100%; text-align:center; ${issues.carNo?errBorder:''}">${note('carNo')}</td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" ${noteLocked?`readonly style="text-align:center; ${lockedStyle}"`:`style="text-align:center; ${issues.note?errBorder:''}"`}>${note('note')}</td>
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" ${noteLocked?`readonly style="text-align:center; ${lockedStyle}"`:`style="text-align:center; ${issues.note?errBorder:''}"`}>${note('note')}</td>`}
               <td style="padding:5px 4px; text-align:center; white-space:nowrap;">
                 <button class="corpcard-insert-btn" data-id="${row.id}" title="이 아래에 빈 행 삽입" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:12px; padding:2px 3px; vertical-align:middle;">➕</button><button class="corpcard-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px; vertical-align:middle;">×</button>
               </td>
@@ -17449,6 +17467,14 @@ async function renderCorpCardMainInner(){
     const formatted = digits.length === 16 ? digits.match(/.{4}/g).join('-') : String(input).trim();
     const dup = corpCardState.cards.find(c=>c.id!==card.id && String(c.cardNumber||'').replace(/\D/g,'') === digits);
     if(dup){ alert(`이미 등록된 카드번호입니다 (${dup.label||dup.cardNumber}).`); return; }
+    if(isPrestigeCard(card)){
+      if(digits.slice(-4) !== PRESTIGE_LAST4){ alert(`끝 4자리가 ${PRESTIGE_LAST4}인 번호를 입력해주세요.`); return; }
+      card.cardNumber = formatted;
+      await saveCorpCardList();
+      recomputeCorpCardMismatches();
+      renderCorpCardMain();
+      return;
+    }
     const fromInput = prompt('몇 월부터 새 번호로 쓰나요? (숫자만, 예: 10)\n그 전 달의 관리대장·사용내역서·통합본에는 예전 번호가 그대로 나옵니다.\n(처음부터 잘못 적힌 번호를 고치는 거면 1)', String(new Date().getMonth()+1));
     if(fromInput === null) return;
     const fromMonth = parseInt(String(fromInput).replace(/\D/g,''), 10);
@@ -17550,6 +17576,7 @@ async function renderCorpCardMainInner(){
     renderCorpCardMain();
   });
   if(!activeCard || !tmpl) return;
+  if(prestige){ bindPrestigePanel(activeCard); document.querySelectorAll('.excel-helper-download').forEach(b=>b.addEventListener('click', downloadExcelHelper)); }
   setupStickyHScroll('corpCardTableWrap', 'corpCardStickyScroll');
   {
     const wrap = document.getElementById('corpCardTableWrap');
@@ -17586,6 +17613,7 @@ async function renderCorpCardMainInner(){
     if(activeCard.nameMode === 'fixed' && (activeCard.fixedPosition||'').trim()) newRow.position = activeCard.fixedPosition.trim();
     if(activeCard.nameMode === 'fixed' && (activeCard.fixedDept||'').trim()) newRow.dept = activeCard.fixedDept.trim();
     if(activeCard.nameMode === 'fixed' && (activeCard.fixedCorp||'').trim()) newRow.corp = activeCard.fixedCorp.trim();
+    if(isPrestigeCard(activeCard)) applyPrestigeDefaults(newRow);
     s.rowsByCard[activeCard.id][s.activeMonth].push(newRow);
     // 저장이 끝나기를 기다리지 않고 화면에는 바로 새 행을 보여준다 —
     // 모바일 등 느린 네트워크에서는 저장(서버 왕복)에 몇 초~수십 초가 걸릴 수
@@ -17934,6 +17962,7 @@ async function renderCorpCardMainInner(){
       if(s.nameMode === 'fixed' && s.fixedPosition.trim()) newRow.position = s.fixedPosition.trim();
       if(s.nameMode === 'fixed' && s.fixedDept.trim()) newRow.dept = s.fixedDept.trim();
       if(s.nameMode === 'fixed' && s.fixedCorp.trim()) newRow.corp = s.fixedCorp.trim();
+      if(isPrestigeCard(activeCard)) applyPrestigeDefaults(newRow);
       arr.splice(idx+1, 0, newRow);
       renderCorpCardMain();
       saveCorpCardRows(activeCard.id).then(result=>{
@@ -18003,7 +18032,7 @@ function corpCardLinkRowHtml(card){
     </div>`;
 }
 function corpCardLinkSectionHtml(){
-  const cards = corpCardState.cards.filter(canViewCorpCard);
+  const cards = corpCardState.cards.filter(c=>canViewCorpCard(c) && !isPrestigeCard(c));   // 품위유지비 카드는 법인카드 탭 안에서 연결한다
   return `
     <h2 class="section-title" style="margin-top:26px;">PC 엑셀 파일 연결</h2>
     <p style="font-size:12.5px; color:var(--muted); line-height:1.7; margin:0 0 12px;">
@@ -18055,6 +18084,275 @@ function bindCorpCardLinkButtons(rerender){
       if(await importCorpCardFile(file, card.id)){ alert(`"${file.name}" 파일 내용을 불러왔습니다.`); rerender(); }
     });
   }));
+}
+// ===== 품위유지비 카드(7973) =====
+// 다른 법인카드와 엑셀 양식이 달라서 이 카드만 화면 칸이 다르고(1-1 관리대장 + 3-1 사용내역 리스트에 필요한 칸만),
+// 적은 내용은 연결한 두 엑셀 파일에 자동으로 채워진다(엑셀 도우미 v61). 사무실관리카드 통합본·식대 월계표에는 넣지 않는다.
+const PRESTIGE_CARD_ID = 'prestige-7973';
+const PRESTIGE_LAST4 = '7973';
+const PRESTIGE_AFTER_LAST4 = '1956';        // 이 카드 오른쪽에 놓는다
+const PRESTIGE_HELPER_MIN = 61;
+const PRESTIGE_LIST_FROM = '2026-09-01';    // 3-1 리스트는 이 날짜부터만 쓴다(그 전 달 시트는 이미 마감된 보고서라 건드리지 않는다)
+const PRESTIGE_LEDGER_SHEET = '품위유지비_작성용';
+const PRESTIGE_SNAP_KEY = 'corp-card-prestige-xl:' + PRESTIGE_CARD_ID;   // 엑셀에 마지막으로 쓴 값(행 id별) — 여러 PC가 함께 본다
+const PRESTIGE_MONTHS = [3,4,5,6,7,8,9,10,11,12,1,2].map(n=>n+' 월');      // 품위유지비 기간: 3월 ~ 다음 해 2월
+const PRESTIGE_DEFAULTS = { dept:'경기지사', name:'김종식', position:'전무', corp:'에스피' };
+const prestigeLinkKey = kind => `prestige-${kind}:${PRESTIGE_CARD_ID}`;    // kind: ledger(1-1) / list(3-1)
+function isPrestigeCard(card){ return !!card && (card.id === PRESTIGE_CARD_ID || String(card.cardNumber||'').replace(/\D/g,'').slice(-4) === PRESTIGE_LAST4); }
+function isPrestigeCardId(id){ return isPrestigeCard(corpCardState.cards.find(c=>c.id===id) || { id }); }
+// 카드 목록에 7973 카드가 없으면 1956 카드 바로 오른쪽에 넣는다(id가 정해져 있어 여러 PC가 동시에 해도 하나만 생긴다).
+// 목록을 제대로 못 읽었을 때(빈 목록)는 아무것도 하지 않는다 — 그대로 저장하면 다른 카드가 사라진다.
+function ensurePrestigeCard(){
+  const cards = corpCardState.cards;
+  if(!Array.isArray(cards) || !cards.length) return false;
+  const last4 = c => String(c.cardNumber||'').replace(/\D/g,'').slice(-4);
+  const anchor = cards.findIndex(c=>last4(c) === PRESTIGE_AFTER_LAST4 || c.label === PRESTIGE_AFTER_LAST4);
+  if(anchor < 0 || cards.some(isPrestigeCard)) return false;
+  cards.splice(anchor+1, 0, { id: PRESTIGE_CARD_ID, cardNumber: '****-****-****-'+PRESTIGE_LAST4, label: PRESTIGE_LAST4, category: 'personal', assignedTo: [PRESTIGE_DEFAULTS.name] });
+  return true;
+}
+// 이 카드는 관리대장 양식 파일을 올려 두지 않는다(문서보안 파일이라 앱이 못 읽음) — 월 탭만 있는 가짜 양식을 쓴다.
+function prestigeTemplate(){ return { buffer:null, fileName:'(품위유지비 관리대장 — 엑셀 파일 연결)', savedAt:'', months: PRESTIGE_MONTHS.slice(), prestige:true }; }
+function applyPrestigeDefaults(row){
+  Object.assign(row, PRESTIGE_DEFAULTS);
+  row.inOut = row.inOut || ''; row.headcount = Number(row.headcount)||0; row.stdAmount = Number(row.stdAmount)||0; row.overAmount = Number(row.overAmount)||0;
+  return row;
+}
+// ---- 화면 ----
+function prestigeHeadHtml(tabKey){
+  const th = (f, label, w) => `<th style="padding:6px 4px; color:var(--muted); ${w?`width:${w}px;`:'white-space:nowrap;'}">${label}${f?colFilterIconHtml(tabKey, f):''}</th>`;
+  return th('dept','부서') + th('name','성명') + th('position','직급') + th('corp','소속법인') + th('place','사용처') + th('inOut','사용인원<br>(내부/외부)',84)
+    + th('workDetail','업무내용') + th('expenseType','지출내역<br>(식대, 접대비 등)') + th('headcount','인원수',64) + th('note','비고<br>(특이사항, 사용인원 등)')
+    + `<th style="padding:6px 4px; color:var(--muted); width:100px;">사용금액${colFilterIconHtml(tabKey,'amount')}<label title="보이는 줄의 금액 노란색 표시를 한 번에 켜고 끕니다" style="display:flex; align-items:center; justify-content:flex-end; gap:3px; font-size:10px; font-weight:400; cursor:pointer; margin-top:2px;"><input type="checkbox" id="corpCardHlAllBox" style="margin:0;">🟨 전체</label></th>`
+    + th('','일반카드<br>기준금액',90) + th('','기준 초과<br>사용금액',90);
+}
+function prestigeRowCellsHtml(row, issues, mm, note, errBorder, lockedStyle){
+  const id = row.id, v = f => escapeHtml(row[f]==null ? '' : row[f]);
+  const td = html => `<td style="padding:3px 4px;">${html}</td>`;
+  const fixed = f => td(`<input type="text" class="corpcard-f corpcard-f-auto" data-id="${id}" data-field="${f}" value="${v(f)}" readonly title="관리대장에 고정으로 적혀 있는 값입니다" style="${lockedStyle}">`);
+  const txt = f => td(`<input type="text" class="corpcard-f corpcard-f-auto" data-id="${id}" data-field="${f}" value="${v(f)}" style="text-align:center; ${issues[f]?errBorder:''}">${note(f)}`);
+  const num = f => td(`<input type="text" inputmode="numeric" class="corpcard-f corpcard-money" data-id="${id}" data-field="${f}" value="${Number(row[f])?Number(row[f]).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right; ${issues[f]?errBorder:''}">${note(f)}`);
+  const place = td(`<input type="text" class="corpcard-f corpcard-f-auto" data-id="${id}" data-field="place" value="${v('place')}" style="text-align:center; ${issues.place?errBorder:''}">${
+    mm && mm.reason==='place' ? (row.placeOverride
+      ? `<div class="corpcard-place-override" data-id="${id}" style="font-size:10px; color:#2e9e5b; margin-top:2px; cursor:pointer; text-decoration:underline;">✓ 일치로 처리됨(되돌리기)</div>`
+      : `<div style="font-size:10px; color:var(--neg); margin-top:2px;">승인내역: ${escapeHtml(mm.approvalPlace)} · <span class="corpcard-place-override" data-id="${id}" style="text-decoration:underline; cursor:pointer;">일치로 처리</span></div>`) : note('place')}`);
+  const inOut = td(`<select class="corpcard-f" data-id="${id}" data-field="inOut" style="width:100%; text-align:center; ${issues.inOut?errBorder:''}">${['','내부','외부'].map(o=>`<option value="${o}" ${String(row.inOut||'')===o?'selected':''}>${o||'-'}</option>`).join('')}</select>${note('inOut')}`);
+  const amount = td(`<input type="text" inputmode="numeric" class="corpcard-f corpcard-money" data-id="${id}" data-field="amount" value="${row.amount?Number(row.amount).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right; ${row.hl?'background:#fff3a0; color:#000;':''} ${issues.amount?errBorder:''}">
+    <label title="금액 노란색 표시" style="display:flex; align-items:center; justify-content:flex-end; gap:3px; font-size:10px; color:var(--muted); cursor:pointer; margin-top:2px;"><input type="checkbox" class="corpcard-hl-box" data-id="${id}" ${row.hl?'checked':''} style="margin:0;">🟨</label>${note('amount')}`);
+  return fixed('dept') + fixed('name') + fixed('position') + fixed('corp') + place + inOut + txt('workDetail') + txt('expenseType') + num('headcount') + txt('note') + amount + num('stdAmount') + num('overAmount');
+}
+// 빠진 칸 안내 — 두 엑셀에 꼭 있어야 하는 칸만 본다(승인내역과의 비교는 다른 카드와 같다).
+function prestigeRowIssues(row){
+  const issues = {};
+  ['date','place','inOut','expenseType'].forEach(f=>{ if(!String(row[f]||'').trim()) issues[f] = '빈칸을 채워주세요'; });
+  if(!Number(row.amount)) issues.amount = '빈칸을 채워주세요';
+  if(!String(row.workDetail||'').trim() && !String(row.note||'').trim()) issues.workDetail = '업무내용이나 비고를 채워주세요';
+  return issues;
+}
+let prestigeNote = '', prestigeNoteErr = false;
+function setPrestigeNote(text, isErr){
+  prestigeNote = text; prestigeNoteErr = !!isErr;
+  document.querySelectorAll('.prestige-note').forEach(el=>{ el.textContent = text; el.style.color = isErr ? 'var(--neg)' : 'var(--muted)'; });
+}
+function prestigePanelHtml(card){
+  const all = Object.values(corpCardState.rowsByCard[card.id]||{}).flat().filter(r=>r && Number(r.amount));
+  const sum = all.reduce((t,r)=>t+(Number(r.amount)||0), 0);
+  const b = (id, label, color, title) => `<button id="${id}" title="${escapeHtml(title)}" style="font-size:12px; padding:7px 12px; border-radius:7px; border:1px solid ${color}; background:transparent; color:${color}; cursor:pointer; font-weight:600; white-space:nowrap;">${label}</button>`;
+  const line = (kind, name) => { const link = getLinkedFile(prestigeLinkKey(kind)); return `
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:4px 0;">
+        <span style="font-size:12px; font-weight:600; min-width:128px;">${name}</span>
+        <span style="flex:1; min-width:160px; font-size:11.5px; color:${link?'var(--sky)':'var(--muted)'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" ${link?`title="${escapeHtml(link.path)}"`:''}>${link?`🔗 ${escapeHtml(link.path)}`:'연결된 파일 없음'}</span>
+        ${b('prestigePick_'+kind, link?'바꾸기':'🔗 PC 엑셀 파일 연결', link?'var(--muted)':'var(--sky)', '이 PC(W: 드라이브 포함)의 엑셀 파일을 고릅니다. 파일 선택 창은 엑셀 도우미가 띄웁니다.')}
+        ${link?b('prestigeUnlink_'+kind, '✕ 해제', 'var(--muted)', '연결만 해제합니다(파일은 그대로).'):''}
+      </div>`; };
+  const linked = getLinkedFile(prestigeLinkKey('ledger')) || getLinkedFile(prestigeLinkKey('list'));
+  const oldHelper = excelHelperRunning && excelHelperVersion && excelHelperVersion < PRESTIGE_HELPER_MIN;
+  return `<div style="border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-bottom:12px;">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:4px;">
+      <b style="font-size:12.5px;">품위유지비 엑셀 자동 채우기</b>
+      <span style="font-size:12px; color:var(--muted);">앱에 적힌 총 사용금액 <b style="color:var(--gold);">${sum.toLocaleString('ko-KR')}</b>원 (${all.length}건)</span>
+      ${oldHelper ? `<span style="font-size:12px; color:var(--neg); font-weight:700;">⚠ 엑셀 도우미 v${PRESTIGE_HELPER_MIN} 이상이 필요합니다(지금 v${excelHelperVersion})</span><button class="excel-helper-download" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">⬇ 엑셀 도우미 내려받기</button>` : ''}
+      ${excelHelperRunning === false ? `<span style="font-size:12px; color:var(--neg);">⚪ 엑셀 도우미가 꺼져 있습니다</span><button class="excel-helper-download" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">⬇ 엑셀 도우미 내려받기</button>` : ''}
+    </div>
+    ${line('ledger','1-1 관리대장')}${line('list','3-1 사용내역 리스트')}
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px;">
+      ${getLinkedFile(prestigeLinkKey('ledger')) ? b('prestigeImportBtn','📥 관리대장 내역 앱으로 가져오기','var(--gold)','1-1 관리대장에 이미 적혀 있는 내역 중 앱에 없는 것만 가져옵니다(엑셀은 바꾸지 않습니다).') : ''}
+      ${linked ? b('prestigeSyncBtn','💾 지금 엑셀에 쓰기','#2e9e5b','15초를 기다리지 않고 바로 연결된 엑셀에 씁니다.') : ''}
+      <span class="prestige-note" style="font-size:11.5px; color:${prestigeNoteErr?'var(--neg)':'var(--muted)'};">${escapeHtml(prestigeNote || (linked ? '적은 뒤 15초쯤 지나면 자동으로 엑셀에 씁니다(사용처·금액이 적힌 줄만).' : '파일을 연결한 PC에서 앱이 켜져 있을 때 자동으로 채워집니다.'))}</span>
+    </div></div>`;
+}
+function bindPrestigePanel(card){
+  const busy = async (btn, text, fn) => {
+    const label = btn.textContent; btn.textContent = text; btn.disabled = true;
+    try{ await fn(); }catch(e){ alert(linkedFileErrorMessage(e)); }
+    finally{ btn.textContent = label; btn.disabled = false; }
+  };
+  ['ledger','list'].forEach(kind=>{
+    const pick = document.getElementById('prestigePick_'+kind);
+    if(pick) pick.addEventListener('click', ()=>busy(pick, '파일 선택 창을 띄웠습니다…', async ()=>{
+      const link = await pickLinkedFile(prestigeLinkKey(kind), kind==='ledger' ? '1-1. 품위유지비 관리 엑셀 파일 선택' : '3-1. 법인카드 사용내역 리스트 엑셀 파일 선택');
+      if(link){ prestigeLastTxt = ''; renderCorpCardMain(); }
+    }));
+    const un = document.getElementById('prestigeUnlink_'+kind);
+    if(un) un.addEventListener('click', ()=>{ if(!confirm('이 파일과의 연결을 해제할까요? (파일 자체는 그대로 남습니다)')) return; unlinkFile(prestigeLinkKey(kind)); renderCorpCardMain(); });
+  });
+  const imp = document.getElementById('prestigeImportBtn');
+  if(imp) imp.addEventListener('click', ()=>busy(imp, '엑셀을 읽는 중…', async ()=>{ await importPrestigeLedger(); }));
+  const sync = document.getElementById('prestigeSyncBtn');
+  if(sync) sync.addEventListener('click', ()=>busy(sync, '엑셀에 쓰는 중…', async ()=>{ const r = await runPrestigeSync({ manual:true }); if(r && r.message) alert(r.message); }));
+  if(excelHelperRunning === null) checkExcelHelper().then(()=>{ if(state.activeTab==='corpCard' && corpCardState.activeCardId===card.id && !document.querySelector('#main input:focus, #main select:focus')) renderCorpCardMain(); }).catch(()=>{});
+}
+// ---- 앱 → 엑셀 ----
+const prestigeEligible = r => !!(r && r.id && /^\d{4}-\d{2}-\d{2}$/.test(String(r.date||'')) && String(r.place||'').trim() && Number(r.amount));
+const prestigeStr = v => String(v==null?'':v).trim();
+function prestigeLedgerVals(r){
+  return { date:r.date, place:prestigeStr(r.place), inOut:prestigeStr(r.inOut), expenseType:prestigeStr(r.expenseType), headcount:Number(r.headcount)||0, note:prestigeStr(r.note), amount:Number(r.amount)||0, stdAmount:Number(r.stdAmount)||0, overAmount:Number(r.overAmount)||0 };
+}
+function prestigeListVals(r){
+  return { date:r.date, dept:prestigeStr(r.dept), name:prestigeStr(r.name), place:prestigeStr(r.place), inOut:prestigeStr(r.inOut), work:prestigeStr(r.workDetail) || prestigeStr(r.note), expenseType:prestigeStr(r.expenseType), amount:Number(r.amount)||0 };
+}
+async function loadPrestigeSnap(){
+  const txt = await loadFileFromStorage(PRESTIGE_SNAP_KEY, 30000);
+  if(lastLoadMeta[PRESTIGE_SNAP_KEY] && lastLoadMeta[PRESTIGE_SNAP_KEY].error) throw new Error('서버를 확인하지 못했습니다(인터넷 연결 확인).');
+  let s = null; try{ s = txt ? JSON.parse(txt) : null; }catch(e){ throw new Error('엑셀에 쓴 기록을 읽지 못했습니다.'); }
+  return { ledger:(s && s.ledger)||{}, list:(s && s.list)||{} };
+}
+async function savePrestigeSnap(snap){
+  const r = await saveFileToStorage(PRESTIGE_SNAP_KEY, JSON.stringify(snap), 30000);
+  if(r && r.ok === false) throw new Error(r.reason || '엑셀에 쓴 기록을 저장하지 못했습니다.');
+}
+let prestigeSyncBusy = false, prestigeSyncAgain = false, prestigeLastTxt = '';
+const queuePrestigeSync = debounce(()=>{ runPrestigeSync({}).catch(()=>{}); }, 15000);
+async function runPrestigeSync(opts){
+  const manual = !!(opts && opts.manual);
+  const kinds = ['ledger','list'].filter(k=>getLinkedFile(prestigeLinkKey(k)));
+  if(!kinds.length) return { message:'연결된 엑셀 파일이 없습니다.' };
+  if(prestigeSyncBusy){ prestigeSyncAgain = true; return { message:'이미 쓰는 중입니다.' }; }
+  prestigeSyncBusy = true;
+  const done = [], problems = [];
+  try{
+    if(corpCardDirty && isPrestigeCardId(corpCardDirtyCardId)) await flushCorpCardSave({ silent:true });
+    await corpCardSaveQueue.catch(()=>{});
+    // 화면 내용이 아니라 서버에 저장된 내용을 쓴다 — 다른 PC에서 적은 것도 들어가고, 법인카드 탭을 안 열었어도 된다.
+    const rowsKey = 'corp-card-rows:' + PRESTIGE_CARD_ID;
+    const txt = await loadFileFromStorage(rowsKey, 30000);
+    if(lastLoadMeta[rowsKey] && lastLoadMeta[rowsKey].error){ setPrestigeNote('서버를 확인하지 못했습니다. 1분 뒤 다시 합니다.', true); return { message:'서버를 확인하지 못했습니다(인터넷 연결 확인).' }; }
+    if(!txt) return { message:'이 카드에 적힌 내역이 없습니다.' };
+    if(!manual && txt === prestigeLastTxt) return {};
+    const rows = Object.values(JSON.parse(txt)||{}).flat().filter(Boolean);
+    const ids = new Set(rows.map(r=>r.id));
+    const snap = await loadPrestigeSnap();
+    const tombs = await loadCorpCardTombs(PRESTIGE_CARD_ID);   // 못 읽으면 null → 이번에는 아무것도 지우지 않는다
+    let waiting = false;
+    for(const kind of kinds){
+      const vals = kind === 'ledger' ? prestigeLedgerVals : prestigeListVals;
+      const s = snap[kind];
+      const items = rows.filter(r=>prestigeEligible(r) && (kind === 'ledger' || r.date >= PRESTIGE_LIST_FROM))
+        .map(r=>({ id:r.id, cur:vals(r), prev:s[r.id]||null })).filter(x=>JSON.stringify(x.cur) !== JSON.stringify(x.prev));
+      const removes = tombs ? Object.keys(s).filter(id=>!ids.has(id) && tombs.has(id)).map(id=>({ id, prev:s[id] })) : [];
+      if(!items.length && !removes.length) continue;
+      const label = kind === 'ledger' ? '1-1 관리대장' : '3-1 사용내역 리스트';
+      const lockKey = 'prestige-' + kind;
+      if(!manual && fileLockWaiting(lockKey)){ waiting = true; continue; }
+      await checkExcelHelper();
+      if(!excelHelperRunning || excelHelperVersion < PRESTIGE_HELPER_MIN){
+        const m = `엑셀 도우미(v${PRESTIGE_HELPER_MIN} 이상)가 ${excelHelperRunning ? '예전 버전입니다' : '꺼져 있습니다'} — 켜면 자동으로 이어서 씁니다.`;
+        setPrestigeNote('⚠ ' + m, true);
+        return { message:m };
+      }
+      try{
+        const link = await resolveLinkedPath(prestigeLinkKey(kind));
+        setPrestigeNote(`${label}에 쓰는 중…`);
+        const res = await excelHelperCall('/prestige/write', { path: link.path, kind, items, removes }, 5*60*1000);
+        const byId = new Map(items.map(x=>[x.id, x]));
+        // 쓴 값만 기록한다(서버 기록을 다시 받아 합침 — 다른 PC의 기록을 덮지 않게).
+        const fresh = await loadPrestigeSnap();
+        (res.results||[]).forEach(r=>{
+          if(!r || !r.ok) return;
+          if(r.action === 'removed' || r.action === 'notfound'){ delete fresh[kind][r.id]; return; }
+          const it = byId.get(r.id); if(it) fresh[kind][r.id] = it.cur;
+        });
+        await savePrestigeSnap(fresh);
+        snap[kind] = fresh[kind];
+        fileLockResolved(lockKey);
+        const n = a => (res.results||[]).filter(r=>r.action===a).length;
+        const parts = [['added','새로 씀'],['updated','고침'],['matched','이미 있던 줄'],['removed','지움'],['notfound','지울 줄 없음']].filter(([a])=>n(a)).map(([a,t])=>`${t} ${n(a)}건`);
+        done.push(`${label}: ${parts.join(', ')}`);
+        if(n('notfound')) problems.push(`${label}: 앱에서 지운 ${n('notfound')}건을 엑셀에서 찾지 못했습니다(엑셀에서 고쳤거나 이미 지운 줄) — 엑셀을 확인해주세요.`);
+      }catch(e){
+        if(isFileLockedError(e)){
+          waiting = true;
+          const lk = getLinkedFile(prestigeLinkKey(kind));
+          waitForFileUnlock(lockKey, label, lk.path, ()=>runPrestigeSync({}));
+          problems.push(`${label} 파일이 열려 있어 닫히면 자동으로 씁니다.`);
+        } else if(e && e.helperBusy){
+          waiting = true; problems.push('엑셀 도우미가 다른 작업 중이라 1분 뒤 다시 씁니다.');
+        } else { waiting = true; problems.push(`${label}: ${linkedFileErrorMessage(e)}`); }
+      }
+    }
+    if(!waiting) prestigeLastTxt = txt;   // 다 썼으면 내용이 바뀔 때까지 다시 확인하지 않는다
+    const time = new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+    if(done.length || problems.length) setPrestigeNote(`${time} ${done.concat(problems).join(' · ')}`, problems.length > 0);
+    if(done.length && !manual) showLedgerToast(`품위유지비 엑셀 자동 반영\n${done.concat(problems).join('\n')}`, problems.length > 0);
+    return { message: done.concat(problems).join('\n') || '엑셀에 쓸 새 내용이 없습니다(모두 반영됨).' };
+  }finally{
+    prestigeSyncBusy = false;
+    if(prestigeSyncAgain){ prestigeSyncAgain = false; queuePrestigeSync(); }
+  }
+}
+// 다른 PC에서 적은 내용도 쓰도록, 파일을 연결한 PC에서는 1분마다 서버 내역이 바뀌었는지 본다.
+setInterval(()=>{
+  if(document.querySelector('#main .corpcard-f:focus') || !(fbAuth && fbAuth.currentUser)) return;
+  if(!getLinkedFile(prestigeLinkKey('ledger')) && !getLinkedFile(prestigeLinkKey('list'))) return;
+  runPrestigeSync({}).catch(e=>console.warn('품위유지비 엑셀 자동 반영 실패', e));
+}, 60000);
+// ---- 1-1 관리대장 → 앱(처음 한 번, 또는 엑셀에 직접 적은 줄을 가져올 때) ----
+function parsePrestigeLedger(rows){
+  const norm = v => String(v==null?'':v).replace(/\s/g,'');
+  const numOf = v => typeof v === 'number' ? v : (Number(String(v==null?'':v).replace(/[^0-9.-]/g,''))||0);
+  const hi = rows.findIndex(r=>norm(r && r[1]) === '사용월' && norm(r[2]) === '사용일');
+  if(hi < 0) throw new Error(`"${PRESTIGE_LEDGER_SHEET}" 시트에서 머리글(사용월·사용일)을 찾지 못했습니다.`);
+  const now = new Date(), fy = now.getMonth()+1 >= 3 ? now.getFullYear() : now.getFullYear()-1;   // 3월~다음 해 2월
+  const out = []; let pm = 0;
+  for(let i=hi+1; i<rows.length; i++){
+    const r = rows[i]||[];
+    if(norm(r[1]) === '합계') break;
+    const m = numOf(r[1]) || pm, d = numOf(r[2]), amount = numOf(r[12]);
+    if(numOf(r[1])) pm = numOf(r[1]);
+    if(!(m>=1 && m<=12) || !(d>=1 && d<=31) || !amount) continue;
+    const t = v => String(v==null?'':v).trim();
+    out.push({ date:`${m>=3?fy:fy+1}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`, place:t(r[7]), inOut:t(r[8]), expenseType:t(r[9]), headcount:numOf(r[10]), note:t(r[11]), amount, stdAmount:typeof r[13]==='number'?r[13]:0, overAmount:typeof r[14]==='number'?r[14]:0 });
+  }
+  return out;
+}
+async function importPrestigeLedger(){
+  await ensureCorpCardLoaded();
+  await checkExcelHelper();
+  if(!excelHelperRunning) throw new Error('엑셀 도우미가 실행되어 있지 않습니다. excel-helper.cmd를 실행한 뒤 다시 눌러주세요.');
+  const link = await resolveLinkedPath(prestigeLinkKey('ledger'));
+  const res = await excelHelperCall('/readvalues', { path: link.path, sheet: PRESTIGE_LEDGER_SHEET }, 3*60*1000);
+  if(res.sheet !== PRESTIGE_LEDGER_SHEET) throw new Error(`"${PRESTIGE_LEDGER_SHEET}" 시트가 없습니다. 1-1 관리대장 파일이 맞는지 확인해주세요.`);
+  const found = parsePrestigeLedger(res.rows||[]);
+  const cardId = PRESTIGE_CARD_ID;
+  await refreshCorpCardRowsFromServer(cardId);
+  if(corpCardLoadFailed.has(cardId)) throw new Error('서버의 이 카드 내역을 확인하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 해주세요.');
+  const keyOf = r => `${r.date}|${Number(r.amount)||0}|${String(r.place||'').replace(/\s/g,'')}`;
+  const have = new Map();
+  corpCardRowsWithMonth(corpCardState.rowsByCard[cardId]).forEach(({row})=>{ const k = keyOf(row); have.set(k, (have.get(k)||0)+1); });
+  const add = found.filter(f=>{ const k = keyOf(f), n = have.get(k)||0; if(n > 0){ have.set(k, n-1); return false; } return true; });
+  if(!add.length){ alert(`관리대장의 ${found.length}건이 이미 모두 앱에 있습니다.`); return; }
+  const total = add.reduce((t,r)=>t+r.amount, 0);
+  if(!confirm(`관리대장에 적힌 ${found.length}건 중 앱에 없는 ${add.length}건(합계 ${total.toLocaleString('ko-KR')}원)을 7973 카드로 가져올까요?\n엑셀 파일은 바꾸지 않습니다.`)) return;
+  const snap = await loadPrestigeSnap();
+  const newRows = add.map(f=>applyPrestigeDefaults({ ...newCorpCardRow(), ...f, bizCategory:'', project:'', plantName:'', workDetail:'', hipass:'', carNo:'' }));
+  newRows.forEach(r=>{ snap.ledger[r.id] = prestigeLedgerVals(r); });   // 엑셀에 이미 있는 줄이라 다시 쓰지 않게 먼저 기록
+  await savePrestigeSnap(snap);
+  newRows.forEach(r=>insertCorpCardRowByDate(cardId, Number(r.date.slice(5,7))+' 월', r));
+  const r = await saveCorpCardRows(cardId);
+  if(r && r.ok === false) throw new Error(r.reason || '저장하지 못했습니다.');
+  recomputeCorpCardMismatches();
+  if(state.activeTab === 'corpCard') renderCorpCardMain();
+  alert(`${newRows.length}건을 가져왔습니다.`);
 }
 // 도우미에 보낼 열 구성(B~Q)과, 앱 행 하나를 그 열 순서의 값 배열로 바꾸는 함수.
 function corpCardHelperColumns(){
@@ -18188,7 +18486,8 @@ function resolveMealCsvYearMonth(monthLabel){
 function collectMealUsageByName(yearMonth){
   const byName = {};
   MEAL_CSV_ROSTER.forEach(name=>{ byName[name] = new Set(); });
-  Object.values(corpCardState.rowsByCard || {}).forEach(byMonth=>{
+  Object.entries(corpCardState.rowsByCard || {}).forEach(([cardId, byMonth])=>{
+    if(isPrestigeCardId(cardId)) return;   // 품위유지비 카드는 식대 월계표에 넣지 않는다
     Object.values(byMonth || {}).forEach(rows=>{
       (rows || []).forEach(row=>{
         const date = String(row.date || '');
@@ -23125,7 +23424,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '60'
+$Version = '61'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -24823,6 +25122,379 @@ function Handle-ReadValues($body){
     if($tmpCopy){ try { Remove-Item -LiteralPath $tmpCopy -Force -ErrorAction SilentlyContinue } catch {} }
   }
 }
+# ---- 품위유지비 카드(7973) — 관리대장(1-1)·사용내역 리스트(3-1) 엑셀에 앱 내역을 채운다 ----
+# body: path, kind('ledger'|'list'), items[{id, cur, prev}], removes[{id, prev}]
+#  - 앱이 전에 쓴 행(prev)이 있으면 그 행을 찾아 앱에서 바뀐 칸만 고친다(엑셀에서 직접 고친 다른 칸은 그대로).
+#  - 처음 쓰는 건이면 같은 날짜·사용처·금액의 행이 이미 있는지 보고, 있으면 그 행으로 보고(빈 칸만 채움) 없으면 새 줄.
+#  - 앱에서 지운 건은 앱이 쓴 행과 날짜·사용처·금액이 모두 같을 때만 지운다.
+# 쓰기 전 사본은 사본 폴더\품위유지비 에 "원래이름_사본_yyyyMMdd_HHmmss" 로 매번 남긴다(최근 200개).
+function Backup-PrestigeFile([string]$path){
+  $dir = Join-Path (Get-BackupRoot) '품위유지비'
+  [void](New-Item -ItemType Directory -Force -Path $dir)
+  $dest = Join-Path $dir ([IO.Path]::GetFileNameWithoutExtension($path) + '_사본_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + [IO.Path]::GetExtension($path))
+  Copy-Item -LiteralPath $path -Destination $dest -Force
+  (Get-Item -LiteralPath $dest).LastWriteTime = Get-Date
+  Get-ChildItem -LiteralPath $dir -File | Sort-Object LastWriteTime -Descending | Select-Object -Skip 200 | Remove-Item -Force -ErrorAction SilentlyContinue
+  Log "백업: $dest"
+}
+function Pr-Norm($v){ return (([string]$v) -replace '\s','') }
+function Pr-Num($v){
+  if($null -eq $v){ return [double]0 }
+  if($v -is [double] -or $v -is [int] -or $v -is [long] -or $v -is [decimal]){ return [double]$v }
+  $n = 0.0; [void][double]::TryParse((([string]$v) -replace '[^0-9.\-]',''), [Globalization.NumberStyles]::Any, [Globalization.CultureInfo]::InvariantCulture, [ref]$n); return $n
+}
+function Pr-Text($cell, $v){
+  $s = [string]$v
+  if($s -eq ''){ Pr-Clear $cell; return }
+  if($s -match '^[=+\-@#]' -or $s -match '^0\d+$'){ $s = "'" + $s }
+  Set-CellValue $cell $s
+}
+# 병합된 칸이면 병합 범위째 비운다.
+function Pr-Clear($cell){ Invoke-Retry { [void]$cell.MergeArea.ClearContents() } | Out-Null }
+# 회계 기간(3월~다음 해 2월) 순서로 비교하는 값
+function Pr-DateKey([int]$m, [int]$d){ return ((($m + 9) % 12) * 100 + $d) }
+function Pr-FindRow($rows, $vals, $used, [bool]$loose){
+  $dt = [string]$vals.date; $m = [int]$dt.Substring(5,2); $d = [int]$dt.Substring(8,2)
+  $p = Pr-Norm $vals.place; $a = Pr-Num $vals.amount
+  $sameDay = @($rows | Where-Object { $_.filled -and $_.m -eq $m -and $_.d -eq $d -and -not $used.ContainsKey([int]$_.row) })
+  $hit = @($sameDay | Where-Object { $_.place -eq $p -and $_.amount -eq $a })
+  if($hit.Count){ return $hit[0] }
+  if($loose){
+    $h1 = @($sameDay | Where-Object { $_.amount -eq $a }); if($h1.Count -eq 1){ return $h1[0] }
+    $h2 = @($sameDay | Where-Object { $_.place -eq $p }); if($h2.Count -eq 1){ return $h2[0] }
+  }
+  return $null
+}
+function Pr-Changed($cur, $prev, [string]$f){
+  if($null -eq $prev){ return $true }
+  return (([string]$cur.$f) -cne ([string]$prev.$f))
+}
+
+# -- 1-1 관리대장 --
+function Get-PrestigeLedger($wb){
+  $ws = $null; foreach($s in $wb.Worksheets){ if((Pr-Norm $s.Name) -eq '품위유지비_작성용'){ $ws = $s } }
+  if(-not $ws){ throw '"품위유지비_작성용" 시트를 찾을 수 없습니다. 품위유지비 관리대장(1-1) 파일이 맞는지 확인해주세요.' }
+  $hr = 0; for($r=1; $r -le 12; $r++){ if((Pr-Norm $ws.Cells.Item($r,2).Text) -eq '사용월'){ $hr = $r; break } }
+  if(-not $hr){ throw '관리대장에서 "사용월" 머리글을 찾지 못했습니다(열 구성이 바뀐 것 같습니다).' }
+  foreach($c in @(@('C','사용일'),@('H','사용처'),@('I','사용인원'),@('J','지출내역'),@('K','인원수'),@('L','비고'),@('M','사용금액'),@('N','일반카드'),@('O','기준초과'))){
+    $t = Pr-Norm $ws.Range($c[0] + $hr).Value2
+    if(-not $t.StartsWith($c[1])){ throw "관리대장의 열 구성이 예상과 달라 쓰지 않았습니다 ($($c[0])열: ""$t"")." }
+  }
+  $total = 0; for($r=$hr+1; $r -le 3000; $r++){ if((Pr-Norm $ws.Cells.Item($r,2).Text) -eq '합계'){ $total = $r; break } }
+  if(-not $total){ throw '관리대장에서 "합계" 행을 찾지 못했습니다.' }
+  return @{ ws=$ws; first=$hr+1; total=$total }
+}
+function Read-PrestigeLedgerRows($L){
+  $first = $L.first; $last = $L.total - 1
+  $box = @{}; $ws = $L.ws
+  Invoke-Retry { $box.v = $ws.Range("B${first}:O${last}").Value2 } | Out-Null
+  $out = New-Object System.Collections.ArrayList; $pm = 0
+  for($r=$first; $r -le $last; $r++){
+    $i = $r - $first + 1
+    $m = [int](Pr-Num $box.v[$i,1]); $d = [int](Pr-Num $box.v[$i,2])
+    $place = Pr-Norm $box.v[$i,7]; $amt = Pr-Num $box.v[$i,12]
+    $filled = ($d -gt 0) -or ($place -ne '') -or ($amt -ne 0) -or ($m -gt 0)
+    if($filled){ if($m -lt 1){ $m = $pm } else { $pm = $m } }   # 사용월을 비워 둔 줄은 윗줄과 같은 달로 본다
+    [void]$out.Add([pscustomobject]@{ row=$r; m=$m; d=$d; place=$place; amount=$amt; filled=$filled })
+  }
+  return $out.ToArray()
+}
+function Write-PrestigeLedgerCells($L, [int]$r, $cur, $prev, [bool]$onlyBlank){
+  $ws = $L.ws; $dt = [string]$cur.date
+  if(Pr-Changed $cur $prev 'date'){
+    if(-not $onlyBlank -or [string]$ws.Range("B$r").Formula -eq ''){ Set-CellValue $ws.Range("B$r") ([double][int]$dt.Substring(5,2)) }
+    if(-not $onlyBlank -or [string]$ws.Range("C$r").Formula -eq ''){ Set-CellValue $ws.Range("C$r") ([double][int]$dt.Substring(8,2)) }
+  }
+  foreach($p in @(@('H','place'),@('I','inOut'),@('J','expenseType'),@('L','note'))){
+    if(-not (Pr-Changed $cur $prev $p[1])){ continue }
+    $cell = $ws.Range("$($p[0])$r")
+    if($onlyBlank -and [string]$cell.Formula -ne ''){ continue }
+    Pr-Text $cell $cur.($p[1])
+  }
+  foreach($p in @(@('K','headcount'),@('M','amount'),@('N','stdAmount'),@('O','overAmount'))){
+    if(-not (Pr-Changed $cur $prev $p[1])){ continue }
+    $cell = $ws.Range("$($p[0])$r"); $n = Pr-Num $cur.($p[1])
+    if($onlyBlank -and [string]$cell.Formula -ne ''){ continue }
+    if($n -eq 0){ if($null -ne $prev){ Pr-Clear $cell }; continue }
+    Set-CellValue $cell $n
+    if($p[0] -eq 'K'){ try { $cell.NumberFormat = $ws.Range("K$($L.first)").NumberFormat } catch {} }
+  }
+}
+function Write-PrestigeLedger($xl, $wb, $body){
+  $L = Get-PrestigeLedger $wb; $ws = $L.ws
+  $results = New-Object System.Collections.ArrayList; $changed = $false
+  foreach($it in @($body.removes)){
+    if($null -eq $it){ continue }
+    $hit = Pr-FindRow (Read-PrestigeLedgerRows $L) $it.prev @{} $false
+    if(-not $hit){ [void]$results.Add(@{ id=[string]$it.id; ok=$true; action='notfound' }); continue }
+    $r = [int]$hit.row
+    if($r -eq $L.first){ Invoke-Retry { [void]$ws.Range("B${r}:C$r").ClearContents(); [void]$ws.Range("H${r}:O$r").ClearContents() } | Out-Null }
+    else { Invoke-Retry { [void]$ws.Rows.Item($r).Delete() } | Out-Null; $L.total-- }
+    $changed = $true
+    [void]$results.Add(@{ id=[string]$it.id; ok=$true; action='removed' })
+  }
+  # 고칠 줄·이미 있는 줄 먼저(줄 번호가 안 바뀌는 일), 새 줄은 그다음 날짜 순으로
+  $used = @{}; $news = @()
+  $rows = Read-PrestigeLedgerRows $L
+  foreach($it in @($body.items)){
+    if($null -eq $it){ continue }
+    $hit = $null; $prev = $it.prev
+    if($prev){ $hit = Pr-FindRow $rows $prev $used $true }
+    if(-not $hit){ $hit = Pr-FindRow $rows $it.cur $used $false; if($hit){ $prev = $null } }
+    if(-not $hit){ $news += $it; continue }
+    $used[[int]$hit.row] = 1
+    Write-PrestigeLedgerCells $L ([int]$hit.row) $it.cur $prev ($null -eq $prev)
+    $changed = $true
+    [void]$results.Add(@{ id=[string]$it.id; ok=$true; action=$(if($prev){ 'updated' } else { 'matched' }); row=[int]$hit.row })
+  }
+  foreach($ni in @(for($q=0; $q -lt $news.Count; $q++){ $q }) | Sort-Object { [string]$news[$_].cur.date }, { $_ }){   # 같은 날짜는 앱에 적힌 순서 그대로
+    $it = $news[$ni]
+    $dt = [string]$it.cur.date; $key = Pr-DateKey ([int]$dt.Substring(5,2)) ([int]$dt.Substring(8,2))
+    $rows = Read-PrestigeLedgerRows $L
+    $filled = @($rows | Where-Object { $_.filled })
+    $lastFilled = if($filled.Count){ [int]$filled[-1].row } else { $L.first - 1 }
+    $later = @($filled | Where-Object { $_.d -gt 0 -and $_.m -gt 0 -and (Pr-DateKey $_.m $_.d) -gt $key })
+    if($later.Count -and [int]$later[0].row -gt $L.first){
+      $r = [int]$later[0].row          # 날짜 순서 자리에 줄을 끼운다(합계·병합 범위는 엑셀이 저절로 늘린다)
+      Invoke-Retry { [void]$ws.Rows.Item($r).Insert() } | Out-Null; $L.total++
+      try { $ws.Rows.Item($r).RowHeight = $ws.Rows.Item($r+1).RowHeight } catch {}
+    } else {
+      $r = $lastFilled + 1; $last = $L.total - 1
+      if($r -ge $last){
+        # 남은 빈 줄이 한 줄 이하 — 범위 안쪽(마지막 줄 위)에 빈 줄을 끼워 합계·병합 범위가 늘어나게 한다.
+        Invoke-Retry { [void]$ws.Rows.Item($last).Insert() } | Out-Null; $L.total++
+        if($r -gt $last){
+          # 빈 줄이 하나도 없던 경우: 끼운 빈 줄로 마지막 줄 내용을 올리고 마지막 줄에 새로 쓴다.
+          $n1 = $last + 1
+          foreach($col in @('B','C','H','I','J','K','L','M','N','O')){
+            $fv = $ws.Range("$col$n1").Formula
+            if([string]$fv -ne ''){ Set-CellValue $ws.Range("$col$last") $ws.Range("$col$n1").Value2 }
+          }
+          Invoke-Retry { [void]$ws.Range("B${n1}:C$n1").ClearContents(); [void]$ws.Range("H${n1}:O$n1").ClearContents() } | Out-Null
+          $r = $n1
+        }
+      }
+    }
+    Write-PrestigeLedgerCells $L $r $it.cur $null $false
+    $changed = $true
+    [void]$results.Add(@{ id=[string]$it.id; ok=$true; action='added'; row=$r })
+  }
+  return @{ results=$results.ToArray(); changed=$changed }
+}
+
+# -- 3-1 사용내역 리스트(달마다 시트 한 장) --
+function Get-PrestigeListSheet($wb, [int]$num, [bool]$create){
+  $hit = $null; $src = $null; $srcKey = -1; $want = ($num + 9) % 12
+  foreach($s in $wb.Worksheets){
+    if($s.Visible -ne -1){ continue }
+    $mm = [regex]::Match([string]$s.Name, '(?<!\d)(\d{1,2})\s*월')
+    if(-not $mm.Success){ continue }
+    $n = [int]$mm.Groups[1].Value; $k = ($n + 9) % 12
+    if($n -eq $num){ $hit = $s }
+    elseif($k -lt $want -and $k -ge $srcKey){ $src = $s; $srcKey = $k }
+  }
+  if($hit -or -not $create){ return $hit }
+  if(-not $src){ throw '사용내역 리스트에서 본뜰 달 시트("…_N월")를 찾지 못했습니다.' }
+  Invoke-Retry { Copy-SheetAfter $src } | Out-Null
+  $idx = $src.Index + 1; $ws = $null; foreach($t in $wb.Sheets){ if($t.Index -eq $idx){ $ws = $t } }
+  $base = ([string]$src.Name) -replace '_?\s*\d{1,2}\s*월.*$',''
+  $ws.Name = "${base}_${num}월"
+  # 입력 칸을 "한 줄에 한 건" 25줄로 고르게 맞춘다(본뜬 시트는 한 줄짜리·두 줄짜리가 섞여 있다).
+  $S = Get-PrestigeListLayout $ws
+  $f = $S.first; $end = $S.total - 1
+  if($S.step -gt 1){
+    foreach($a in $S.areas){ [void]$ws.Range("$($a[0])${f}:$($a[1])$($f + $S.step - 1)").UnMerge() }
+    foreach($a in $S.areas){ if($a[0] -ne $a[1]){ [void]$ws.Range("$($a[0])${f}:$($a[1])$f").Merge() } }
+  }
+  if($end -gt $f){ Invoke-Retry { [void]$ws.Range("$($f+1):$end").Delete() } | Out-Null }
+  foreach($c in $S.cols.Values){ Pr-Clear $ws.Range("$c$f") }
+  $ws.Rows.Item($f).RowHeight = 32
+  for($i=0; $i -lt 24; $i++){ Invoke-Retry { [void]$ws.Rows.Item($f).Copy(); [void]$ws.Rows.Item($f + 1).Insert() } | Out-Null }
+  try { $ws.Application.CutCopyMode = 0 } catch {}
+  try { if(-not $ws.Range('A1').MergeCells){ [void]$ws.Range('A1').ClearContents() } } catch {}
+  # 다른 달 시트처럼 A~Y만 한 장에 인쇄되게 한다(프린터가 없는 PC에서는 건너뜀).
+  try { $ws.PageSetup.PrintArea = ('A1:Y' + ($f + 27)); $ws.PageSetup.Zoom = $false; $ws.PageSetup.FitToPagesWide = 1; $ws.PageSetup.FitToPagesTall = 1 } catch {}
+  return $ws
+}
+function Get-PrestigeListLayout($ws){
+  $hr = 0; for($r=1; $r -le 40; $r++){ if((Pr-Norm $ws.Cells.Item($r,2).Text) -eq '날짜'){ $hr = $r; break } }
+  if(-not $hr){ throw """$($ws.Name)"" 시트에서 ""날짜"" 머리글을 찾지 못했습니다." }
+  $map = @{ '날짜'='date'; '부서'='dept'; '성명'='name'; '사용처'='place'; '내부/외부'='inOut'; '업무내용'='work'; '지출내역'='expenseType'; '금액'='amount' }
+  $cols = @{}; $areas = @()
+  for($c=2; $c -le 30; $c++){
+    $cell = $ws.Cells.Item($hr, $c); $t = Pr-Norm $cell.Text
+    if($map.ContainsKey($t) -and -not $cols.ContainsKey($map[$t])){
+      $cols[$map[$t]] = Get-ColLetter $c
+      $areas += ,@((Get-ColLetter $c), (Get-ColLetter ($c + $cell.MergeArea.Columns.Count - 1)))
+    }
+  }
+  foreach($k in $map.Values){ if(-not $cols.ContainsKey($k)){ throw """$($ws.Name)"" 시트의 열 구성이 예상과 달라 쓰지 않았습니다($k 열 없음)." } }
+  $total = 0; for($r=$hr+1; $r -le 3000; $r++){ if((Pr-Norm $ws.Cells.Item($r,2).Text) -eq '합계'){ $total = $r; break } }
+  if(-not $total){ throw """$($ws.Name)"" 시트에서 ""합계"" 행을 찾지 못했습니다." }
+  $step = [int]$ws.Cells.Item($hr+1, 2).MergeArea.Rows.Count
+  return @{ ws=$ws; first=$hr+1; total=$total; cols=$cols; areas=$areas; step=$step }
+}
+function Read-PrestigeListRows($S){
+  $ws = $S.ws; $out = New-Object System.Collections.ArrayList; $r = $S.first
+  while($r -lt $S.total){
+    $step = [int]$ws.Range("$($S.cols.date)$r").MergeArea.Rows.Count
+    $dv = $ws.Range("$($S.cols.date)$r").Value2; $m = 0; $d = 0
+    if($dv -is [double] -and $dv -gt 1){ $x = [datetime]::FromOADate($dv); $m = $x.Month; $d = $x.Day }
+    $place = Pr-Norm $ws.Range("$($S.cols.place)$r").Value2; $amt = Pr-Num $ws.Range("$($S.cols.amount)$r").Value2
+    $filled = (([string]$dv) -ne '') -or ($place -ne '') -or ($amt -ne 0)
+    [void]$out.Add([pscustomobject]@{ row=$r; step=$step; m=$m; d=$d; place=$place; amount=$amt; filled=$filled })
+    $r += $step
+  }
+  return $out.ToArray()
+}
+function Copy-PrestigeListRow($S, [int]$from, [int]$to){
+  $ws = $S.ws
+  foreach($c in $S.cols.Values){
+    $a = $ws.Range("$c$from"); $b = $ws.Range("$c$to")
+    if([string]$a.Formula -eq ''){ Pr-Clear $b; continue }
+    Set-CellValue $b $a.Value2
+    try { $b.MergeArea.NumberFormat = $a.NumberFormat; $b.MergeArea.WrapText = $a.WrapText; $b.MergeArea.ShrinkToFit = $a.ShrinkToFit; $b.MergeArea.Font.Size = $a.Font.Size } catch {}
+  }
+}
+function Clear-PrestigeListRow($S, [int]$r){ foreach($c in $S.cols.Values){ Pr-Clear $S.ws.Range("$c$r") } }
+function Write-PrestigeListCells($S, [int]$r, $cur, $prev, [bool]$onlyBlank){
+  $ws = $S.ws
+  foreach($f in @('date','dept','name','place','inOut','work','expenseType','amount')){
+    if(-not (Pr-Changed $cur $prev $f)){ continue }
+    $cell = $ws.Range("$($S.cols[$f])$r")
+    if($onlyBlank -and ([string]$cell.Formula) -ne ''){ continue }
+    if($f -eq 'date'){
+      $d = [datetime]::ParseExact([string]$cur.date, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+      Set-CellValue $cell ($d.ToOADate())
+      # 날짜는 표시 형식도 같이 넣고, 칸이 좁아 ####로 보이지 않게 글자를 줄인다.
+      try { $cell.MergeArea.NumberFormat = 'yyyy-mm-dd'; $cell.MergeArea.WrapText = $false; $cell.MergeArea.ShrinkToFit = $true } catch {}
+    } elseif($f -eq 'amount'){
+      Set-CellValue $cell (Pr-Num $cur.amount)
+      try { if([string]$cell.NumberFormat -notmatch '#,##0'){ $cell.MergeArea.NumberFormat = '#,##0' } } catch {}
+    } else {
+      Pr-Text $cell $cur.$f
+      if($f -eq 'place' -or $f -eq 'work'){ try { $cell.MergeArea.WrapText = $true } catch {} }
+      if($f -eq 'place'){ try { if(([string]$cur.place).Length -gt 10){ $cell.MergeArea.Font.Size = 8 } elseif([double]$cell.Font.Size -eq 8){ $cell.MergeArea.Font.Size = 10 } } catch {} }   # 칸이 좁아 긴 이름이 잘리지 않게
+    }
+  }
+}
+# 사용건수·합계 수식이 입력 줄 전체를 보게 맞춘다(본뜬 시트의 수식은 일부 줄만 더하거나 합계 칸까지 셌다).
+function Fix-PrestigeListFormulas($ws){
+  $S = Get-PrestigeListLayout $ws
+  $c = $S.cols.amount; $a = $null; foreach($x in $S.areas){ if($x[0] -eq $c){ $a = $x } }
+  $rng = "$($a[0])$($S.first):$($a[1])$($S.total - 1)"
+  Set-CellValue $ws.Range("$c$($S.total)") "=SUM($rng)"
+  for($r=1; $r -lt $S.first - 1; $r++){ for($k=2; $k -le 30; $k++){
+    $t = Pr-Norm $ws.Cells.Item($r,$k).Text
+    if($t -ne '사용건수' -and $t -ne '합계금액'){ continue }
+    $ma = $ws.Cells.Item($r,$k).MergeArea; $vc = $ws.Cells.Item($r, $ma.Column + $ma.Columns.Count)
+    if($t -eq '사용건수'){ Set-CellValue $vc "=COUNT($rng)" } else { Set-CellValue $vc "=$c$($S.total)" }
+  } }
+}
+function Write-PrestigeList($xl, $wb, $body){
+  $results = New-Object System.Collections.ArrayList; $changed = $false
+  $removes = @(); foreach($x in @($body.removes)){ if($null -ne $x){ $removes += @{ id=[string]$x.id; prev=$x.prev; report=$true } } }
+  $items = @()
+  foreach($it in @($body.items)){
+    if($null -eq $it){ continue }
+    # 날짜의 달이 바뀌었으면 예전 달 시트에서 빼고 새 달 시트에 새로 쓴다.
+    if($it.prev -and ([string]$it.prev.date).Substring(5,2) -ne ([string]$it.cur.date).Substring(5,2)){
+      $removes += @{ id=[string]$it.id; prev=$it.prev; report=$false }
+      $items += [pscustomobject]@{ id=$it.id; cur=$it.cur; prev=$null }
+    } else { $items += $it }
+  }
+  foreach($it in $removes){
+    $ws = Get-PrestigeListSheet $wb ([int]([string]$it.prev.date).Substring(5,2)) $false
+    $hit = $null
+    if($ws){ $S = Get-PrestigeListLayout $ws; $rows = Read-PrestigeListRows $S; $hit = Pr-FindRow $rows $it.prev @{} $false }
+    if($hit){
+      # 줄 수는 그대로 두고 아래 줄 내용을 한 줄씩 올린다.
+      $at = [int]$hit.row
+      foreach($x in @($rows | Where-Object { $_.row -gt $at -and $_.filled })){ Copy-PrestigeListRow $S ([int]$x.row) $at; $at = [int]$x.row }
+      Clear-PrestigeListRow $S $at
+      $changed = $true
+    }
+    if($it.report){ [void]$results.Add(@{ id=$it.id; ok=$true; action=$(if($hit){ 'removed' } else { 'notfound' }) }) }
+  }
+  $used = @{}; $news = @()
+  foreach($it in $items){
+    $num = [int]([string]$it.cur.date).Substring(5,2)
+    $ws = Get-PrestigeListSheet $wb $num $false
+    $hit = $null; $prev = $it.prev
+    if($ws){
+      $S = Get-PrestigeListLayout $ws; $rows = Read-PrestigeListRows $S
+      if(-not $used.ContainsKey($num)){ $used[$num] = @{} }
+      if($prev){ $hit = Pr-FindRow $rows $prev $used[$num] $true }
+      if(-not $hit){ $hit = Pr-FindRow $rows $it.cur $used[$num] $false; if($hit){ $prev = $null } }
+    }
+    if(-not $hit){ $news += $it; continue }
+    $used[$num][[int]$hit.row] = 1
+    Write-PrestigeListCells $S ([int]$hit.row) $it.cur $prev ($null -eq $prev)
+    $changed = $true
+    [void]$results.Add(@{ id=[string]$it.id; ok=$true; action=$(if($prev){ 'updated' } else { 'matched' }); row=[int]$hit.row; sheet=[string]$ws.Name })
+  }
+  foreach($ni in @(for($q=0; $q -lt $news.Count; $q++){ $q }) | Sort-Object { [string]$news[$_].cur.date }, { $_ }){   # 같은 날짜는 앱에 적힌 순서 그대로
+    $it = $news[$ni]
+    $dt = [string]$it.cur.date; $num = [int]$dt.Substring(5,2); $day = [int]$dt.Substring(8,2)
+    $ws = Get-PrestigeListSheet $wb $num $true
+    $S = Get-PrestigeListLayout $ws; $rows = Read-PrestigeListRows $S
+    $filled = @($rows | Where-Object { $_.filled })
+    $lastFilled = if($filled.Count){ [int]$filled[-1].row } else { 0 }
+    if(-not @($rows | Where-Object { $_.row -gt $lastFilled }).Count){
+      # 빈 줄이 없으면 마지막 줄을 복사해 그 위에 끼우고(합계 범위가 늘어남) 아래쪽을 비워 쓴다.
+      $le = $rows[-1]; $sp = "$($le.row):$([int]$le.row + [int]$le.step - 1)"
+      Invoke-Retry { [void]$ws.Range($sp).Copy(); [void]$ws.Range($sp).Insert() } | Out-Null
+      try { $xl.CutCopyMode = 0 } catch {}
+      $S = Get-PrestigeListLayout $ws
+      Clear-PrestigeListRow $S ([int]$le.row + [int]$le.step)
+      $rows = Read-PrestigeListRows $S
+    }
+    $r = [int]@($rows | Where-Object { $_.row -gt $lastFilled })[0].row
+    # 날짜 순서가 되게, 더 늦은 날짜 줄들을 한 줄씩 내리고 그 자리에 쓴다.
+    $later = @($rows | Where-Object { $_.filled -and $_.d -gt $day })
+    if($later.Count){
+      $chain = @($rows | Where-Object { $_.row -ge $later[0].row -and $_.row -le $r })
+      for($i=$chain.Count-1; $i -ge 1; $i--){ Copy-PrestigeListRow $S ([int]$chain[$i-1].row) ([int]$chain[$i].row) }
+      $r = [int]$later[0].row
+      Clear-PrestigeListRow $S $r
+    }
+    Write-PrestigeListCells $S $r $it.cur $null $false
+    Fix-PrestigeListFormulas $ws
+    $changed = $true
+    [void]$results.Add(@{ id=[string]$it.id; ok=$true; action='added'; row=$r; sheet=[string]$ws.Name })
+  }
+  return @{ results=$results.ToArray(); changed=$changed }
+}
+function Handle-PrestigeWrite($body){
+  $path = [string]$body.path
+  $xl = Get-Excel $true
+  $wb = Find-OpenWorkbook $xl $path
+  $openedHere = $false
+  if(-not $wb){
+    if(-not (Test-Path -LiteralPath $path)){ throw "파일을 찾을 수 없습니다: $path" }
+    $wb = Open-Workbook $xl $path $false; $xl = App-Of $wb $xl
+    $openedHere = $true
+  }
+  try {
+    $wb = Ensure-Writable $xl $wb $path; $xl = App-Of $wb $xl
+    Backup-PrestigeFile $path   # 쓰기 전 원본 사본 — 사본을 못 남기면 쓰지 않는다
+    $prevAlerts = $true; try { $prevAlerts = $xl.DisplayAlerts; $xl.DisplayAlerts = $false } catch {}
+    try {
+      if([string]$body.kind -eq 'list'){ $r = Write-PrestigeList $xl $wb $body } else { $r = Write-PrestigeLedger $xl $wb $body }
+      if($r.changed){
+        try { $wb.CheckCompatibility = $false } catch {}
+        Invoke-Retry { $wb.Save() } | Out-Null
+      }
+    } catch {
+      # 쓰다가 멈추면 반쯤 쓴 내용을 저장하지 않는다(도우미가 연 파일은 저장 없이 닫힌다).
+      if(-not $openedHere){ throw "$($_.Exception.Message)`n(엑셀에 열려 있던 파일이라 일부 칸이 바뀌었을 수 있습니다 - 저장하지 말고 닫은 뒤 다시 열어주세요)" }
+      throw
+    } finally { try { $xl.DisplayAlerts = $prevAlerts } catch {} }
+    return @{ ok=$true; results=@($r.results); wasOpen=(-not $openedHere) }
+  } finally {
+    Release-Workbook $xl $wb $openedHere
+  }
+}
 function Send-JsonText($ctx, [string]$json){
   $buf = [Text.Encoding]::UTF8.GetBytes($json)
   $ctx.Response.StatusCode = 200
@@ -24916,6 +25588,7 @@ function Handle-Context($ctx){
       '/ping'           { Handle-Ping $body }
       '/pick'           { Handle-Pick $body }
       '/corpcard/write' { Handle-CorpCardWrite $body }
+      '/prestige/write' { Handle-PrestigeWrite $body }
       '/cardmaster/write' { Handle-CardMasterWrite $body }
       '/cardmaster/hipass' { Handle-CardMasterHipass $body }
       '/cardmaster/carmap' { Handle-CardMasterCarMap $body }
