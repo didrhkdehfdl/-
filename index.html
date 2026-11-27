@@ -13133,6 +13133,7 @@ function omListMobileCardsHtml(rows, offset){
           <span style="font-size:12px; color:var(--muted);">#${offset+i+1}</span>
           <span style="font-size:13px; color:var(--muted);">${escapeHtml(row.receivedDate||'')}</span>
           ${row.freePaid ? `<span style="font-size:12px; padding:1px 8px; border-radius:10px; border:1px solid var(--line);">${escapeHtml(row.freePaid)}</span>` : ''}
+          ${omPaidMissingAmount(row) ? `<span style="font-size:12px; padding:1px 8px; border-radius:10px; border:1px solid var(--neg); color:var(--neg);">⚠ 매출액 없음</span>` : ''}
           ${tel ? `<a href="tel:${tel}" style="margin-left:auto; font-size:13px; text-decoration:none; padding:4px 10px; border-radius:8px; border:1px solid var(--sky); color:var(--sky);">📞 전화</a>` : '<span style="margin-left:auto;"></span>'}
           <button class="om-del-btn" data-id="${row.id}" title="삭제" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:20px; padding:0 4px;">×</button>
         </div>
@@ -13190,6 +13191,7 @@ async function renderOMListMain(){
       "독립채산제(AS,타부서지원)" 엑셀의 "2026년도 데이터" 시트를 그대로 올려서 표로 관리하고, 같은 구성으로 다시 엑셀로 내보낼 수 있습니다.
     </p>
     ${omListLinkHtml()}
+    ${omCheckPanelHtml()}
     <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
       <input type="file" id="omListFile" accept=".xlsx,.xls" style="font-size:13px; color:var(--muted);" title="연결한 PC 파일 대신 파일을 직접 올려 전체를 바꿀 때">
       <input id="omListSearch" placeholder="고객명/발전소명/요청자 검색" value="${escapeHtml(s.search)}" style="padding:7px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel-2); color:var(--text); font-size:13px; min-width:200px;">
@@ -13219,7 +13221,9 @@ async function renderOMListMain(){
           ${pageRows.map((row,i)=>`
             <tr data-id="${row.id}">
               <td style="padding:5px 4px; text-align:center; position:sticky; left:0; background:var(--panel-2);">${(s.page-1)*OM_LIST_PAGE_SIZE+i+1}</td>
-              ${OM_LIST_COLUMNS.map(([f])=>`<td style="padding:3px 4px;">${omListCellHtml(row,f)}</td>`).join('')}
+              ${OM_LIST_COLUMNS.map(([f])=> f==='amount' && omPaidMissingAmount(row)
+                ? `<td title="유상인데 매출액이 비어 있습니다" style="padding:3px 4px; background:rgba(229,72,77,.18); box-shadow:inset 0 0 0 1px var(--neg);">${omListCellHtml(row,f)}</td>`
+                : `<td style="padding:3px 4px;">${omListCellHtml(row,f)}</td>`).join('')}
               <td style="padding:5px 4px; text-align:center;"><button class="om-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px;">×</button></td>
             </tr>
           `).join('')}
@@ -13239,6 +13243,11 @@ async function renderOMListMain(){
 
   document.getElementById('omListFile').addEventListener('change', handleOMListFile);
   bindOMListLinkButtons();
+  bindOMCheckPanel();
+  if(!omAsDocs.loaded || (Date.now() - (omAsDocs.at||0) > 10*60*1000 && Date.now() - omAsDocsLastTry > 60000)){
+    omAsDocsLastTry = Date.now();
+    refreshOMAsDocsInBackground().catch(e=>console.warn('AS 서류 확인 실패', e));
+  }
   omPresenceAfterRender();
   if(getLinkedFile(OM_LINK_KEY) && Date.now() - omLastOpenCheck > 20000){ omLastOpenCheck = Date.now(); setTimeout(()=>checkOMFileChanged(), 800); }
   bindLiveSearch(document.getElementById('omListSearch'), 'omListSearch', v=>{ omListState.search = v; omListState.page = 1; return renderOMListMain(); });
@@ -13634,6 +13643,188 @@ async function checkOMFileChanged(){
     showLedgerToast('O&M 리스트: PC 파일에서 고친 내용을 불러왔습니다.');
     if(state.activeTab === 'omList' && !document.querySelector('#main input:focus, #main textarea:focus, #main select:focus')) renderOMListMain();
   }catch(e){ console.warn('O&M 파일 확인 실패', e); }
+}
+
+// ---------- O&M 리스트: 확인 필요 표시 ----------
+// ① 유/무상이 "유상"인데 매출액이 비어 있는 행(글로 적혀 숫자가 아닌 것 포함)
+// ② "21. AS 서류" 폴더에 세금계산서·현금영수증 파일은 있는데 리스트에서 찾아지지 않는 건
+//    파일 이름의 연락처·사업자번호·이름이 리스트의 고객명·발전소명·연락처·발행번호·비고에 있으면 "있음"으로 본다.
+//    리스트(올해 데이터 시트)와 다른 해 날짜가 적힌 파일은 보지 않는다.
+// 폴더는 엑셀 도우미(v69 이상)가 켜진 PC가 O&M 탭을 열 때 10분에 한 번 읽어 서버(om-as-docs)에 올리고,
+// 다른 PC는 서버에 올라간 목록으로 같은 표시를 본다.
+const OM_AS_DOC_DIR = 'W:\\9.회계\\!박찬호\\21. AS 서류';
+const OM_AS_DOC_FOLDERS = [['1. 세금계산서','세금계산서'], ['2. 현금영수증','현금영수증']];
+const OM_AS_DOCS_KEY = 'om-as-docs';
+const OM_AS_IGNORE_KEY = 'om-as-docs-ignored';
+const OM_LISTFILES_MIN = 69;
+let omAsDocs = { files:[], at:0, ignored:[], loaded:false, loading:null, scanning:false, error:'' };
+let omCheckOpen = null, omAsDocsLastTry = 0;
+const AS_DOC_STOPWORDS = ['인버터','교체','점검','커넥터','모듈','계량기','이전','설치','수리','차단기','소손','태양광','발전소','태양광발전소',
+  '최종','기술단','안성','에스피','에스지','현금영수증','세금계산서','계통','라인','병합','통합','위치변경','사용전검사비용','교체공사','교체AS',
+  '주식회사','사회복지법인','건축소장','만원','원','차','공사','비용','대','장','설치AS','점검AS','이전설치','DC','AC','trip','AS','고객','관리소장',
+  '마을','지역본부','서울지역본부','유통사업소','임산물유통사업소','클럽','골프클럽','시공','시공업체','png','pdf','jpg'];
+function parseAsDocName(fileName){
+  const base = String(fileName||'').replace(/\.[A-Za-z0-9]+$/, '');
+  let date = '';
+  const dm = base.match(/(?:^|[^\d])(\d{2})\.(\d{2})\.(\d{2})(?!\d)/);
+  if(dm) date = `20${dm[1]}-${dm[2]}-${dm[3]}`;
+  const phones = (base.match(/01[016789]-?\d{3,4}-?\d{4}/g)||[]).map(p=>p.replace(/\D/g,''));
+  const bizNos = (base.match(/\d{3}-\d{2}-\d{5}/g)||[]).map(p=>p.replace(/\D/g,''));
+  let amount = 0;
+  const am = base.match(/([\d,]+(?:\.\d+)?)\s*만\s*원?/);
+  const aw = base.match(/(\d{1,3}(?:,\d{3})+|\d{4,})\s*원/);
+  if(am) amount = Math.round(parseFloat(am[1].replace(/,/g,'')) * 10000);
+  else if(aw) amount = Number(aw[1].replace(/,/g,''));
+  const rest = base.replace(/\d{2}\.\d{2}\.\d{2}/g,' ').replace(/01[016789]-?\d{3,4}-?\d{4}/g,' ').replace(/\d{3}-\d{2}-\d{5}/g,' ')
+    .replace(/[\d,.]+\s*만\s*원?|[\d,]+\s*원/g,' ').replace(/㈜|\(주\)/g,' ');
+  const names = [];
+  (rest.match(/[가-힣A-Za-z]+/g)||[]).forEach(tok=>{
+    const x = tok.replace(/(태양광발전소|태양광|발전소|주식회사|AS)$/,'').replace(/^주식회사/,'');
+    if(x.length < 2 || AS_DOC_STOPWORDS.includes(x) || names.includes(x)) return;
+    names.push(x);
+  });
+  return { date, phones, bizNos, amount, names };
+}
+function asDocMatchesRow(doc, row){
+  const digits = s => String(s==null?'':s).replace(/\D/g,'');
+  const hayDigits = digits([row.phone, row.invoiceNo, row.note].join(' '));
+  if(doc.phones.some(p => p.length >= 10 && hayDigits.includes(p))) return true;
+  if(doc.bizNos.some(b => hayDigits.includes(b))) return true;
+  const hay = [row.customer, row.plantName, row.invoiceNo, row.requester, row.note, row.phone].join(' ').replace(/\s/g,'');
+  return doc.names.some(n => hay.includes(n));
+}
+function omPaidMissingAmount(row){ return /유상/.test(String(row.freePaid||'')) && !(Number(row.amount) > 0); }
+// 리스트가 몇 년도 것인지 — 접수·처리일자 중 가장 많은 해
+function omListYear(rows){
+  const cnt = {};
+  (rows||[]).forEach(r=>{ const y = String(r.receivedDate||r.processedDate||'').slice(0,4); if(/^\d{4}$/.test(y)) cnt[y] = (cnt[y]||0) + 1; });
+  const ys = Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a]);
+  return ys[0] || String(new Date().getFullYear());
+}
+function omUnlistedAsDocs(){
+  const rows = omListState.rows || [];
+  const year = omListYear(rows);
+  const ignored = new Set(omAsDocs.ignored||[]);
+  return (omAsDocs.files||[]).map(f=>({ ...f, p: parseAsDocName(f.name) }))
+    .filter(f => !ignored.has(f.type + '/' + f.name))
+    .filter(f => !f.p.date || f.p.date.slice(0,4) === year)
+    .filter(f => !rows.some(r => asDocMatchesRow(f.p, r)))
+    .sort((a,b)=> String(a.p.date||'9').localeCompare(String(b.p.date||'9')));
+}
+async function ensureOMAsDocs(){
+  if(omAsDocs.loaded) return;
+  if(!omAsDocs.loading){
+    omAsDocs.loading = (async ()=>{
+      try{
+        const [a, b] = await Promise.all([loadFileFromStorage(OM_AS_DOCS_KEY), loadFileFromStorage(OM_AS_IGNORE_KEY)]);
+        const d = a ? JSON.parse(a) : null;
+        if(d){ omAsDocs.files = d.files || []; omAsDocs.at = d.at || 0; }
+        omAsDocs.ignored = b ? (JSON.parse(b) || []) : [];
+      }catch(e){ console.warn('AS 서류 목록 불러오기 실패', e); }
+      omAsDocs.loaded = true;
+    })();
+  }
+  await omAsDocs.loading;
+}
+// 엑셀 도우미로 폴더 파일 이름을 읽어 서버에 올린다(10분에 한 번, 또는 "다시 확인").
+async function scanOMAsDocs(force){
+  if(omAsDocs.scanning) return false;
+  if(!force && Date.now() - (omAsDocs.at||0) < 10*60*1000) return false;
+  if(!excelHelperVersion) await checkExcelHelper();
+  if(!excelHelperRunning || excelHelperVersion < OM_LISTFILES_MIN){
+    if(force) omAsDocs.error = `엑셀 도우미 v${OM_LISTFILES_MIN} 이상이 켜져 있어야 폴더를 볼 수 있습니다(카드관리 탭에서 확인).`;
+    return false;
+  }
+  omAsDocs.scanning = true;
+  try{
+    const r = await excelHelperCall('/listfiles', { dirs: OM_AS_DOC_FOLDERS.map(([d])=>OM_AS_DOC_DIR + '\\' + d) }, 60000);
+    const files = [];
+    (r.dirs||[]).forEach((d, i)=>{
+      if(!d.ok) throw new Error(`${OM_AS_DOC_FOLDERS[i][0]} 폴더를 읽지 못했습니다: ${d.error||''}`);
+      (d.files||[]).forEach(f=>files.push({ type: OM_AS_DOC_FOLDERS[i][1], name: f.name, mtime: f.mtime }));
+    });
+    const before = JSON.stringify(omAsDocs.files);
+    omAsDocs.files = files; omAsDocs.at = Date.now(); omAsDocs.error = '';
+    await saveFileToStorage(OM_AS_DOCS_KEY, JSON.stringify({ at: omAsDocs.at, dir: OM_AS_DOC_DIR, files }));
+    return before !== JSON.stringify(files) || force;
+  }catch(e){ omAsDocs.error = linkedFileErrorMessage(e); return !!force; }
+  finally{ omAsDocs.scanning = false; }
+}
+function omCheckPanelHtml(){
+  const rows = omListState.rows || [];
+  if(!rows.length) return '';
+  const noAmt = rows.filter(omPaidMissingAmount).sort((a,b)=>String(a.receivedDate||'').localeCompare(String(b.receivedDate||'')));
+  const docs = omAsDocs.loaded ? omUnlistedAsDocs() : [];
+  const total = noAmt.length + docs.length;
+  const open = omCheckOpen === null ? total > 0 : omCheckOpen;
+  const btn = (cls, label, attrs, color) => `<button class="${cls}" ${attrs||''} style="font-size:11px; padding:3px 8px; border-radius:6px; border:1px solid ${color||'var(--line)'}; background:transparent; color:${color||'var(--muted)'}; cursor:pointer; white-space:nowrap;">${label}</button>`;
+  const when = omAsDocs.at ? new Date(omAsDocs.at).toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+  const th = s => `<th style="text-align:left; padding:4px 6px; font-size:11px; color:var(--muted); font-weight:600;">${s}</th>`;
+  const td = (s, extra) => `<td style="padding:4px 6px; font-size:12px; ${extra||''}">${s}</td>`;
+  return `<details id="omCheckPanel" ${open?'open':''} style="margin-bottom:12px; border:1px solid ${total ? 'var(--neg)' : 'var(--line)'}; border-radius:8px; padding:8px 12px; background:var(--panel-2);">
+    <summary style="cursor:pointer; font-size:13px; font-weight:700; color:${total ? 'var(--neg)' : '#2e9e5b'};">
+      ${total ? `⚠ 확인 필요 — 유상인데 매출액 없음 ${noAmt.length}건 · 증빙은 있는데 리스트에 없음 ${omAsDocs.loaded ? docs.length + '건' : '확인 중'}` : '✔ 유상 매출액·AS 증빙 확인: 빠진 것 없음'}
+    </summary>
+    <div style="margin-top:10px;">
+      <div style="font-size:12.5px; font-weight:700; margin-bottom:4px;">① 유상인데 매출액이 비어 있는 건 (${noAmt.length}건)</div>
+      ${noAmt.length ? `<div style="overflow-x:auto;"><table style="border-collapse:collapse; width:100%;">
+        <thead><tr>${th('접수일자')}${th('처리일자')}${th('고객명')}${th('발전소명')}${th('세금계산서/현금영수증')}${th('입금액')}${th('')}</tr></thead>
+        <tbody>${noAmt.map(r=>`<tr style="border-top:1px solid var(--line);">${td(escapeHtml(r.receivedDate||''))}${td(escapeHtml(r.processedDate||''))}${td(escapeHtml(r.customer||''))}${td(escapeHtml(r.plantName||''))}${td(escapeHtml(r.invoiceType||''))}${td(Number(r.depositAmount) ? Number(r.depositAmount).toLocaleString('ko-KR') : '')}${td(btn('om-check-show', '찾기', `data-q="${escapeHtml(r.customer||r.plantName||'')}"`, 'var(--sky)'))}</tr>`).join('')}</tbody>
+      </table></div>` : `<div style="font-size:12px; color:var(--muted);">없음</div>`}
+      <div style="font-size:12.5px; font-weight:700; margin:12px 0 4px;">② 세금계산서·현금영수증은 있는데 리스트에 없는 건 (${omAsDocs.loaded ? docs.length + '건' : '확인 중'})</div>
+      <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">${escapeHtml(OM_AS_DOC_DIR)} 의 ${OM_AS_DOC_FOLDERS.map(x=>x[0]).join('·')} 폴더 파일 이름(연락처·사업자번호·이름)으로 찾습니다. ${omListYear(rows)}년이 아닌 날짜의 파일은 보지 않습니다.
+        ${when ? `폴더 확인: ${escapeHtml(when)} (파일 ${omAsDocs.files.length}개)` : '아직 폴더를 확인한 적이 없습니다.'}
+        ${btn('om-check-rescan', omAsDocs.scanning ? '확인 중…' : '🔄 폴더 다시 확인', omAsDocs.scanning ? 'disabled' : '', 'var(--sky)')}
+        ${omAsDocs.error ? `<span style="color:var(--neg);">${escapeHtml(omAsDocs.error)}</span>` : ''}</div>
+      ${docs.length ? `<div style="overflow-x:auto;"><table style="border-collapse:collapse; width:100%;">
+        <thead><tr>${th('종류')}${th('날짜')}${th('파일 이름')}${th('금액')}${th('')}</tr></thead>
+        <tbody>${docs.map(f=>`<tr style="border-top:1px solid var(--line);">${td(escapeHtml(f.type), 'white-space:nowrap;')}${td(escapeHtml(f.p.date||'-'), 'white-space:nowrap;')}${td(escapeHtml(f.name))}${td(f.p.amount ? f.p.amount.toLocaleString('ko-KR') : '', 'white-space:nowrap;')}${td(`<span style="display:flex; gap:4px;">${btn('om-check-add', '+ 리스트에 추가', `data-key="${escapeHtml(f.type + '/' + f.name)}"`, '#2e9e5b')}${btn('om-check-ignore', '제외', `data-key="${escapeHtml(f.type + '/' + f.name)}" title="리스트에 넣지 않아도 되는 서류면 이 표시에서 뺍니다(모든 사람에게)."`)}</span>`)}</tr>`).join('')}</tbody>
+      </table></div>` : `<div style="font-size:12px; color:var(--muted);">${omAsDocs.loaded ? (omAsDocs.files.length ? '없음' : '폴더 목록이 아직 없습니다 — 엑셀 도우미가 켜진 PC에서 O&M 탭을 열면 확인합니다.') : '확인 중…'}</div>`}
+      ${(omAsDocs.ignored||[]).length ? `<div style="font-size:11px; color:var(--muted); margin-top:6px;">제외한 서류 ${omAsDocs.ignored.length}개 ${btn('om-check-unignore', '제외 모두 되돌리기')}</div>` : ''}
+    </div>
+  </details>`;
+}
+function bindOMCheckPanel(){
+  const panel = document.getElementById('omCheckPanel');
+  if(!panel) return;
+  panel.addEventListener('toggle', ()=>{ omCheckOpen = panel.open; });
+  panel.querySelectorAll('.om-check-show').forEach(b=>b.addEventListener('click', ()=>{
+    omListState.search = b.dataset.q || ''; omListState.page = 1; renderOMListMain();
+  }));
+  const rescan = panel.querySelector('.om-check-rescan');
+  if(rescan) rescan.addEventListener('click', async ()=>{ rescan.disabled = true; rescan.textContent = '확인 중…'; await scanOMAsDocs(true); renderOMListMain(); });
+  const saveIgnored = async ()=>{ await saveFileToStorage(OM_AS_IGNORE_KEY, JSON.stringify(omAsDocs.ignored||[])); renderOMListMain(); };
+  panel.querySelectorAll('.om-check-ignore').forEach(b=>b.addEventListener('click', async ()=>{
+    if(!confirm(`이 서류를 "리스트에 없음" 표시에서 뺄까요?\n${b.dataset.key}\n(모든 사람 화면에서 빠집니다. 아래 "제외 모두 되돌리기"로 되돌릴 수 있습니다)`)) return;
+    omAsDocs.ignored = [...new Set([...(omAsDocs.ignored||[]), b.dataset.key])]; await saveIgnored();
+  }));
+  const un = panel.querySelector('.om-check-unignore');
+  if(un) un.addEventListener('click', async ()=>{ if(!confirm('제외한 서류를 모두 다시 표시할까요?')) return; omAsDocs.ignored = []; await saveIgnored(); });
+  panel.querySelectorAll('.om-check-add').forEach(b=>b.addEventListener('click', async ()=>{
+    const [type, ...rest] = String(b.dataset.key).split('/'); const name = rest.join('/');
+    const p = parseAsDocName(name);
+    const fmtPhone = d => d.length === 11 ? `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}` : d;
+    const fmtBiz = d => `${d.slice(0,3)}-${d.slice(3,5)}-${d.slice(5)}`;
+    const row = newOMListRow();
+    row.receivedDate = p.date || isoDate(new Date()); row.processedDate = p.date || '';
+    row.customer = p.names[0] || ''; row.phone = p.phones[0] ? fmtPhone(p.phones[0]) : '';
+    row.freePaid = '유상'; row.amount = p.amount || ''; row.invoiceType = type; row.invoiceDate = p.date || '';
+    row.invoiceNo = p.bizNos[0] ? fmtBiz(p.bizNos[0]) : (p.phones[0] ? fmtPhone(p.phones[0]) : '');
+    row.note = `AS 서류에서 추가: ${name}`;
+    if(!confirm(`이 서류로 O&M 리스트에 새 행을 추가할까요?\n\n고객명: ${row.customer}\n날짜: ${row.receivedDate}\n매출액: ${row.amount ? Number(row.amount).toLocaleString('ko-KR') : '(없음)'}\n${type}: ${row.invoiceNo}\n\n접수·조치 내역 등 나머지 칸은 추가한 뒤 채워주세요.`)) return;
+    omListState.rows.push(row);
+    omListState.search = row.customer; omListState.page = 1;
+    await saveOMListRows();
+    queueOMAdd(row);
+    renderOMListMain();
+  }));
+}
+// O&M 탭을 열 때: 서버에 올라간 서류 목록을 불러오고, 도우미가 있으면 폴더를 다시 읽는다(10분 간격).
+async function refreshOMAsDocsInBackground(){
+  const first = !omAsDocs.loaded;
+  await ensureOMAsDocs();
+  const changed = await scanOMAsDocs(false);
+  if((first || changed) && state.activeTab === 'omList' && !document.querySelector('#main input:focus, #main textarea:focus')) renderOMListMain();
 }
 
 let omLastOpenCheck = 0;
@@ -23911,7 +24102,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '68'
+$Version = '69'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -24846,14 +25037,18 @@ function Handle-ProfitLedgerWrite($body){
       $changed = $true
       $results += @{ id=[string]$it.id; customer=$cust; rowNum=$row; wasNewRow=$isNew; sameNameRows=@($same | Where-Object { [int]$_ -ne $row }) }
     }
-    if($maxNew -gt 0){
+    # 출력용 시트(단일갑지)가 VLOOKUP으로 보는 "정산데이터" 이름 범위를 마지막 고객 행까지 늘린다.
+    # 새 행을 만들 때만 늘리면, 직접 적거나 예전 방식으로 들어간 행이 범위 밖에 남아 #N/A가 났다(진흥전기 144행).
+    $lastCust = $maxNew
+    foreach($k in @($names.Keys)){ if([int]$k -gt $lastCust){ $lastCust = [int]$k } }
+    if($lastCust -gt 0){
       foreach($n in $wb.Names){
         try {
           if([string]$n.Name -ne $sheetName){ continue }
           $ref = [string]$n.RefersTo
           $m = [regex]::Match($ref, '^(.*\$[A-Za-z]+\$)(\d+)$')
-          if($m.Success -and [int]$m.Groups[2].Value -lt $maxNew){ $n.RefersTo = $m.Groups[1].Value + $maxNew }
-        } catch {}
+          if($m.Success -and [int]$m.Groups[2].Value -lt $lastCust){ $n.RefersTo = $m.Groups[1].Value + $lastCust; $changed = $true; Log "정산데이터 이름 범위를 $($m.Groups[2].Value)행 → $lastCust 행으로 늘림" }
+        } catch { Log "정산데이터 이름 범위 늘리기 실패: $($_.Exception.Message)" }
       }
     }
     if($changed){ Invoke-Retry { $wb.Save() } | Out-Null }
@@ -26119,6 +26314,17 @@ function Handle-Context($ctx){
       '/sagup/write'      { Handle-SagupWrite $body }
       '/profitledger/write' { Handle-ProfitLedgerWrite $body }
       '/omlist/write'     { Handle-OMListWrite $body }
+      '/listfiles'        {
+        # 폴더들의 파일 이름 목록(하위 폴더는 보지 않음, 파일은 열지 않음) — O&M 리스트의 AS 증빙 확인용.
+        $outDirs = @()
+        foreach($d in @($body.dirs)){
+          $dir = [string]$d
+          if(-not (Test-Path -LiteralPath $dir)){ $outDirs += @{ dir=$dir; ok=$false; error='폴더를 찾을 수 없습니다.' }; continue }
+          $fl = @(Get-ChildItem -LiteralPath $dir -File | Where-Object { $_.Name -notmatch '^~\$' } | ForEach-Object { @{ name=$_.Name; size=$_.Length; mtime=$_.LastWriteTime.ToString('yyyy-MM-dd HH:mm') } })
+          $outDirs += @{ dir=$dir; ok=$true; files=$fl }
+        }
+        @{ ok=$true; dirs=$outDirs }
+      }
       '/latestfile'       {
         # 폴더에서 이름 형식(정규식)에 맞는 파일 중 가장 최신 파일 — 이름 속 숫자(날짜시각)가 큰 것, 같으면 수정 시각.
         $dir = [string]$body.dir; $pat = [string]$body.pattern
