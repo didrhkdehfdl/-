@@ -17321,7 +17321,7 @@ async function renderCorpCardMainInner(){
       ${months.length>1 && !prestige ? `<button id="corpCardDeleteMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">"${escapeHtml(s.activeMonth)}" 탭 삭제</button>` : ''}
     </div>
     ${lunchDupYm ? lunchDupPanelHtml(lunchDupYm, lunchDupList) : ''}
-    ${prestige ? prestigePanelHtml(activeCard) : ''}
+    ${prestige && canManagePrestige() ? prestigePanelHtml(activeCard) : ''}
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
       <button id="corpCardAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
       ${prestige ? '' : `<div style="display:flex; align-items:center; gap:4px; padding:3px; border-radius:7px; border:1px solid var(--line);">
@@ -18297,6 +18297,12 @@ const PRESTIGE_LEDGER_SHEET = '품위유지비_작성용';
 const PRESTIGE_SNAP_KEY = 'corp-card-prestige-xl:' + PRESTIGE_CARD_ID;   // 엑셀에 마지막으로 쓴 값(행 id별) — 여러 PC가 함께 본다
 const PRESTIGE_MONTHS = [3,4,5,6,7,8,9,10,11,12,1,2].map(n=>n+' 월');      // 품위유지비 기간: 3월 ~ 다음 해 2월
 const PRESTIGE_VIEWERS = ['김종식', '박찬호'];   // 7973 카드를 볼 수 있는 사람(승인관리에 등록된 이름)
+const PRESTIGE_MANAGERS = ['박찬호'];   // "품위유지비 엑셀 자동 채우기" 칸(파일 연결·가져오기·한도금액 입력)을 보는 사람
+// 관리 담당이거나, 이 PC에 두 엑셀이 연결돼 있으면 관리 칸을 보여준다(김종식 님 화면에는 안 보임).
+function canManagePrestige(){
+  const me = String(currentUserName||'').trim();
+  return PRESTIGE_MANAGERS.includes(me) || !!(getLinkedFile(prestigeLinkKey('ledger')) || getLinkedFile(prestigeLinkKey('list')));
+}
 const PRESTIGE_DEFAULTS = { dept:'경기지사', name:'김종식', position:'전무', corp:'에스피' };
 const prestigeLinkKey = kind => `prestige-${kind}:${PRESTIGE_CARD_ID}`;    // kind: ledger(1-1) / list(3-1)
 function isPrestigeCard(card){ return !!card && (card.id === PRESTIGE_CARD_ID || String(card.cardNumber||'').replace(/\D/g,'').slice(-4) === PRESTIGE_LAST4); }
@@ -18352,7 +18358,7 @@ function prestigeRowCellsHtml(row, issues, mm, note, errBorder, lockedStyle, idx
     // 엑셀처럼 세 칸은 표 전체에 걸친 한 칸으로 보여준다(맨 윗줄에만 그림)
     const tt = prestigeTotals(card), won = n => n ? n.toLocaleString('ko-KR') : '-';
     const cell = html => `<td rowspan="${count}" style="padding:4px 6px; text-align:right; vertical-align:middle; border-left:1px solid var(--line); background:var(--panel-2); white-space:nowrap;">${html}</td>`;
-    return cell(`<input type="text" inputmode="numeric" class="prestige-limit-input" value="${tt.limit ? tt.limit.toLocaleString('ko-KR') : ''}" placeholder="한도 입력" title="품위유지비 한도금액 — 1-1 관리대장의 한도금액 칸에도 씁니다" style="width:96px; text-align:right;">`)
+    return cell(!canManagePrestige() ? won(tt.limit) : `<input type="text" inputmode="numeric" class="prestige-limit-input" value="${tt.limit ? tt.limit.toLocaleString('ko-KR') : ''}" placeholder="한도 입력" title="품위유지비 한도금액 — 1-1 관리대장의 한도금액 칸에도 씁니다" style="width:96px; text-align:right;">`)
       + cell(`<b>${won(tt.total)}</b>`) + cell(`<b style="color:${tt.balance<0?'var(--neg)':'var(--pos)'};">${tt.limit ? tt.balance.toLocaleString('ko-KR') : '-'}</b>`);
   })() : '');
 }
