@@ -18386,7 +18386,7 @@ function prestigePanelHtml(card){
     </div>
     ${line('ledger','1-1 관리대장')}${line('list','3-1 사용내역 리스트')}
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px;">
-      ${getLinkedFile(prestigeLinkKey('ledger')) ? b('prestigeImportBtn','📥 관리대장 내역 앱으로 가져오기','var(--gold)','1-1 관리대장에 이미 적혀 있는 내역 중 앱에 없는 것만 가져옵니다(엑셀은 바꾸지 않습니다).') : ''}
+      ${getLinkedFile(prestigeLinkKey('ledger')) ? b('prestigeImportBtn','📥 관리대장 내역 앱으로 가져오기','var(--gold)','1-1 관리대장에 적힌 내역 중 앱에 없는 것은 가져오고, 앱에 이미 있는 줄은 빈 칸만 관리대장 값으로 채웁니다(엑셀은 바꾸지 않습니다).') : ''}
       ${linked ? b('prestigeSyncBtn','💾 지금 엑셀에 쓰기','#2e9e5b','15초를 기다리지 않고 바로 연결된 엑셀에 씁니다.') : ''}
       <span class="prestige-note" style="font-size:11.5px; color:${prestigeNoteErr?'var(--neg)':'var(--muted)'};">${escapeHtml(prestigeNote || (linked ? '적은 뒤 15초쯤 지나면 자동으로 엑셀에 씁니다(사용처·금액이 적힌 줄만).' : '파일을 연결한 PC에서 앱이 켜져 있을 때 자동으로 채워집니다.'))}</span>
     </div></div>`;
@@ -18561,22 +18561,42 @@ async function importPrestigeLedger(){
   await refreshCorpCardRowsFromServer(cardId);
   if(corpCardLoadFailed.has(cardId)) throw new Error('서버의 이 카드 내역을 확인하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 해주세요.');
   const keyOf = r => `${r.date}|${Number(r.amount)||0}`;   // 사용처 표기는 달라도 같은 건(예: 해오름주택 ↔ 예미지)
+  // 같은 날짜·금액의 앱 줄이 있으면 같은 건 — 그 줄의 빈 칸(지출내역·인원수·비고 등)을 1-1 값으로 채운다.
+  // (승인내역에서 채운 줄은 날짜·사용처·금액만 있어서, 예전엔 가져오기가 이런 줄을 건너뛰어 나머지 칸이 빈 채로 남았다)
   const have = new Map();
-  corpCardRowsWithMonth(corpCardState.rowsByCard[cardId]).forEach(({row})=>{ const k = keyOf(row); have.set(k, (have.get(k)||0)+1); });
-  const add = found.filter(f=>{ const k = keyOf(f), n = have.get(k)||0; if(n > 0){ have.set(k, n-1); return false; } return true; });
-  if(!add.length){ alert(`관리대장의 ${found.length}건이 이미 모두 앱에 있습니다.`); return; }
+  corpCardRowsWithMonth(corpCardState.rowsByCard[cardId]).forEach(({row})=>{ const k = keyOf(row); if(!have.has(k)) have.set(k, []); have.get(k).push(row); });
+  const add = [], fills = [];
+  const TEXT_F = ['inOut','expenseType','note'], NUM_F = ['headcount','stdAmount','overAmount'];
+  found.forEach(f=>{
+    const list = have.get(keyOf(f));
+    if(!list || !list.length){ add.push(f); return; }
+    const row = list.shift(), patch = {};
+    TEXT_F.forEach(k=>{ if(!String(row[k]||'').trim() && String(f[k]||'').trim()) patch[k] = f[k]; });
+    NUM_F.forEach(k=>{ if(!Number(row[k]) && Number(f[k])) patch[k] = Number(f[k]); });
+    if(Object.keys(patch).length) fills.push({ row, patch });
+  });
+  if(!add.length && !fills.length){ alert(`관리대장의 ${found.length}건이 이미 모두 앱에 있고, 빈 칸도 없습니다.`); return; }
   const total = add.reduce((t,r)=>t+r.amount, 0);
-  if(!confirm(`관리대장에 적힌 ${found.length}건 중 앱에 없는 ${add.length}건(합계 ${total.toLocaleString('ko-KR')}원)을 7973 카드로 가져올까요?\n엑셀 파일은 바꾸지 않습니다.`)) return;
+  const msg = [];
+  if(add.length) msg.push(`앱에 없는 ${add.length}건(합계 ${total.toLocaleString('ko-KR')}원)을 가져옵니다.`);
+  if(fills.length) msg.push(`앱에 이미 있는 ${fills.length}건은 비어 있는 칸(지출내역·인원수·비고 등)만 관리대장 값으로 채웁니다.`);
+  if(!confirm(`관리대장에 적힌 ${found.length}건을 확인했습니다.\n${msg.join('\n')}\n엑셀 파일은 바꾸지 않습니다. 계속할까요?`)) return;
   const snap = await loadPrestigeSnap();
   const newRows = add.map(f=>applyPrestigeDefaults({ ...newCorpCardRow(), ...f, bizCategory:'', project:'', plantName:'', workDetail:'', hipass:'', carNo:'' }));
   newRows.forEach(r=>{ snap.ledger[r.id] = prestigeLedgerVals(r); });   // 엑셀에 이미 있는 줄이라 다시 쓰지 않게 먼저 기록
+  fills.forEach(({row, patch})=>{
+    Object.assign(row, patch);
+    // 채운 값은 엑셀에 이미 있는 값이라, 엑셀에 쓴 기록도 같이 맞춰 다시 쓰지 않게 한다.
+    if(snap.ledger[row.id]) snap.ledger[row.id] = prestigeLedgerVals(row);
+    if(snap.list[row.id]) snap.list[row.id] = prestigeListVals(row);
+  });
   await savePrestigeSnap(snap);
   newRows.forEach(r=>insertCorpCardRowByDate(cardId, Number(r.date.slice(5,7))+' 월', r));
   const r = await saveCorpCardRows(cardId);
   if(r && r.ok === false) throw new Error(r.reason || '저장하지 못했습니다.');
   recomputeCorpCardMismatches();
   if(state.activeTab === 'corpCard') renderCorpCardMain();
-  alert(`${newRows.length}건을 가져왔습니다.`);
+  alert([newRows.length ? `${newRows.length}건을 가져왔습니다.` : '', fills.length ? `${fills.length}건의 빈 칸을 채웠습니다.` : ''].filter(Boolean).join('\n'));
 }
 // 도우미에 보낼 열 구성(B~Q)과, 앱 행 하나를 그 열 순서의 값 배열로 바꾸는 함수.
 function corpCardHelperColumns(){
