@@ -23424,7 +23424,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '61'
+$Version = '62'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -25687,6 +25687,31 @@ if(-not $started){
   exit 1
 }
 Close-HiddenExcelLeftovers   # 예전 도우미가 안 보이는 엑셀에 열어 둔 채 남긴 파일(다른 곳에서 "편집 중이라 잠김")을 닫는다
+# 새로 받은 도우미 파일로 실행하면, 시작프로그램에 넣어 둔 excel-helper*.cmd도 이 파일로 바꾼다
+# (다음 로그인 때도 새 버전으로 켜지게). 시작프로그램에 도우미가 없으면 새로 넣지는 않고,
+# 시작프로그램 쪽이 더 새 버전이면 그대로 둔다. 바꾸기 전 파일은 %TEMP%\ExcelHelper 에 남긴다.
+$StartupUpdated = @()
+function Update-StartupHelper([string]$self, [string]$startupDir){
+  $done = @()
+  if(-not $self -or -not (Test-Path -LiteralPath $self) -or -not $startupDir -or -not (Test-Path -LiteralPath $startupDir)){ return $done }
+  if([IO.Path]::GetFullPath($self).StartsWith([IO.Path]::GetFullPath($startupDir), [StringComparison]::OrdinalIgnoreCase)){ return $done }   # 시작프로그램에서 켜진 것
+  $selfBytes = [IO.File]::ReadAllBytes($self)
+  foreach($f in @(Get-ChildItem -LiteralPath $startupDir -File -Filter 'excel-helper*.cmd' -ErrorAction SilentlyContinue)){
+    try {
+      $old = [IO.File]::ReadAllBytes($f.FullName)
+      if([Linq.Enumerable]::SequenceEqual([byte[]]$old, [byte[]]$selfBytes)){ continue }
+      $m = [regex]::Match([Text.Encoding]::UTF8.GetString($old), "(?m)^\`$Version = '(\d+)'")
+      $oldVer = if($m.Success){ [int]$m.Groups[1].Value } else { 0 }
+      if($oldVer -gt [int]$Version){ continue }
+      Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $LogDir ($f.BaseName + '_v' + $oldVer + '_예전.cmd')) -Force
+      [IO.File]::WriteAllBytes($f.FullName, $selfBytes)
+      $done += "$($f.Name)(v$oldVer)"
+      Log "시작프로그램의 $($f.Name) 을(를) v$oldVer → v$Version 으로 바꿈"
+    } catch { Log "시작프로그램의 $($f.Name) 바꾸기 실패: $($_.Exception.Message)" }
+  }
+  return $done
+}
+try { $StartupUpdated = @(Update-StartupHelper ([string]$env:EXCEL_HELPER_PATH) ([Environment]::GetFolderPath('Startup'))) } catch { Log "시작프로그램 확인 실패: $($_.Exception.Message)" }
 
 # 창은 숨기고, 작업표시줄 오른쪽 아래(알림 영역)에 아이콘만 둔다. 끌 때는 아이콘 오른쪽 클릭 → 종료.
 $global:helperRunning = $true
@@ -25710,7 +25735,7 @@ $tray.add_MouseUp({ param($s, $e)
   }
 })
 $tray.Visible = $true
-$tray.ShowBalloonTip(5000, '엑셀 도우미 실행 중', "$(if($replaced){ '예전 도우미를 끄고 새 버전(v' + $Version + ')으로 바꿨습니다.' } else { '업무프로그램에서 PC 엑셀 파일에 저장·불러오기를 할 수 있습니다.' })`n끌 때는 이 아이콘을 클릭 → 종료.", [System.Windows.Forms.ToolTipIcon]::Info)
+$tray.ShowBalloonTip(5000, '엑셀 도우미 실행 중', "$(if($replaced){ '예전 도우미를 끄고 새 버전(v' + $Version + ')으로 바꿨습니다.' } else { '업무프로그램에서 PC 엑셀 파일에 저장·불러오기를 할 수 있습니다.' })$(if($StartupUpdated.Count){ "`n시작프로그램의 도우미도 v$Version 으로 바꿨습니다." })`n끌 때는 이 아이콘을 클릭 → 종료.", [System.Windows.Forms.ToolTipIcon]::Info)
 Log "엑셀 도우미 v$Version 시작 ($AllowedOrigin)$(if($replaced){ " — 예전 도우미 $replaced 개를 끄고 바꿈" })"
 
 # 요청 받기 일꾼
