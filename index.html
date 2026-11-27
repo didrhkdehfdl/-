@@ -15602,14 +15602,25 @@ function downloadExcelHelper(){
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 1000);
 }
+// 지금 내려받을 수 있는 도우미 번호(아래 excelHelperScript의 $Version). EXCEL_HELPER_VERSION은 "이보다 낮으면 통합본
+// 자동 갱신 등을 멈추는" 최소 번호라 일부러 덜 올리므로, "새 버전이 있다"는 안내는 이 번호로 따로 비교한다.
+function latestExcelHelperVersion(){
+  const el = document.getElementById('excelHelperScript');
+  const m = el ? String(el.textContent).match(/\$Version\s*=\s*'(\d+)'/) : null;
+  return m ? Number(m[1]) : EXCEL_HELPER_VERSION;
+}
 function excelHelperStatusHtml(){
   const running = excelHelperRunning;
+  const latest = latestExcelHelperVersion();
+  const tooOld = running && excelHelperVersion && excelHelperVersion < EXCEL_HELPER_VERSION;
+  const notLatest = running && excelHelperVersion && !tooOld && excelHelperVersion < latest;
   return `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12.5px; margin-bottom:10px;">
-      <span style="font-weight:700; color:${running?'#2e9e5b':'var(--muted)'};">${running===null ? '⏳ 엑셀 도우미 확인 중…' : (running ? '🟢 엑셀 도우미 실행 중' : '⚪ 엑셀 도우미가 꺼져 있습니다')}</span>
+      <span style="font-weight:700; color:${running?'#2e9e5b':'var(--muted)'};">${running===null ? '⏳ 엑셀 도우미 확인 중…' : (running ? `🟢 엑셀 도우미 실행 중${excelHelperVersion ? ` (v${excelHelperVersion}${excelHelperVersion >= latest ? ' · 최신' : ''})` : ''}` : '⚪ 엑셀 도우미가 꺼져 있습니다')}</span>
       <button class="excel-helper-recheck" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">다시 확인</button>
       ${running && excelHelperVersion >= 27 ? `<button class="excel-helper-stop" title="PC에서 실행 중인 엑셀 도우미를 끕니다(하던 작업은 마치고 꺼짐)." style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">⏻ 도우미 끄기</button>` : ''}
       <button class="excel-helper-download" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">⬇ 엑셀 도우미 내려받기</button>
-      ${running && excelHelperVersion && excelHelperVersion < EXCEL_HELPER_VERSION ? `<span style="font-size:12px; color:var(--neg); font-weight:700;">⚠ 실행 중인 도우미가 예전 버전입니다 — "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).</span>` : ''}
+      ${notLatest ? `<span style="font-size:12px; color:#d9822b; font-weight:700;">⚠ 새 버전(v${latest})이 있습니다 — "⬇ 엑셀 도우미 내려받기"로 받아 실행하면 바뀝니다(실행하면 예전 도우미는 자동으로 꺼짐). 지금 버전으로도 기존 기능은 그대로 됩니다.</span>` : ''}
+      ${tooOld ? `<span style="font-size:12px; color:var(--neg); font-weight:700;">⚠ 실행 중인 도우미가 예전 버전입니다 — "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).</span>` : ''}
       ${running ? '' : `<span style="font-size:11.5px; color:var(--muted);">받은 <b>excel-helper.cmd</b>를 더블클릭하면 창 없이 실행되고, 작업표시줄 오른쪽 아래 알림 영역에 엑셀 아이콘이 생깁니다(끌 때는 아이콘 클릭 → 종료). 처음 실행 때 "Windows의 PC 보호" 창이 뜨면 "추가 정보 → 실행"을 눌러주세요.</span>`}
     </div>`;
 }
