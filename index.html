@@ -18275,7 +18275,7 @@ function bindLunchDupPanel(ym, hits){
 const PRESTIGE_CARD_ID = 'prestige-7973';
 const PRESTIGE_LAST4 = '7973';
 const PRESTIGE_AFTER_LAST4 = '1956';        // 이 카드 오른쪽에 놓는다
-const PRESTIGE_HELPER_MIN = 63;   // v63: 사용처 이름이 달라도 같은 날·같은 금액이면 같은 건으로 봄(중복 줄 방지)
+const PRESTIGE_HELPER_MIN = 64;   // v64: 사용처 이름이 달라도 같은 날·같은 금액이면 같은 건으로 봄(중복 줄 방지)
 const PRESTIGE_LIST_FROM = '2026-09-01';    // 3-1 리스트는 이 날짜부터만 쓴다(그 전 달 시트는 이미 마감된 보고서라 건드리지 않는다)
 const PRESTIGE_LEDGER_SHEET = '품위유지비_작성용';
 const PRESTIGE_SNAP_KEY = 'corp-card-prestige-xl:' + PRESTIGE_CARD_ID;   // 엑셀에 마지막으로 쓴 값(행 id별) — 여러 PC가 함께 본다
@@ -23609,7 +23609,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '63'
+$Version = '64'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
