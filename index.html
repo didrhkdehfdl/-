@@ -14798,6 +14798,10 @@ function approvalCoverageForMonth(cardId, month){
   if(!cardId || !month) return null;
   return approvalCoverageMap(approvalEntriesForCard(cardId)).get(isoMonthForCardMonth(cardId, month)) || null;
 }
+// 사용처나 지출내역이 "현금 출금"·"현금인출"인 줄 — 카드 결제가 아니라서 승인내역과 맞춰 보지 않는다.
+function isCashWithdrawalRow(r){
+  return /현금\s*(출금|인출)/.test(`${r && r.place || ''} ${r && r.expenseType || ''}`);
+}
 function recomputeCorpCardMismatches(){
   const s = corpCardState;
   s.mismatchByCard = {};
@@ -14821,6 +14825,7 @@ function recomputeCorpCardMismatches(){
         if(!r.date) return;
         const cov = coverage.get(String(r.date).slice(0,7));
         if(!cov || r.date < cov.min || r.date > cov.max) return;
+        if(isCashWithdrawalRow(r)) return;   // 현금 출금은 카드 승인내역에 안 나오므로 대사하지 않는다(빨간 표시 없음)
         ledgerRows.push({ id:r.id, isoDate:r.date, amount: Math.abs(Number(r.amount)||0), place:r.place });
       });
     });
