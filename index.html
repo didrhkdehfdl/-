@@ -17321,7 +17321,7 @@ async function renderCorpCardMainInner(){
       ${months.length>1 && !prestige ? `<button id="corpCardDeleteMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">"${escapeHtml(s.activeMonth)}" 탭 삭제</button>` : ''}
     </div>
     ${lunchDupYm ? lunchDupPanelHtml(lunchDupYm, lunchDupList) : ''}
-    ${prestige && canManagePrestige() ? prestigePanelHtml(activeCard) : ''}
+    ${prestige ? (canManagePrestige() ? prestigePanelHtml(activeCard) : prestigeRemoteBarHtml()) : ''}
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
       <button id="corpCardAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
       ${prestige ? '' : `<div style="display:flex; align-items:center; gap:4px; padding:3px; border-radius:7px; border:1px solid var(--line);">
@@ -17604,6 +17604,7 @@ async function renderCorpCardMainInner(){
   });
   if(!activeCard || !tmpl) return;
   if(lunchDupYm) bindLunchDupPanel(lunchDupYm, lunchDupList);
+  { const rb = document.getElementById('prestigeRemoteSyncBtn'); if(rb) rb.addEventListener('click', ()=>requestPrestigeSyncRemote(rb)); }
   if(prestige){ bindPrestigePanel(activeCard); document.querySelectorAll('.excel-helper-download').forEach(b=>b.addEventListener('click', downloadExcelHelper)); }
   setupStickyHScroll('corpCardTableWrap', 'corpCardStickyScroll');
   {
@@ -17698,6 +17699,7 @@ async function renderCorpCardMainInner(){
     const fmtMd = iso => `${Number(String(iso).slice(5,7))}/${Number(String(iso).slice(8,10))}`;
     const notUploaded = selectedRows.filter(r=>{
       if(isCashWithdrawalRow(r)) return false;   // 현금 출금은 카드 승인내역에 안 나온다
+      if(isPrestigeCard(activeCard)) return false;   // 품위유지비 카드(7973)는 승인내역을 올리기 전에도 출력할 수 있다
       const iso = String(r.date||'');
       const cov = coverage.get(iso.slice(0,7));
       return !cov || iso < cov.min || iso > cov.max;
@@ -18550,10 +18552,73 @@ async function runPrestigeSync(opts){
 }
 // 다른 PC에서 적은 내용도 쓰도록, 파일을 연결한 PC에서는 1분마다 서버 내역이 바뀌었는지 본다.
 setInterval(()=>{
-  if(document.querySelector('#main .corpcard-f:focus') || !(fbAuth && fbAuth.currentUser)) return;
+  if(!(fbAuth && fbAuth.currentUser)) return;
   if(!getLinkedFile(prestigeLinkKey('ledger')) && !getLinkedFile(prestigeLinkKey('list'))) return;
+  ensurePrestigeRequestListener();
+  if(document.querySelector('#main .corpcard-f:focus')) return;
   runPrestigeSync({}).catch(e=>console.warn('품위유지비 엑셀 자동 반영 실패', e));
 }, 60000);
+setTimeout(()=>{ try{ if(fbAuth && fbAuth.currentUser && (getLinkedFile(prestigeLinkKey('ledger')) || getLinkedFile(prestigeLinkKey('list')))) ensurePrestigeRequestListener(); }catch(e){} }, 8000);
+// ---- 파일이 연결되지 않은 PC(김종식 님 등)의 "지금 엑셀에 쓰기" ----
+// 그 PC에는 엑셀 도우미·파일 연결이 없어서 직접 쓰지 못한다. 대신 서버에 "지금 써 달라"는 요청을 남기면,
+// 파일이 연결된 PC(박찬호 님)가 바로 받아 엑셀에 쓰고 결과를 남긴다. 그 PC에서 앱이 꺼져 있으면
+// 켜질 때 자동으로 쓴다(적은 내용은 서버에 저장돼 있으므로 빠지지 않는다).
+const PRESTIGE_SYNC_REQ_KEY = 'corp-card-prestige-sync-req';
+const PRESTIGE_SYNC_RES_KEY = 'corp-card-prestige-sync-res';
+const PRESTIGE_SYNC_HANDLED_KEY = 'prestige-sync-req-handled';
+let prestigeReqUnsub = null;
+function ensurePrestigeRequestListener(){
+  if(prestigeReqUnsub) return;
+  prestigeReqUnsub = appDataDoc(PRESTIGE_SYNC_REQ_KEY).onSnapshot(async snap=>{
+    try{
+      if(!snap || !snap.exists) return;
+      const req = JSON.parse((snap.data()||{}).value || 'null');
+      if(!req || !req.at || Date.now() - req.at > 10*60*1000) return;   // 10분 넘은 요청은 무시(그 사이 자동으로 썼다)
+      let handled = 0; try{ handled = Number(localStorage.getItem(PRESTIGE_SYNC_HANDLED_KEY))||0; }catch(e){}
+      if(req.at <= handled) return;
+      try{ localStorage.setItem(PRESTIGE_SYNC_HANDLED_KEY, String(req.at)); }catch(e){}
+      let message = '', ok = true;
+      try{ const r = await runPrestigeSync({ manual:true }); message = (r && r.message) || ''; }
+      catch(e){ ok = false; message = linkedFileErrorMessage(e); }
+      await saveFileToStorage(PRESTIGE_SYNC_RES_KEY, JSON.stringify({ reqAt: req.at, at: Date.now(), ok, message }));
+    }catch(e){ console.warn('품위유지비 엑셀 쓰기 요청 처리 실패', e); }
+  }, err=>{ console.warn('품위유지비 요청 듣기 실패', err); prestigeReqUnsub = null; });
+}
+let prestigeRemoteNote = '';
+function prestigeRemoteBarHtml(){
+  return `<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; border:1px solid var(--line); border-radius:9px; padding:8px 12px; margin-bottom:12px;">
+    <button id="prestigeRemoteSyncBtn" title="적은 내용을 지금 바로 품위유지비 엑셀(1-1 관리대장·3-1 사용내역 리스트)에 씁니다." style="font-size:12px; padding:7px 12px; border-radius:7px; border:1px solid #2e9e5b; background:transparent; color:#2e9e5b; cursor:pointer; font-weight:600; white-space:nowrap;">💾 지금 엑셀에 쓰기</button>
+    <span class="prestige-remote-note" style="font-size:11.5px; color:var(--muted);">${escapeHtml(prestigeRemoteNote || '적은 내용은 잠시 뒤 엑셀에 자동으로 들어갑니다. 바로 넣으려면 누르세요.')}</span>
+  </div>`;
+}
+function setPrestigeRemoteNote(text){
+  prestigeRemoteNote = text;
+  document.querySelectorAll('.prestige-remote-note').forEach(el=>{ el.textContent = text; });
+}
+async function requestPrestigeSyncRemote(btn){
+  btn.disabled = true;
+  try{
+    await flushCorpCardSave({ silent:true });   // 방금 적은 것부터 서버에 저장
+    await corpCardSaveQueue.catch(()=>{});
+    const at = Date.now();
+    const by = String(currentUserName||'').trim();
+    const r = await saveFileToStorage(PRESTIGE_SYNC_REQ_KEY, JSON.stringify({ at, by }));
+    if(r && r.ok === false) throw new Error(r.reason || '요청을 보내지 못했습니다.');
+    setPrestigeRemoteNote('엑셀에 쓰는 중… (파일이 연결된 PC에서 처리합니다)');
+    for(let i=0; i<30; i++){   // 최대 90초 기다린다
+      await new Promise(res=>setTimeout(res, 3000));
+      const txt = await loadFileFromStorage(PRESTIGE_SYNC_RES_KEY);
+      let res = null; try{ res = txt ? JSON.parse(txt) : null; }catch(e){}
+      if(res && res.reqAt === at){
+        const time = new Date(res.at).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+        setPrestigeRemoteNote(`${time} ${res.ok ? '엑셀에 반영했습니다' : '엑셀에 쓰지 못했습니다'}${res.message ? ' — ' + res.message.replace(/\n/g,' · ') : ''}`);
+        return;
+      }
+    }
+    setPrestigeRemoteNote('파일이 연결된 PC가 꺼져 있거나 앱이 닫혀 있어 지금은 쓰지 못했습니다. 그 PC에서 앱이 켜지면 자동으로 들어갑니다(적은 내용은 저장돼 있습니다).');
+  }catch(e){ setPrestigeRemoteNote('요청을 보내지 못했습니다: ' + linkedFileErrorMessage(e)); }
+  finally{ btn.disabled = false; }
+}
 // ---- 1-1 관리대장 → 앱(처음 한 번, 또는 엑셀에 직접 적은 줄을 가져올 때) ----
 function parsePrestigeLedger(rows){
   const norm = v => String(v==null?'':v).replace(/\s/g,'');
