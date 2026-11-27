@@ -23875,7 +23875,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '66'
+$Version = '67'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -24946,8 +24946,9 @@ function Write-CardRowValues($ws, [int]$r, $arr){
   $errs = @(); $failed = @()
   foreach($run in $runs){
     $c1 = [int]$run[0][0]; $c2 = [int]$run[-1][0]
-    $a = New-Object 'object[,]' 1,($run.Count)
-    for($k=0; $k -lt $run.Count; $k++){ $a[0,$k] = $run[$k][1] }
+    # 엑셀에 직접 넘기는 배열은 1부터 시작해야 한다 — 0부터 시작하는 배열은 0x800A03EC로 거절돼 한 칸씩 다시 쓰느라 느렸다.
+    $a = [Array]::CreateInstance([object], [int[]]@(1, $run.Count), [int[]]@(1, 1))
+    for($k=0; $k -lt $run.Count; $k++){ $a[1, ($k + 1)] = $run[$k][1] }
     $ok = $false
     try { Invoke-Retry { $rg = $ws.Range($ws.Cells.Item($r,$c1), $ws.Cells.Item($r,$c2)); $rgo = $rg.psobject.BaseObject; [void]$rgo.GetType().InvokeMember('Value2', [Reflection.BindingFlags]::SetProperty, $null, $rgo, @(,$a)) } | Out-Null; $ok = $true } catch { $errs += "묶음 ${c1}~${c2}: $($_.Exception.Message)" }
     if($ok){ continue }
@@ -25047,16 +25048,21 @@ function Apply-CarFormulas($wb){
     $rng = $ws.Range($ws.Cells.Item(2,$carC), $ws.Cells.Item($lr,$carC))
     $f = $rng.Formula
     $cnt = $lr - 1
-    $arr = New-Object 'object[,]' $cnt,1
+    # 1부터 시작하는 배열로 엑셀에 직접 넘긴다(PowerShell 대입은 앞서 읽은 값의 형식을 기억해 "Object[,]를 String으로 바꿀 수 없음"이 났다).
+    $arr = [Array]::CreateInstance([object], [int[]]@($cnt, 1), [int[]]@(1, 1))
     $changed = $false
     for($i=0; $i -lt $cnt; $i++){
       $cur = if($cnt -eq 1){ [string]$f } else { [string]$f[($i+1),1] }
       $r = $i + 2
       $want = "=IF(`$$L$r=`"`",`"`",IFERROR(VLOOKUP(`$$L$r&`"`",'$CarMapSheetName'!`$A:`$B,2,FALSE)&`"`",`"`"))"
-      if($cur -eq '' -or ($cur.StartsWith('=') -and $cur.Contains($CarMapSheetName))){ $arr[$i,0] = $want; if($cur -ne $want){ $changed = $true } }
-      else { $arr[$i,0] = $cur }
+      if($cur -eq '' -or ($cur.StartsWith('=') -and $cur.Contains($CarMapSheetName))){ $arr[($i + 1), 1] = $want; if($cur -ne $want){ $changed = $true } }
+      else { $arr[($i + 1), 1] = $cur }
     }
-    if($changed){ Invoke-Retry { $rng.Formula = $arr } | Out-Null; $done++ }
+    if($changed){
+      $ro = $rng.psobject.BaseObject; $fa = New-Object 'object[]' 1; $fa[0] = $arr
+      Invoke-Retry { [void]$ro.GetType().InvokeMember('Formula', [Reflection.BindingFlags]::SetProperty, $null, $ro, $fa) } | Out-Null
+      $done++
+    }
   }
   return $done
 }
