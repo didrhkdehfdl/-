@@ -15547,7 +15547,39 @@ function watchExcelHelperProgress(onText){
 }
 async function checkExcelHelper(){
   try{ const r = await excelHelperCall('/ping', {}, 8000); excelHelperVersion = Number(r.version||0); }catch(e){}
+  if(excelHelperRunning && excelHelperVersion >= EXCEL_HELPER_SELFUPDATE_MIN && excelHelperVersion < latestExcelHelperVersion()) autoUpdateExcelHelper();
   return excelHelperRunning;
+}
+// ---- 엑셀 도우미 자동 업데이트 ----
+// 브라우저는 내려받은 파일을 스스로 실행하지 못한다(보안). 그래서 이미 켜져 있는 도우미(v68부터)에 새 버전 내용을 보내면,
+// 도우미가 그것을 이 PC(%LOCALAPPDATA%\ExcelHelper\excel-helper.cmd)에 저장하고 새 도우미를 켠 뒤 스스로 꺼진다.
+// 새 도우미는 시작프로그램의 도우미 파일도 새 버전으로 바꾼다. 도우미는 이 앱 주소가 같고 지금보다 새 버전인 파일만 받는다.
+const EXCEL_HELPER_SELFUPDATE_MIN = 68;
+let excelHelperUpdating = null, excelHelperUpdateTried = 0;
+function autoUpdateExcelHelper(){
+  const latest = latestExcelHelperVersion();
+  if(excelHelperUpdating || excelHelperUpdateTried >= latest) return excelHelperUpdating;
+  excelHelperUpdateTried = latest;
+  excelHelperUpdating = (async ()=>{
+    try{
+      const from = excelHelperVersion;
+      const res = await excelHelperFetch('/selfupdate', { headers:{ 'Content-Type':'application/octet-stream' }, body: new TextEncoder().encode(buildExcelHelperCmdText()) }, 10*60*1000);
+      await excelHelperJson(res);
+      for(let i=0; i<20; i++){   // 새 도우미가 켜질 때까지 최대 40초 기다린다
+        await new Promise(r=>setTimeout(r, 2000));
+        try{ const r = await excelHelperCall('/ping', {}, 3000); excelHelperVersion = Number(r.version||0); }catch(e){}
+        if(excelHelperRunning && excelHelperVersion >= latest){
+          console.info(`엑셀 도우미를 v${from} → v${excelHelperVersion} 로 자동 업데이트했습니다.`);
+          try{ if(typeof showToast === 'function') showToast(`엑셀 도우미를 새 버전(v${excelHelperVersion})으로 바꿨습니다.`); }catch(e){}
+          return true;
+        }
+      }
+      console.warn('엑셀 도우미 자동 업데이트 뒤 새 도우미가 응답하지 않습니다.');
+      return false;
+    }catch(e){ console.warn('엑셀 도우미 자동 업데이트 실패', e); return false; }
+    finally{ excelHelperUpdating = null; }
+  })();
+  return excelHelperUpdating;
 }
 // 파일 선택 창은 도우미가 PC 화면에 띄운다(브라우저 뒤에 뜨면 작업표시줄에서 찾아주세요).
 async function pickLinkedFile(key, title){
@@ -15587,7 +15619,7 @@ async function writeLinkedFileBytes(key, arrayBuffer){
 function linkedFileErrorMessage(e){ return (e && e.message) || String(e); }
 // 도우미 실행 파일(excel-helper.cmd)을 만들어 내려받는다 — 더블클릭하면 PowerShell로 실행된다.
 // 요청을 받아 줄 주소(이 앱의 주소)를 파일 안에 적어 두어, 다른 사이트는 도우미를 쓰지 못한다.
-function downloadExcelHelper(){
+function buildExcelHelperCmdText(){
   const ps = document.getElementById('excelHelperScript').textContent.replace(/^\s*\n/, '')
     .split('__ALLOWED_ORIGIN__').join(location.origin);
   const header = [
@@ -15599,7 +15631,10 @@ function downloadExcelHelper(){
     'exit /b',
     '#>',
   ].join('\r\n');
-  const text = header + '\r\n' + ps.replace(/\r?\n/g, '\r\n');
+  return header + '\r\n' + ps.replace(/\r?\n/g, '\r\n');
+}
+function downloadExcelHelper(){
+  const text = buildExcelHelperCmdText();
   const blob = new Blob([new TextEncoder().encode(text)], { type:'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -15624,7 +15659,8 @@ function excelHelperStatusHtml(){
       <button class="excel-helper-recheck" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">다시 확인</button>
       ${running && excelHelperVersion >= 27 ? `<button class="excel-helper-stop" title="PC에서 실행 중인 엑셀 도우미를 끕니다(하던 작업은 마치고 꺼짐)." style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer;">⏻ 도우미 끄기</button>` : ''}
       <button class="excel-helper-download" style="font-size:11.5px; padding:4px 9px; border-radius:6px; border:1px solid var(--sky); background:transparent; color:var(--sky); cursor:pointer;">⬇ 엑셀 도우미 내려받기</button>
-      ${notLatest ? `<span style="font-size:12px; color:#d9822b; font-weight:700;">⚠ 새 버전(v${latest})이 있습니다 — "⬇ 엑셀 도우미 내려받기"로 받아 실행하면 바뀝니다(실행하면 예전 도우미는 자동으로 꺼짐). 지금 버전으로도 기존 기능은 그대로 됩니다.</span>` : ''}
+      ${notLatest && excelHelperVersion >= EXCEL_HELPER_SELFUPDATE_MIN ? `<span style="font-size:12px; color:#2e9e5b; font-weight:700;">🔄 새 버전(v${latest})으로 자동으로 바꾸는 중입니다 — 잠시 뒤 "다시 확인"을 눌러보세요.</span>` : ''}
+      ${notLatest && excelHelperVersion < EXCEL_HELPER_SELFUPDATE_MIN ? `<span style="font-size:12px; color:#d9822b; font-weight:700;">⚠ 새 버전(v${latest})이 있습니다 — "⬇ 엑셀 도우미 내려받기"로 받아 실행하면 바뀝니다(실행하면 예전 도우미는 자동으로 꺼짐). 이번에 한 번만 받아 실행하면 다음부터는 앱이 자동으로 바꿉니다.</span>` : ''}
       ${tooOld ? `<span style="font-size:12px; color:var(--neg); font-weight:700;">⚠ 실행 중인 도우미가 예전 버전입니다 — "⬇ 엑셀 도우미 내려받기"로 새로 받아 실행해주세요(실행하면 예전 도우미는 자동으로 꺼지고 바뀝니다).</span>` : ''}
       ${running ? '' : `<span style="font-size:11.5px; color:var(--muted);">받은 <b>excel-helper.cmd</b>를 더블클릭하면 창 없이 실행되고, 작업표시줄 오른쪽 아래 알림 영역에 엑셀 아이콘이 생깁니다(끌 때는 아이콘 클릭 → 종료). 처음 실행 때 "Windows의 PC 보호" 창이 뜨면 "추가 정보 → 실행"을 눌러주세요.</span>`}
     </div>`;
@@ -23875,7 +23911,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '67'
+$Version = '68'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -23902,6 +23938,7 @@ trap {
 # 엑셀이 필요한 요청만 줄(queue)에 넣어 이 창(엑셀을 다루는 주 스레드)이 하나씩 처리한다.
 $global:shared = [hashtable]::Synchronized(@{ running=$true; busy=''; file=''; openFiles=@(); progress=@{ active=$false; pct=0; text='' } })
 $global:reqQueue = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
+$global:pendingSelfUpdate = $null
 function Pump-Requests { try { [System.Windows.Forms.Application]::DoEvents() } catch {} }
 function Set-Progress([double]$done, [double]$total, [string]$text){
   $pct = if($total -gt 0){ [Math]::Floor([Math]::Min([double]1, $done / $total) * 100) } else { 0 }
@@ -26011,6 +26048,24 @@ function Handle-Context($ctx){
       Log "$route $tmp"
       Send-Json $ctx @{ ok=$true; path=$tmp } 200; return
     }
+    if($route -eq '/selfupdate'){
+      # 앱이 보낸 새 버전 도우미 파일을 이 PC에 저장한다. 답을 보낸 뒤 새 도우미를 켜고 이 도우미는 꺼진다(아래 주 반복문).
+      # 같은 앱 주소로 만든, 지금보다 새 버전인 도우미 파일만 받는다.
+      $ms = New-Object IO.MemoryStream; $req.InputStream.CopyTo($ms); $bytes = $ms.ToArray()
+      $txt = [Text.Encoding]::UTF8.GetString($bytes)
+      $vm = [regex]::Match($txt, "(?m)^\`$Version = '(\d+)'")
+      $newVer = if($vm.Success){ [int]$vm.Groups[1].Value } else { 0 }
+      if(-not $txt.StartsWith('<# : excel-helper') -or -not $txt.Contains("`$AllowedOrigin = '$AllowedOrigin'") -or $newVer -le [int]$Version){
+        Send-Json $ctx @{ ok=$false; error="새 도우미 파일이 올바르지 않거나 지금(v$Version)보다 새 버전이 아닙니다(v$newVer)." } 200; return
+      }
+      $dir = Join-Path $env:LOCALAPPDATA 'ExcelHelper'
+      [void](New-Item -ItemType Directory -Force -Path $dir)
+      $dest = Join-Path $dir 'excel-helper.cmd'
+      [IO.File]::WriteAllBytes($dest, $bytes)
+      $global:pendingSelfUpdate = $dest
+      Log "자동 업데이트: v$Version → v$newVer ($dest)"
+      Send-Json $ctx @{ ok=$true; version=$newVer; path=$dest } 200; return
+    }
     if($route -eq '/writefile'){
       # 파일 내용은 JSON이 아니라 그대로(바이트) 받는다 — 큰 파일도 문제없게.
       # 한글 경로가 깨지지 않게 주소가 아니라 머리글(X-File-Path, URL 인코딩)로 받는다.
@@ -26274,6 +26329,12 @@ try {
     if($global:reqQueue.TryDequeue([ref]$ctx)){
       $global:shared.busy = $ctx.Request.Url.AbsolutePath
       try { Handle-Context $ctx } finally { $global:shared.busy = ''; $global:shared.file = ''; $global:shared.progress = @{ active=$false; pct=0; text='' }; $lastWork = Get-Date; $lastSnap = [datetime]::MinValue }
+      if($global:pendingSelfUpdate){
+        # 새 도우미를 켜고 이 도우미는 끝낸다(새 도우미가 켜지면서 남은 예전 도우미를 끄고, 시작프로그램 파일도 바꾼다).
+        try { Start-Process -FilePath $env:ComSpec -ArgumentList '/c', ('"' + $global:pendingSelfUpdate + '"') -WindowStyle Hidden; Log '새 도우미를 켜고 이 도우미는 끝냄' }
+        catch { Log "새 도우미 켜기 실패: $($_.Exception.Message)"; $global:pendingSelfUpdate = $null; continue }
+        $global:shared.running = $false; break
+      }
     } else {
       Start-Sleep -Milliseconds 40
       # 3초마다 도우미의 안 보이는 엑셀에 열려 있는 파일 목록을 남긴다(앱이 보여줌 — 다른 곳에서 "편집 중" 뜰 때 원인 확인용).
