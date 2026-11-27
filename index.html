@@ -17356,7 +17356,7 @@ async function renderCorpCardMainInner(){
         <thead><tr>
           <th style="padding:6px 2px; color:var(--muted); position:sticky; left:0; background:var(--panel-2); width:26px;"><input type="checkbox" id="corpCardSelectAllBox" title="이 달 전체 선택/해제"></th>
           <th style="padding:6px 4px; color:var(--muted); position:sticky; left:26px; background:var(--panel-2); width:44px; min-width:44px; max-width:44px; box-sizing:border-box;">순번</th>
-          <th style="padding:6px 4px; color:var(--muted); width:118px; position:sticky; left:70px; z-index:2; background:var(--panel-2); box-shadow:2px 0 0 var(--line);">날짜${colFilterIconHtml(colFilterTabKey,'date')}</th>
+          <th style="padding:6px 4px; color:var(--muted); width:118px; position:sticky; left:70px; z-index:2; background:var(--panel-2); box-shadow:2px 0 0 var(--line);">${prestige ? '사용월·사용일' : '날짜'}${colFilterIconHtml(colFilterTabKey,'date')}</th>
           ${prestige ? prestigeHeadHtml(colFilterTabKey) : `<th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">부서${colFilterIconHtml(colFilterTabKey,'dept')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">성명${colFilterIconHtml(colFilterTabKey,'name')}</th>
           <th style="padding:6px 4px; color:var(--muted); white-space:nowrap;">직급${colFilterIconHtml(colFilterTabKey,'position')}</th>
@@ -17400,7 +17400,7 @@ async function renderCorpCardMainInner(){
                 <input type="date" class="corpcard-f" data-id="${row.id}" data-field="date" value="${escapeHtml(row.date)}" style="width:100%; ${issues.date?errBorder:''}">
                 ${note('date')}
               </td>
-              ${prestige ? prestigeRowCellsHtml(row, issues, mm, note, errBorder, lockedStyle) : `<td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="${issues.dept?errBorder:''}">${note('dept')}</td>
+              ${prestige ? prestigeRowCellsHtml(row, issues, mm, note, errBorder, lockedStyle, i, visibleRows.length, activeCard) : `<td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="dept" value="${escapeHtml(row.dept)}" style="${issues.dept?errBorder:''}">${note('dept')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="name" value="${escapeHtml(row.name)}" style="${issues.name?errBorder:''}">${note('name')}</td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="position" value="${escapeHtml(row.position)}"></td>
               <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="venue" value="${escapeHtml(row.venue)}"></td>
@@ -18318,11 +18318,19 @@ function applyPrestigeDefaults(row){
 function prestigeHeadHtml(tabKey){
   const th = (f, label, w) => `<th style="padding:6px 4px; color:var(--muted); ${w?`width:${w}px;`:'white-space:nowrap;'}">${label}${f?colFilterIconHtml(tabKey, f):''}</th>`;
   return th('dept','부서') + th('name','성명') + th('position','직급') + th('corp','소속법인') + th('place','사용처') + th('inOut','사용인원<br>(내부/외부)',84)
-    + th('workDetail','업무내용') + th('expenseType','지출내역<br>(식대, 접대비 등)') + th('headcount','인원수',64) + th('note','비고<br>(특이사항, 사용인원 등)')
+    + th('expenseType','지출내역<br>(식대, 접대비 등)') + th('headcount','인원수',64) + th('note','비고<br>(특이사항, 사용인원 등)')
     + `<th style="padding:6px 4px; color:var(--muted); width:100px;">사용금액${colFilterIconHtml(tabKey,'amount')}<label title="보이는 줄의 금액 노란색 표시를 한 번에 켜고 끕니다" style="display:flex; align-items:center; justify-content:flex-end; gap:3px; font-size:10px; font-weight:400; cursor:pointer; margin-top:2px;"><input type="checkbox" id="corpCardHlAllBox" style="margin:0;">🟨 전체</label></th>`
-    + th('','일반카드<br>기준금액',90) + th('','기준 초과<br>사용금액',90);
+    + th('','일반카드<br>기준금액',90) + th('','기준 초과<br>사용금액',90)
+    + th('','한도금액',110) + th('','총 사용금액',100) + th('','잔액',100);
 }
-function prestigeRowCellsHtml(row, issues, mm, note, errBorder, lockedStyle){
+// 1-1의 한도금액·총 사용금액·잔액(엑셀에서는 모든 줄에 걸친 한 칸) — 잔액 = 한도금액 − (총 사용금액 − 일반카드 기준금액 합)
+function prestigeTotals(card){
+  const all = Object.values(corpCardState.rowsByCard[card.id]||{}).flat().filter(Boolean);
+  const total = all.reduce((s,r)=>s+(Number(r.amount)||0), 0), std = all.reduce((s,r)=>s+(Number(r.stdAmount)||0), 0);
+  const limit = Number(card.prestigeLimit)||0;
+  return { limit, total, std, balance: limit - (total - std) };
+}
+function prestigeRowCellsHtml(row, issues, mm, note, errBorder, lockedStyle, idx, count, card){
   const id = row.id, v = f => escapeHtml(row[f]==null ? '' : row[f]);
   const td = html => `<td style="padding:3px 4px;">${html}</td>`;
   const fixed = f => td(`<input type="text" class="corpcard-f corpcard-f-auto" data-id="${id}" data-field="${f}" value="${v(f)}" readonly title="관리대장에 고정으로 적혀 있는 값입니다" style="${lockedStyle}">`);
@@ -18335,14 +18343,20 @@ function prestigeRowCellsHtml(row, issues, mm, note, errBorder, lockedStyle){
   const inOut = td(`<select class="corpcard-f" data-id="${id}" data-field="inOut" style="width:100%; text-align:center; ${issues.inOut?errBorder:''}">${['','내부','외부'].map(o=>`<option value="${o}" ${String(row.inOut||'')===o?'selected':''}>${o||'-'}</option>`).join('')}</select>${note('inOut')}`);
   const amount = td(`<input type="text" inputmode="numeric" class="corpcard-f corpcard-money" data-id="${id}" data-field="amount" value="${row.amount?Number(row.amount).toLocaleString('ko-KR'):''}" style="width:100%; text-align:right; ${row.hl?'background:#fff3a0; color:#000;':''} ${issues.amount?errBorder:''}">
     <label title="금액 노란색 표시" style="display:flex; align-items:center; justify-content:flex-end; gap:3px; font-size:10px; color:var(--muted); cursor:pointer; margin-top:2px;"><input type="checkbox" class="corpcard-hl-box" data-id="${id}" ${row.hl?'checked':''} style="margin:0;">🟨</label>${note('amount')}`);
-  return fixed('dept') + fixed('name') + fixed('position') + fixed('corp') + place + inOut + txt('workDetail') + txt('expenseType') + num('headcount') + txt('note') + amount + num('stdAmount') + num('overAmount');
+  return fixed('dept') + fixed('name') + fixed('position') + fixed('corp') + place + inOut + txt('workDetail') + txt('expenseType') + num('headcount') + txt('note') + amount + num('stdAmount') + num('overAmount') + (idx === 0 ? (()=>{
+    // 엑셀처럼 세 칸은 표 전체에 걸친 한 칸으로 보여준다(맨 윗줄에만 그림)
+    const tt = prestigeTotals(card), won = n => n ? n.toLocaleString('ko-KR') : '-';
+    const cell = html => `<td rowspan="${count}" style="padding:4px 6px; text-align:right; vertical-align:middle; border-left:1px solid var(--line); background:var(--panel-2); white-space:nowrap;">${html}</td>`;
+    return cell(`<input type="text" inputmode="numeric" class="prestige-limit-input" value="${tt.limit ? tt.limit.toLocaleString('ko-KR') : ''}" placeholder="한도 입력" title="품위유지비 한도금액 — 1-1 관리대장의 한도금액 칸에도 씁니다" style="width:96px; text-align:right;">`)
+      + cell(`<b>${won(tt.total)}</b>`) + cell(`<b style="color:${tt.balance<0?'var(--neg)':'var(--pos)'};">${tt.limit ? tt.balance.toLocaleString('ko-KR') : '-'}</b>`);
+  })() : '');
 }
 // 빠진 칸 안내 — 두 엑셀에 꼭 있어야 하는 칸만 본다(승인내역과의 비교는 다른 카드와 같다).
 function prestigeRowIssues(row){
   const issues = {};
   ['date','place','inOut','expenseType'].forEach(f=>{ if(!String(row[f]||'').trim()) issues[f] = '빈칸을 채워주세요'; });
   if(!Number(row.amount)) issues.amount = '빈칸을 채워주세요';
-  if(!String(row.workDetail||'').trim() && !String(row.note||'').trim()) issues.workDetail = '업무내용이나 비고를 채워주세요';
+  if(!String(row.note||'').trim() && !String(row.workDetail||'').trim()) issues.note = '빈칸을 채워주세요';
   return issues;
 }
 let prestigeNote = '', prestigeNoteErr = false;
@@ -18378,6 +18392,14 @@ function prestigePanelHtml(card){
     </div></div>`;
 }
 function bindPrestigePanel(card){
+  const lim = document.querySelector('.prestige-limit-input');
+  if(lim) lim.addEventListener('change', async ()=>{
+    const n = Number(String(lim.value).replace(/[^0-9.-]/g,''))||0;
+    card.prestigeLimit = n || null;
+    await saveCorpCardList();
+    prestigeLastTxt = ''; queuePrestigeSync();   // 1-1의 한도금액 칸에도 쓴다
+    renderCorpCardMain();
+  });
   const busy = async (btn, text, fn) => {
     const label = btn.textContent; btn.textContent = text; btn.disabled = true;
     try{ await fn(); }catch(e){ alert(linkedFileErrorMessage(e)); }
@@ -18411,7 +18433,7 @@ async function loadPrestigeSnap(){
   const txt = await loadFileFromStorage(PRESTIGE_SNAP_KEY, 30000);
   if(lastLoadMeta[PRESTIGE_SNAP_KEY] && lastLoadMeta[PRESTIGE_SNAP_KEY].error) throw new Error('서버를 확인하지 못했습니다(인터넷 연결 확인).');
   let s = null; try{ s = txt ? JSON.parse(txt) : null; }catch(e){ throw new Error('엑셀에 쓴 기록을 읽지 못했습니다.'); }
-  return { ledger:(s && s.ledger)||{}, list:(s && s.list)||{} };
+  return { ledger:(s && s.ledger)||{}, list:(s && s.list)||{}, limit:(s && s.limit != null) ? s.limit : null };
 }
 async function savePrestigeSnap(snap){
   const r = await saveFileToStorage(PRESTIGE_SNAP_KEY, JSON.stringify(snap), 30000);
@@ -18446,7 +18468,12 @@ async function runPrestigeSync(opts){
       const items = rows.filter(r=>prestigeEligible(r) && (kind === 'ledger' || r.date >= PRESTIGE_LIST_FROM))
         .map(r=>({ id:r.id, cur:vals(r), prev:s[r.id]||null })).filter(x=>JSON.stringify(x.cur) !== JSON.stringify(x.prev));
       const removes = tombs ? Object.keys(s).filter(id=>!ids.has(id) && tombs.has(id)).map(id=>({ id, prev:s[id] })) : [];
-      if(!items.length && !removes.length) continue;
+      // 1-1 한도금액(앱 카드에 적은 값) — 도우미 v65부터 쓴다
+      let limit = null;
+      if(kind === 'ledger' && excelHelperVersion >= 65){
+        try{ const lt = await loadFileFromStorage(CORP_CARD_LIST_KEY); const pc = ((lt && JSON.parse(lt).cards)||[]).find(isPrestigeCard); const n = pc && Number(pc.prestigeLimit); if(n && n !== snap.limit) limit = n; }catch(e){}
+      }
+      if(!items.length && !removes.length && limit === null) continue;
       const label = kind === 'ledger' ? '1-1 관리대장' : '3-1 사용내역 리스트';
       const lockKey = 'prestige-' + kind;
       if(!manual && fileLockWaiting(lockKey)){ waiting = true; continue; }
@@ -18459,12 +18486,13 @@ async function runPrestigeSync(opts){
       try{
         const link = await resolveLinkedPath(prestigeLinkKey(kind));
         setPrestigeNote(`${label}에 쓰는 중…`);
-        const res = await excelHelperCall('/prestige/write', { path: link.path, kind, items, removes }, 5*60*1000);
+        const res = await excelHelperCall('/prestige/write', { path: link.path, kind, items, removes, limit }, 5*60*1000);
         const byId = new Map(items.map(x=>[x.id, x]));
         // 쓴 값만 기록한다(서버 기록을 다시 받아 합침 — 다른 PC의 기록을 덮지 않게).
         const fresh = await loadPrestigeSnap();
         (res.results||[]).forEach(r=>{
           if(!r || !r.ok) return;
+          if(r.action === 'limit'){ fresh.limit = limit; return; }
           if(r.action === 'removed' || r.action === 'notfound'){ delete fresh[kind][r.id]; return; }
           const it = byId.get(r.id); if(it) fresh[kind][r.id] = it.cur;
         });
@@ -18472,7 +18500,7 @@ async function runPrestigeSync(opts){
         snap[kind] = fresh[kind];
         fileLockResolved(lockKey);
         const n = a => (res.results||[]).filter(r=>r.action===a).length;
-        const parts = [['added','새로 씀'],['updated','고침'],['matched','이미 있던 줄'],['removed','지움'],['notfound','지울 줄 없음']].filter(([a])=>n(a)).map(([a,t])=>`${t} ${n(a)}건`);
+        const parts = [['added','새로 씀'],['updated','고침'],['matched','이미 있던 줄'],['removed','지움'],['limit','한도금액'],['notfound','지울 줄 없음']].filter(([a])=>n(a)).map(([a,t])=>`${t} ${n(a)}건`);
         done.push(`${label}: ${parts.join(', ')}`);
         if(n('notfound')) problems.push(`${label}: 앱에서 지운 ${n('notfound')}건을 엑셀에서 찾지 못했습니다(엑셀에서 고쳤거나 이미 지운 줄) — 엑셀을 확인해주세요.`);
       }catch(e){
@@ -23620,7 +23648,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '64'
+$Version = '65'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -25477,6 +25505,13 @@ function Write-PrestigeLedger($xl, $wb, $body){
     Write-PrestigeLedgerCells $L $r $it.cur $null $false
     $changed = $true
     [void]$results.Add(@{ id=[string]$it.id; ok=$true; action='added'; row=$r })
+  }
+  if($null -ne $body.limit -and [string]$body.limit -ne ''){
+    $hr = $L.first - 1
+    if(-not (Pr-Norm $ws.Range("P$hr").Value2).StartsWith('한도금액')){ throw "관리대장의 P열이 한도금액이 아니라 쓰지 않았습니다." }
+    Set-CellValue $ws.Range("P$($L.first)") ([double]$body.limit)
+    $changed = $true
+    [void]$results.Add(@{ id='__limit'; ok=$true; action='limit' })
   }
   return @{ results=$results.ToArray(); changed=$changed }
 }
