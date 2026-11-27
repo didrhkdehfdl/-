@@ -17339,7 +17339,7 @@ async function renderCorpCardMainInner(){
       <button id="corpCardTrashBtn" title="삭제 버튼이나 이력 되돌리기로 지운 행을 지운 사람·시각과 함께 보고 되살립니다" style="font-size:12.5px; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:600;">🗑 지운 행</button>
       <button id="corpCardSaveBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--muted); cursor:pointer; font-weight:700;">✅ 저장됨</button>
       ${s.approvalEntries.length ? `<button id="corpCardApprovalViewBtn" style=" font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--sky); background:rgba(90,155,213,.1); color:var(--sky); cursor:pointer; font-weight:600;">💳 이 카드 승인내역 보기</button>` : ''}
-      ${prestige ? '' : `<button id="corpCardPrintDocBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>`}
+      ${`<button id="corpCardPrintDocBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;" ${corpCardSelectedIds.size?'':'disabled'}>🖨 선택 ${corpCardSelectedIds.size}건 사용내역서로 출력</button>`}
       ${prestige ? '' : `<button id="corpCardMonthPdfBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid var(--gold-dim); background:rgba(224,163,57,.1); color:var(--gold); cursor:pointer; font-weight:600;">${corpCardMonthPdfLabel()}</button>`}
       ${prestige ? '' : `<button id="corpCardExportBtn" style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">📤 엑셀로 내보내기</button>`}
       ${canUseMealCsv() ? `<button id="corpCardMealCsvBtn" title="이 달 전체 카드의 식대·접대비 비고에 적힌 이름을 모아, 식대 프로그램 월계표와 같은 모양(이름 × 날짜)의 CSV를 만듭니다. 이 카드만이 아니라 모든 카드를 합쳐서 집계합니다." style="font-size:12.5px; padding:9px 16px; border-radius:8px; border:1px solid #1a6b3c; background:rgba(26,107,60,.1); color:#2e9e5b; cursor:pointer; font-weight:600;">🍱 식대 월계표 CSV</button>` : ''}
@@ -17697,6 +17697,7 @@ async function renderCorpCardMainInner(){
     const mmMap = corpCardState.mismatchByCard[activeCard.id] || new Map();
     const fmtMd = iso => `${Number(String(iso).slice(5,7))}/${Number(String(iso).slice(8,10))}`;
     const notUploaded = selectedRows.filter(r=>{
+      if(isCashWithdrawalRow(r)) return false;   // 현금 출금은 카드 승인내역에 안 나온다
       const iso = String(r.date||'');
       const cov = coverage.get(iso.slice(0,7));
       return !cov || iso < cov.min || iso > cov.max;
@@ -17738,7 +17739,8 @@ async function renderCorpCardMainInner(){
       );
       return;
     }
-    openCorpCardUsageDocPrint(selectedRows, activeCard);
+    if(isPrestigeCard(activeCard)) openPrestigeUsageDocPrint(selectedRows, activeCard);
+    else openCorpCardUsageDocPrint(selectedRows, activeCard);
   });
   main.querySelectorAll('.corpcard-pdf-tag').forEach(tag=>{
     tag.addEventListener('click', e=>{
@@ -18608,6 +18610,124 @@ async function importPrestigeLedger(){
   recomputeCorpCardMismatches();
   if(state.activeTab === 'corpCard') renderCorpCardMain();
   alert([newRows.length ? `${newRows.length}건을 가져왔습니다.` : '', fills.length ? `${fills.length}건의 빈 칸을 채웠습니다.` : ''].filter(Boolean).join('\n'));
+}
+// ===== 품위유지비 사용내역서(7973) =====
+// "2. 품위유지비 사용내역 서식(예시포함).xlsx"의 "품위유지비 사용내역(서식)" 시트와 같은 모양으로 그린다.
+// 열 너비·행 높이·굵은 선 위치는 그 시트에서 읽은 값(pt)을 그대로 쓰고, 화면 폭(792px)에 맞게 같은 비율로 줄인다.
+// 하루치가 한 장이고, 한 장에 3건까지(서식의 7~9행) 들어간다. 사용장소·사용차량번호·하이패스는
+// 앱에 칸이 없어서 미리보기에서 바로 적는다 — 사용장소는 그 줄에 저장되고, 차량번호·하이패스는 다음에 다시 채워진다.
+const PRESTIGE_DOC_COLS = [95.25, 95.25, 69.75, 69.75, 123.75, 123.75, 95.25, 95.25];   // A~H 열 너비(pt)
+const PRESTIGE_DOC_PX = 792 / PRESTIGE_DOC_COLS.reduce((a,b)=>a+b, 0);                   // pt → 화면 px
+const PRESTIGE_DOC_LAST_KEY = 'prestige-doc-last';   // 마지막으로 적은 차량번호·하이패스(이 PC)
+function prestigeDocLast(){ try{ return JSON.parse(localStorage.getItem(PRESTIGE_DOC_LAST_KEY)||'{}')||{}; }catch(e){ return {}; } }
+function groupPrestigeDocRows(rows){
+  const sorted = rows.slice().sort((x,y)=> String(x.date||'9999').localeCompare(String(y.date||'9999')) || String(x.apprTime||'~').localeCompare(String(y.apprTime||'~')));
+  const byDate = new Map();
+  sorted.forEach(r=>{ const k = String(r.date||''); if(!byDate.has(k)) byDate.set(k, []); byDate.get(k).push(r); });
+  const pages = [];
+  byDate.forEach(list=>{ for(let i=0;i<list.length;i+=3) pages.push(list.slice(i, i+3)); });
+  return pages;
+}
+function buildPrestigeUsageDocPage(items, card){
+  const P = v => (v * PRESTIGE_DOC_PX).toFixed(2) + 'px';
+  const F = "font-family:'맑은 고딕','Malgun Gothic',sans-serif;";   // style="…" 안에 들어가므로 작은따옴표
+  const fs = pt => `font-size:${(pt*PRESTIGE_DOC_PX*4/3*0.75).toFixed(2)}px;`;   // 엑셀 글자 크기(pt)를 같은 비율로
+  const THIN = '1px solid #000', MED = '2px solid #000';
+  const first = items[0];
+  const last = prestigeDocLast();
+  const uniq = f => [...new Set(items.map(r=>String(r[f]||'').trim()).filter(Boolean))];
+  const total = items.reduce((s,r)=>s+(Number(r.amount)||0), 0);
+  const heads = uniq('headcount').map(n=>`${n}명`).join(', ');
+  const carNo = uniq('carNo').join(', ') || last.carNo || '';
+  const hipass = uniq('hipass').join(', ') || last.hipass || '';
+  const cardNo = cardNumberForMonth(card, first && first.date ? Number(String(first.date).slice(5,7)) : '') || card.cardNumber || '';
+  // td 하나 — b: [위,오른쪽,아래,왼쪽] 선 굵기(0 없음, 1 가는 선, 2 굵은 선)
+  const td = (html, o) => {
+    o = o || {};
+    const b = o.b || [1,1,1,1], line = w => w===2 ? MED : (w ? THIN : 'none');
+    return `<td${o.cs?` colspan="${o.cs}"`:''}${o.rs?` rowspan="${o.rs}"`:''}${o.edit?` contenteditable="true" class="prestige-doc-edit" data-f="${o.edit}"${o.id?` data-id="${o.id}"`:''}`:''} style="${F}${fs(o.size||12)} font-weight:${o.bold?700:400}; text-align:${o.align||'center'}; vertical-align:middle; padding:0 ${P(4)}; border-top:${line(b[0])}; border-right:${line(b[1])}; border-bottom:${line(b[2])}; border-left:${line(b[3])}; ${o.fill?`background:${o.fill};`:''} white-space:${o.wrap?'pre-line':'nowrap'}; overflow:hidden; line-height:1.25; ${o.extra||''}">${html}</td>`;
+  };
+  const tr = (hPt, cells) => `<tr style="height:${P(hPt)};">${cells}</tr>`;
+  const esc = v => escapeHtml(v==null ? '' : String(v));
+  const GRAY = '#D9D9D9';
+  // 내역 3줄(서식 7~9행)
+  const itemRow = (r, i) => {
+    const top = i===0 ? 2 : 1, bot = i===2 ? 2 : 1;
+    const io = r ? String(r.inOut||'').trim() : '';
+    return tr(i===0 ? 50 : 33.75,
+      td(r?esc(r.place):'', { b:[top,1,bot,2], wrap:true })
+      + td(r?esc(r.venue):'', { b:[top,1,bot,1], edit: r?'venue':'', id: r?r.id:'' })
+      + td(io==='내부'?'V':'', { b:[top,1,bot,1] })
+      + td(io==='외부'?'V':'', { b:[top,1,bot,1] })
+      + td(r?esc(r.note):'', { cs:2, b:[top,1,bot,1], wrap:true })
+      + td(r?esc(r.expenseType):'', { b:[top,1,bot,1] })
+      + td(r && r.amount ? Number(r.amount).toLocaleString('ko-KR') : '', { b:[top,2,bot,1], align:'right' }));
+  };
+  const pad = [0,1,2].map(i=>items[i]||null);
+  const cols = PRESTIGE_DOC_COLS.map(w=>`<col style="width:${P(w)};">`).join('');
+  const receiptH = 31*16.5;   // 13~43행
+  return `
+  <div class="print-page doc-page portrait prestige-usage-doc" style="color:#000;">
+    <table style="border-collapse:collapse; table-layout:fixed; width:${P(PRESTIGE_DOC_COLS.reduce((a,b)=>a+b,0))};">
+      <colgroup>${cols}</colgroup>
+      ${tr(33.75, td('품위유지비 사용내역서', { cs:4, b:[0,0,0,0], size:26, bold:true, extra:'text-decoration:underline; text-underline-offset:3px;' })
+        + td('', { b:[0,0,0,0] }) + td('', { b:[0,2,0,0] })
+        + td('결\n\n재', { rs:2, b:[2,2,2,2], size:16, bold:true, wrap:true }) + td('작성자', { b:[2,2,2,2], bold:true }))}
+      ${tr(68.25, td(`카드번호 : ${esc(cardNo)}`, { cs:4, b:[0,0,0,0], bold:true, align:'left' })
+        + td('', { b:[0,0,0,0] }) + td('', { b:[0,2,0,0] })
+        + td('', { b:[2,2,2,2], bold:true, edit:'writer' }))}
+      ${tr(6.75, td('', { cs:8, b:[0,0,0,0] }))}
+      ${tr(33.75, td('사용일', { b:[2,1,2,2], bold:true }) + td(esc(first.date), { b:[2,1,2,1] })
+        + td('부서', { b:[2,1,2,1], bold:true }) + td(esc(first.dept), { b:[2,1,2,1] })
+        + td('직급', { b:[2,1,2,1], bold:true }) + td(esc(first.position), { b:[2,1,2,1] })
+        + td('성명', { b:[2,1,2,1], bold:true }) + td(esc(first.name), { b:[2,2,2,1] }))}
+      ${tr(30, td('사용처', { rs:2, b:[2,1,2,2], bold:true }) + td('사용장소', { rs:2, b:[2,1,2,1], bold:true })
+        + td('사용인원', { cs:2, b:[2,1,1,1], bold:true }) + td('내용', { cs:2, rs:2, b:[2,1,2,1], bold:true })
+        + td('지출내역', { rs:2, b:[2,1,2,1], bold:true }) + td('금액', { rs:2, b:[2,2,2,1], bold:true }))}
+      ${tr(30, td('내부', { b:[1,1,2,1], bold:true }) + td('외부', { b:[1,1,2,1], bold:true }))}
+      ${pad.map(itemRow).join('')}
+      ${tr(39.75, td('비고', { b:[2,1,2,2], bold:true }) + td(esc(heads), { cs:5, b:[2,1,2,1], align:'left', edit:'remark' })
+        + td('합계', { b:[2,1,2,1], bold:true, fill:GRAY }) + td(total ? total.toLocaleString('ko-KR') : '', { b:[2,2,2,1], align:'right' }))}
+      ${tr(44.25, td('사용차량번호', { b:[2,1,2,2], bold:true }) + td(esc(carNo), { b:[2,1,2,1], edit:'carNo' })
+        + td('하이패스\n통행여부', { b:[2,1,2,1], bold:true, wrap:true }) + td(esc(hipass), { b:[2,1,2,1], edit:'hipass' })
+        + td('※ 하이패스 법인카드 사용 시 O / X 기입 必', { cs:4, b:[2,2,2,1], bold:true, fill:GRAY }))}
+      ${tr(6.75, td('', { cs:8, b:[2,0,2,0] }))}
+      <tr style="height:${P(receiptH + 17.25 + 16.5 + 17.25)};">
+        <td colspan="8" style="border:${MED}; vertical-align:bottom; text-align:center; ${F}${fs(12)} font-weight:700; padding-bottom:${P(16.5+17.25)};">※ 영수증 첨부 및 추가 상세 내용 기입(부족 시 별지 사용)</td>
+      </tr>
+    </table>
+  </div>`;
+}
+function openPrestigeUsageDocPrint(rows, card){
+  const html = groupPrestigeDocRows(rows).map(items=>buildPrestigeUsageDocPage(items, card)).join('');
+  const sheet = document.getElementById('printSheet');
+  // 고칠 수 있는 칸은 마우스를 올리거나 누를 때만 노랗게 보인다(인쇄·PDF에는 색이 안 들어감).
+  sheet.innerHTML = `<style>.prestige-doc-edit{ cursor:text; outline:none; } .prestige-doc-edit:hover, .prestige-doc-edit:focus{ background:#fff3a0 !important; }</style>`
+    + `<div style="font-size:12px; color:#555; text-align:center;">사용장소·비고·사용차량번호·하이패스·작성자 칸은 눌러서 바로 고칠 수 있습니다. 사용장소는 그 줄에 저장되고, 차량번호·하이패스는 다음 출력 때 다시 채워집니다.</div>` + html;
+  let changed = false;
+  sheet.querySelectorAll('.prestige-doc-edit').forEach(el=>el.addEventListener('blur', ()=>{
+    const v = el.innerText.trim();
+    if(el.dataset.f === 'venue' && el.dataset.id){
+      const r = rows.find(x=>x.id===el.dataset.id);
+      if(r && String(r.venue||'') !== v){ r.venue = v; changed = true; markCorpCardDirty(card.id); flushCorpCardSave({ silent:true }); }
+    }
+    if(el.dataset.f === 'carNo' || el.dataset.f === 'hipass'){
+      const last = prestigeDocLast(); last[el.dataset.f] = v;
+      try{ localStorage.setItem(PRESTIGE_DOC_LAST_KEY, JSON.stringify(last)); }catch(e){}
+    }
+  }));
+  document.getElementById('printOverlay').classList.add('show');
+  document.body.classList.add('printing-preview');
+  const portraitBtn = document.getElementById('printPortraitBtn');
+  portraitBtn.textContent = '품위유지비 사용내역서 인쇄';
+  portraitBtn.onclick = () => {
+    if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    // 미리보기에서 고친 값 그대로 인쇄한다.
+    const out = [...sheet.querySelectorAll('.prestige-usage-doc')].map(p=>{ const c = p.cloneNode(true); c.querySelectorAll('[contenteditable]').forEach(el=>el.removeAttribute('contenteditable')); return c.outerHTML; }).join('');
+    openPrintWindow(out, 'size:A4 portrait; margin:12mm;');
+  };
+  document.getElementById('printLandscapeBtn').style.display = 'none';
+  pdfFilenameOverride = `품위유지비_사용내역서_${card.label||card.cardNumber}_${isoDate(new Date())}`;
 }
 // 도우미에 보낼 열 구성(B~Q)과, 앱 행 하나를 그 열 순서의 값 배열로 바꾸는 함수.
 function corpCardHelperColumns(){
