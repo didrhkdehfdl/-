@@ -17208,6 +17208,10 @@ async function renderCorpCardMainInner(){
   }
   if(activeCard) ensureCorpCardRowsSubscribed(activeCard.id);
   const prestige = isPrestigeCard(activeCard);
+  // 점심체크 월계표와 겹치는 식대(관리자·식대 정산 담당자만)
+  const lunchDupYm = (activeCard && canSeeLunchDup()) ? isoMonthForCardMonth(activeCard.id, s.activeMonth) : '';
+  const lunchDupList = lunchDupYm ? (lunchDupHits(lunchDupYm) || []) : [];
+  const lunchDupByRow = new Map(lunchDupList.filter(h=>h.card.id === (activeCard && activeCard.id)).map(h=>[h.row.id, h]));
   if(prestige && !corpCardTemplates[activeCard.id]) corpCardTemplates[activeCard.id] = prestigeTemplate();
   const tmpl = activeCard ? corpCardTemplates[activeCard.id] : null;
   const months = tmpl ? tmpl.months : [];
@@ -17294,6 +17298,7 @@ async function renderCorpCardMainInner(){
       ${prestige ? '' : `<button id="corpCardAddMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px dashed var(--line); background:transparent; color:var(--muted); cursor:pointer; font-size:12px;">+ 월 추가</button>`}
       ${months.length>1 && !prestige ? `<button id="corpCardDeleteMonthBtn" style="padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--neg); cursor:pointer; font-size:12px;">"${escapeHtml(s.activeMonth)}" 탭 삭제</button>` : ''}
     </div>
+    ${lunchDupYm ? lunchDupPanelHtml(lunchDupYm, lunchDupList) : ''}
     ${prestige ? prestigePanelHtml(activeCard) : ''}
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
       <button id="corpCardAddRowBtn" style="padding:8px 14px; border-radius:7px; border:1px dashed var(--line); background:transparent; color:var(--muted); font-size:12.5px; cursor:pointer;">+ 행 추가</button>
@@ -17422,7 +17427,7 @@ async function renderCorpCardMainInner(){
                 ${note('hipass')}
               </td>
               <td style="padding:3px 4px;"><input type="text" list="corpCardCarNoOptions" class="corpcard-f" data-id="${row.id}" data-field="carNo" value="${escapeHtml(row.carNo)}" style="width:100%; text-align:center; ${issues.carNo?errBorder:''}">${note('carNo')}</td>
-              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" ${noteLocked?`readonly style="text-align:center; ${lockedStyle}"`:`style="text-align:center; ${issues.note?errBorder:''}"`}>${note('note')}</td>`}
+              <td style="padding:3px 4px;"><input type="text" class="corpcard-f corpcard-f-auto" data-id="${row.id}" data-field="note" value="${escapeHtml(row.note)}" ${noteLocked?`readonly style="text-align:center; ${lockedStyle}"`:`style="text-align:center; ${issues.note?errBorder:''}"`}>${note('note')}${lunchDupByRow.has(row.id) ? `<div title="같은 날 점심체크가 1(내근식사)인 사람이 비고에 있습니다" style="font-size:10px; color:#d9822b; margin-top:2px;">🍱 점심체크 겹침: ${escapeHtml(lunchDupByRow.get(row.id).hits.join(', '))}</div>` : ''}</td>`}
               <td style="padding:5px 4px; text-align:center; white-space:nowrap;">
                 <button class="corpcard-insert-btn" data-id="${row.id}" title="이 아래에 빈 행 삽입" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:12px; padding:2px 3px; vertical-align:middle;">➕</button><button class="corpcard-del-btn" data-id="${row.id}" style="background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:15px; vertical-align:middle;">×</button>
               </td>
@@ -17576,6 +17581,7 @@ async function renderCorpCardMainInner(){
     renderCorpCardMain();
   });
   if(!activeCard || !tmpl) return;
+  if(lunchDupYm) bindLunchDupPanel(lunchDupYm, lunchDupList);
   if(prestige){ bindPrestigePanel(activeCard); document.querySelectorAll('.excel-helper-download').forEach(b=>b.addEventListener('click', downloadExcelHelper)); }
   setupStickyHScroll('corpCardTableWrap', 'corpCardStickyScroll');
   {
@@ -18084,6 +18090,174 @@ function bindCorpCardLinkButtons(rerender){
       if(await importCorpCardFile(file, card.id)){ alert(`"${file.name}" 파일 내용을 불러왔습니다.`); rerender(); }
     });
   }));
+}
+// ===== 점심체크 월계표(CSV) ↔ 법인카드 식대 중복 확인 =====
+// 매달 말 다운로드 폴더에 저장하는 "점심체크_월계표_YYYY-MM.csv"(이름 × 날짜, 1 = 그날 내근식사)를 읽어서,
+// 같은 날 점심체크가 1인 사람이 법인카드 식대·접대비·회식비 내역의 비고에도 적혀 있으면 법인카드 탭에 보여준다.
+// 파일은 폴더를 연결한 PC에서 엑셀 도우미로 읽고(문서보안이 걸린 파일도 엑셀로 열어 읽음), 읽은 결과는 서버에
+// 저장해 다른 PC에서도 같은 결과를 본다. 전 직원의 식사 기록이라 관리자와 식대 정산 담당자에게만 보인다.
+const LUNCH_DUP_LINK_KEY = 'lunchcsv';
+const LUNCH_DUP_STORE = ym => 'lunch-monthly-csv:' + ym;
+const LUNCH_DUP_TYPES = ['식대','접대비','회식비'];
+const lunchDupCache = {};   // ym -> { data, loadedAt, checkedAt, busy }
+let lunchDupOpen = false, lunchDupNote = '';
+function canSeeLunchDup(){ return isAdminUser || canUseMealCsv(); }
+function lunchCsvPattern(ym){ return '^점심체크_월계표_' + ym.replace('-', '\\-') + '( \\(\\d+\\))?\\.csv$'; }
+// CSV 첫 행이 "이름,1,2,…", 그 아래가 사람별 행이다. 값은 글자로 맞춰 둔다(1 = 내근식사).
+function parseLunchCsvAoa(aoa){
+  const head = (aoa||[]).findIndex(r=>String((r||[])[0]||'').replace(/\s/g,'') === '이름');
+  if(head < 0) throw new Error('점심체크 월계표에서 "이름" 머리글을 찾지 못했습니다.');
+  const days = (aoa[head]||[]).map(v=>Number(v)||0);
+  const names = {};
+  aoa.slice(head+1).forEach(r=>{
+    const n = String((r||[])[0]||'').trim();
+    if(!n) return;
+    const m = {};
+    days.forEach((d,i)=>{ if(d >= 1 && d <= 31){ const v = r[i]; m[d] = v == null ? '' : String(v).trim(); } });
+    names[n] = m;
+  });
+  if(!Object.keys(names).length) throw new Error('점심체크 월계표에 사람 행이 없습니다.');
+  return names;
+}
+async function loadLunchDup(ym, force){
+  const c = lunchDupCache[ym] || (lunchDupCache[ym] = { data:null, loadedAt:0, checkedAt:0, busy:false });
+  if(c.busy) return c;
+  const now = Date.now();
+  const needServer = force || !c.loadedAt || now - c.loadedAt > 5*60*1000;
+  const link = getLinkedFile(LUNCH_DUP_LINK_KEY);
+  const needFile = !!link && (force || now - c.checkedAt > 60*1000);
+  if(!needServer && !needFile) return c;
+  c.busy = true;
+  let changed = false;
+  try{
+    if(needServer){
+      const txt = await loadFileFromStorage(LUNCH_DUP_STORE(ym));
+      if(!(lastLoadMeta[LUNCH_DUP_STORE(ym)] && lastLoadMeta[LUNCH_DUP_STORE(ym)].error)){
+        try{ const d = txt ? JSON.parse(txt) : null; if(JSON.stringify(d) !== JSON.stringify(c.data)){ c.data = d; changed = true; } }catch(e){}
+        c.loadedAt = now;
+      }
+    }
+    if(needFile){
+      c.checkedAt = now;
+      await checkExcelHelper();
+      if(!excelHelperRunning){ lunchDupNote = '⚠ 엑셀 도우미가 꺼져 있어 다운로드 폴더의 월계표를 확인하지 못했습니다'; }
+      else {
+        const r = await excelHelperCall('/latestfile', { dir: link.dir, pattern: lunchCsvPattern(ym) }, 20000);
+        if(!r.found){ lunchDupNote = `${ym} 월계표 파일(점심체크_월계표_${ym}.csv)이 아직 폴더에 없습니다`; }
+        else {
+          const key = r.name + '|' + r.mtime;
+          if(!c.data || c.data.fileKey !== key){
+            const wb = await readWorkbookViaExcel(r.path);
+            const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header:1, defval:'' });
+            const data = { ym, fileName: r.name, fileKey: key, savedAt: new Date().toISOString(), by: currentUserName || '', names: parseLunchCsvAoa(aoa) };
+            const sr = await saveFileToStorage(LUNCH_DUP_STORE(ym), JSON.stringify(data));
+            if(sr && sr.ok === false) throw new Error('월계표를 서버에 저장하지 못했습니다: ' + (sr.reason||''));
+            c.data = data; changed = true;
+          }
+          lunchDupNote = `${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})} ${r.name} 확인`;
+        }
+      }
+    }
+  }catch(e){
+    lunchDupNote = '⚠ ' + linkedFileErrorMessage(e).split('\n')[0];
+    if(force) throw e;
+  }finally{ c.busy = false; }
+  if(changed && state.activeTab === 'corpCard' && !document.querySelector('#main input:focus, #main textarea:focus, #main select:focus')) renderCorpCardMain();
+  return c;
+}
+// 그 달 모든 카드의 식대 내역 중, 비고(없으면 성명)에 적힌 사람이 같은 날 점심체크 1인 건.
+function lunchDupHits(ym){
+  const d = lunchDupCache[ym] && lunchDupCache[ym].data;
+  if(!d || !d.names) return null;
+  const roster = new Set(Object.keys(d.names));
+  const out = [];
+  corpCardState.cards.forEach(card=>{
+    if(!canViewCorpCard(card)) return;
+    Object.entries(corpCardState.rowsByCard[card.id]||{}).forEach(([label, rows])=>(rows||[]).forEach(r=>{
+      if(!r || !LUNCH_DUP_TYPES.includes(String(r.expenseType||'').trim())) return;
+      const date = String(r.date||'');
+      if(date.slice(0,7) !== ym) return;
+      const day = Number(date.slice(8,10));
+      let people = [];
+      (String(r.note||'').split('//')[0].match(/[가-힣]+/g) || []).forEach(t=>{ if(t.length >= 2 && t.length <= 3 && roster.has(t) && !people.includes(t)) people.push(t); });
+      const fromName = !people.length && roster.has(String(r.name||'').trim());
+      if(fromName) people = [String(r.name).trim()];
+      const hits = people.filter(p=>String((d.names[p]||{})[day]||'') === '1');
+      if(!hits.length) return;
+      let time = r.apprTime || '';
+      if(!time){ const a = approvalEntriesForCard(card.id).find(a=>a.isoDate === date && Math.abs(Number(a.amount)||0) === Math.abs(Number(r.amount)||0)); if(a) time = a.apprTime || ''; }
+      const h = time ? Number(time.slice(0,2)) : null;
+      out.push({ card, label, row: r, people, hits, fromName, time, lunch: h === null || (h >= 10 && h < 15) });
+    }));
+  });
+  return out.sort((a,b)=>(a.row.date+a.time).localeCompare(b.row.date+b.time));
+}
+function lunchDupPanelHtml(ym, hits){
+  const c = lunchDupCache[ym] || {};
+  const link = getLinkedFile(LUNCH_DUP_LINK_KEY);
+  const b = (id, label, color, title) => `<button id="${id}" title="${escapeHtml(title||'')}" style="font-size:11.5px; padding:4px 10px; border-radius:6px; border:1px solid ${color}; background:transparent; color:${color}; cursor:pointer; font-weight:600; white-space:nowrap;">${label}</button>`;
+  const linkHtml = link
+    ? `<span style="font-size:11.5px; color:var(--muted);" title="${escapeHtml(link.dir)}">📁 ${escapeHtml(link.dir)}</span>${b('lunchDupCheckBtn','🔄 다시 확인','#2e9e5b','폴더에서 이 달 월계표를 다시 읽습니다.')}${b('lunchDupUnlinkBtn','✕','var(--muted)','폴더 연결 해제')}`
+    : b('lunchDupPickBtn','📁 다운로드 폴더 연결','var(--sky)','다운로드 폴더의 점심체크_월계표 CSV 파일 하나를 고르면, 그 폴더에서 달마다 해당 월 파일을 자동으로 읽습니다(파일 형식에서 CSV를 고르세요).');
+  const lunchHits = (hits||[]).filter(h=>h.lunch);
+  const head = !c.data
+    ? `<b style="font-size:12.5px;">🍱 ${escapeHtml(ym)} 점심체크 중복 확인</b> <span style="font-size:12px; color:var(--muted);">— 이 달 월계표가 아직 없습니다</span>`
+    : `<b style="font-size:12.5px; color:${lunchHits.length?'#d9822b':'var(--pos)'};">🍱 ${escapeHtml(ym)} 점심체크와 겹치는 법인카드 식대 ${hits.length}건${hits.length !== lunchHits.length ? ` (점심시간 ${lunchHits.length}건)` : ''}</b>
+       ${hits.length ? `<button id="lunchDupToggleBtn" style="font-size:11.5px; padding:3px 9px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--text); cursor:pointer;">${lunchDupOpen?'접기':'보기'}</button>` : ''}
+       <span style="font-size:11.5px; color:var(--muted);">${escapeHtml(c.data.fileName||'')} · ${escapeHtml(fmtUploadedAt ? fmtUploadedAt(c.data.savedAt) : c.data.savedAt)} 읽음</span>`;
+  const list = (c.data && hits.length && lunchDupOpen) ? `
+    <div style="font-size:11.5px; color:var(--muted); margin:6px 0 4px;">같은 날 점심체크가 1(내근식사)인 사람이 이 식대 내역의 비고에도 적혀 있는 건입니다. 내근식사를 법인카드로 산 날이면 중복이 아닐 수 있습니다.</div>
+    <table style="border-collapse:collapse; font-size:12px; width:100%;">
+      <thead><tr>${['날짜·결제시각','카드','사용처','금액','업무내용','겹친 사람',''].map(t=>`<th style="text-align:left; padding:4px 6px; color:var(--muted); border-bottom:1px solid var(--line); white-space:nowrap;">${t}</th>`).join('')}</tr></thead>
+      <tbody>${hits.map((h,i)=>`<tr style="${h.lunch?'':'opacity:.6;'}">
+        <td style="padding:4px 6px; white-space:nowrap;">${escapeHtml(h.row.date.slice(5))} ${h.time ? escapeHtml(h.time.slice(0,5)) : '<span style="color:var(--muted);">시각?</span>'}${h.lunch?'':' (점심 아님)'}</td>
+        <td style="padding:4px 6px; white-space:nowrap;">${escapeHtml(h.card.label||'')}</td>
+        <td style="padding:4px 6px;">${escapeHtml(h.row.place||'')}</td>
+        <td style="padding:4px 6px; text-align:right; white-space:nowrap;">${fmtNum(Number(h.row.amount)||0)}</td>
+        <td style="padding:4px 6px;">${escapeHtml(h.row.workDetail||'')}</td>
+        <td style="padding:4px 6px;"><b style="color:#d9822b;">${h.hits.map(escapeHtml).join(', ')}</b> <span style="color:var(--muted);">(${h.hits.length}/${h.people.length}명${h.fromName?' · 비고에 이름이 없어 성명으로 봄':''})</span></td>
+        <td style="padding:4px 6px;"><button class="lunchdup-go-btn" data-i="${i}" style="font-size:11px; padding:2px 8px; border-radius:5px; border:1px solid var(--line); background:transparent; color:var(--sky); cursor:pointer; white-space:nowrap;">이동</button></td>
+      </tr>`).join('')}</tbody>
+    </table>` : '';
+  return `<div style="border:1px solid ${c.data && lunchHits.length ? '#d9822b' : 'var(--line)'}; border-radius:9px; padding:8px 12px; margin-bottom:12px;">
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">${head}<span style="margin-left:auto; display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;">${linkHtml}</span></div>
+    ${lunchDupNote ? `<div style="font-size:11.5px; margin-top:4px; color:${/^⚠/.test(lunchDupNote)?'var(--neg)':'var(--muted)'};">${escapeHtml(lunchDupNote)}</div>` : ''}
+    ${list}</div>`;
+}
+function bindLunchDupPanel(ym, hits){
+  const pick = document.getElementById('lunchDupPickBtn');
+  if(pick) pick.addEventListener('click', async ()=>{
+    pick.disabled = true; pick.textContent = '파일 선택 창을 띄웠습니다…';
+    try{
+      const r = await excelHelperCall('/pick', { title: '점심체크_월계표 CSV 파일 하나를 고르세요 (그 폴더에서 달마다 해당 월 파일을 읽습니다)', filter: 'CSV 파일 (*.csv)|*.csv|모든 파일 (*.*)|*.*' }, 10*60*1000);
+      if(!r.cancelled){
+        setLinkedFile(LUNCH_DUP_LINK_KEY, { dir: r.path.replace(/[\\/][^\\/]*$/, ''), path: r.path, name: r.name });
+        await loadLunchDup(ym, true);
+      }
+    }catch(e){ alert(linkedFileErrorMessage(e)); }
+    renderCorpCardMain();
+  });
+  const chk = document.getElementById('lunchDupCheckBtn');
+  if(chk) chk.addEventListener('click', async ()=>{
+    chk.disabled = true; chk.textContent = '확인 중…';
+    try{ await loadLunchDup(ym, true); }catch(e){ alert(linkedFileErrorMessage(e)); }
+    renderCorpCardMain();
+  });
+  const un = document.getElementById('lunchDupUnlinkBtn');
+  if(un) un.addEventListener('click', ()=>{ if(confirm('점심체크 월계표 폴더 연결을 해제할까요? (이미 읽어 둔 결과는 그대로 보입니다)')){ unlinkFile(LUNCH_DUP_LINK_KEY); lunchDupNote = ''; renderCorpCardMain(); } });
+  const tg = document.getElementById('lunchDupToggleBtn');
+  if(tg) tg.addEventListener('click', ()=>{ lunchDupOpen = !lunchDupOpen; renderCorpCardMain(); });
+  document.querySelectorAll('.lunchdup-go-btn').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const h = (hits||[])[Number(btn.dataset.i)]; if(!h) return;
+    await flushCorpCardSave();
+    corpCardState.activeCardId = h.card.id; corpCardState.activeMonth = h.label; corpCardSelectedIds.clear();
+    renderCorpCardMain();
+    requestAnimationFrame(()=>{
+      const tr = document.querySelector(`#main tbody tr[data-id="${CSS.escape(h.row.id)}"]`);
+      if(tr){ tr.scrollIntoView({ block:'center' }); tr.style.outline = '2px solid #d9822b'; setTimeout(()=>{ tr.style.outline = ''; }, 2500); }
+    });
+  }));
+  loadLunchDup(ym, false).catch(()=>{});
 }
 // ===== 품위유지비 카드(7973) =====
 // 다른 법인카드와 엑셀 양식이 달라서 이 카드만 화면 칸이 다르고(1-1 관리대장 + 3-1 사용내역 리스트에 필요한 칸만),
@@ -23424,7 +23598,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 $ErrorActionPreference = 'Stop'
 $Port = 39217
 $AllowedOrigin = '__ALLOWED_ORIGIN__'
-$Version = '62'
+$Version = '63'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -23605,7 +23779,7 @@ function Handle-Ping($body){
 }
 function Handle-Pick($body){
   $dlg = New-Object System.Windows.Forms.OpenFileDialog
-  $dlg.Filter = '엑셀 파일 (*.xlsx;*.xlsm;*.xls)|*.xlsx;*.xlsm;*.xls|모든 파일 (*.*)|*.*'
+  $dlg.Filter = if($body.filter){ [string]$body.filter } else { '엑셀 파일 (*.xlsx;*.xlsm;*.xls)|*.xlsx;*.xlsm;*.xls|모든 파일 (*.*)|*.*' }
   $dlg.Title = if($body.title){ [string]$body.title } else { '연결할 엑셀 파일 선택' }
   $owner = New-Object System.Windows.Forms.Form
   $owner.TopMost = $true; $owner.ShowInTaskbar = $false; $owner.WindowState = 'Minimized'
